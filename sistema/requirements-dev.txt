@@ -1,0 +1,4 @@
+-r requirements.txt
+playwright==1.63.0
+PyYAML==6.0.3
+pip-audit==2.10.1

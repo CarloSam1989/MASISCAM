@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup privado MASISCAM
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/masiscam/sistema
+ExecStart=/bin/bash /srv/masiscam/sistema/deploy/scripts/backup.sh
+UMask=0077

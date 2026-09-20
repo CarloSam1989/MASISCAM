@@ -1,0 +1,13 @@
+:root {
+  --masiscam-primary:#34577d; --masiscam-primary-dark:#16283d;
+  --masiscam-secondary:#788397; --masiscam-accent:#9db2c9;
+  --masiscam-background:#f7f9fb; --masiscam-surface:#fff;
+  --masiscam-text:#101820; --masiscam-muted:#52606d;
+  --masiscam-border:#dce3ea; --masiscam-danger:#a42c38; --masiscam-success:#356249;
+  --masiscam-dark:var(--masiscam-primary-dark); --masiscam-steel:var(--masiscam-primary);
+  --masiscam-light:var(--masiscam-accent);
+}
+:focus-visible {outline:3px solid var(--masiscam-primary);outline-offset:3px}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+*,*::before,*::after{box-sizing:border-box}

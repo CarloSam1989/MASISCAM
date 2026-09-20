@@ -1,0 +1,5 @@
+<div class="sb-sidenav-menu-heading text-info">MASISCAM</div>
+<a class="nav-link" href="{% url 'masiscam:dashboard' %}">Dashboard</a>
+<a class="nav-link" href="{% url 'masiscam:producto_listado' 'reductor' %}">Reductores</a>
+<a class="nav-link" href="{% url 'masiscam:clientes' %}">Clientes</a>
+<div class="px-3 mt-3 small text-white-50">{{ request.empresa_activa.nombre }}</div>

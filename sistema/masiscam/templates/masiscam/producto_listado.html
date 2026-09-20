@@ -1,0 +1,35 @@
+{% extends "masiscam/base.html" %}
+{% block content %}
+<div class="container-fluid px-3 px-lg-4 py-4">
+  <div class="d-flex flex-wrap justify-content-between gap-3 align-items-center mb-4">
+    <div><h1 class="h3 mb-1">{{ producto_nombre }}</h1><p class="text-muted mb-0">{{ request.empresa_activa.nombre }}</p></div>
+    {% if puede_crear and producto_codigo == "REDUCTOR" %}<a class="btn btn-primary" href="{% url 'masiscam:ficha_crear' %}"><i class="fas fa-plus me-1"></i>Crear reductor</a>{% endif %}
+  </div>
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-4"><div class="card masiscam-card masiscam-stat"><div class="card-body"><div class="h3">{{ total }}</div><div>Total de {{ producto_nombre|lower }}</div></div></div></div>
+    <div class="col-6 col-lg-4"><div class="card masiscam-card masiscam-stat"><div class="card-body"><div class="h3">{{ publicos }}</div><div>QR activos</div></div></div></div>
+    <div class="col-6 col-lg-4"><div class="card masiscam-card masiscam-stat"><div class="card-body"><div class="h3">{{ inactivos }}</div><div>Archivados</div></div></div></div>
+  </div>
+  <form class="card masiscam-card card-body mb-4" method="get">
+    <div class="row g-3 align-items-end">
+    <div class="col-12 col-lg-4"><label class="form-label" for="cliente">Cliente</label>
+      <select class="form-select" id="cliente" name="cliente">
+        <option value="">Todos (incluye equipos sin cliente)</option>
+        {% for cliente in clientes %}<option value="{{ cliente.pk }}"{% if cliente.pk == cliente_seleccionado.pk %} selected{% endif %}>{{ cliente.nombre_comercial }} - {{ cliente.ruc }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-lg-8"><label class="form-label" for="q">Buscar {{ producto_nombre|lower }}</label>
+    <div class="input-group"><input id="q" name="q" value="{{ q }}" class="form-control" placeholder="Razón social, camaronera, estación, sector, equipo, marca, modelo o serie"><button class="btn btn-primary">Buscar</button></div>
+    </div></div>
+  </form>
+  <div class="card masiscam-card"><div class="table-responsive"><table class="table table-hover align-middle mb-0 masiscam-table">
+    <thead><tr><th>N.º equipo</th><th>Camaronera</th><th>Estación</th><th>Sector</th><th>Marca</th><th>Modelo</th><th>Serie</th><th>Potencia</th><th>QR</th><th>Acciones</th></tr></thead>
+    <tbody>{% for equipo in equipos %}<tr>
+      <td class="fw-bold">{{ equipo.nombre }}</td><td>{{ equipo.proyecto.nombre }}</td><td>{{ equipo.ubicacion }}</td><td>{{ equipo.sector }}</td><td>{{ equipo.marca }}</td><td>{{ equipo.modelo }}</td><td>{{ equipo.numero_serie }}</td><td>{{ equipo.potencia_hp }}</td>
+      <td>{% if equipo.consulta_publica_activa and equipo.estado != 'INACTIVO' %}<span class="badge bg-success">Activo</span>{% else %}<span class="badge bg-secondary">Inactivo</span>{% endif %}</td>
+      <td class="masiscam-actions-cell"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a></td>
+    </tr>{% empty %}<tr><td colspan="10" class="text-center py-5 text-muted">No existen {{ producto_nombre|lower }} registrados con estos filtros.</td></tr>{% endfor %}</tbody>
+  </table></div></div>
+</div>
+{% endblock %}
+{% block javascript %}<script>document.addEventListener('DOMContentLoaded',()=>{const t=document.querySelector('.sistema-masiscam table');if(t&&window.simpleDatatables)new simpleDatatables.DataTable(t,{perPage:20,labels:{placeholder:'Buscar...',perPage:'equipos por página',noRows:'No hay equipos',info:'Mostrando {start} a {end} de {rows} equipos'}});});</script>{% endblock %}

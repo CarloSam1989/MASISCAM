@@ -1,0 +1,11 @@
+{% load static %}<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Etiqueta {{ equipo.nombre }} | MASISCAM</title><link rel="stylesheet" href="{% static 'masiscam/css/masiscam.css' %}"><style>
+@page { size: 100mm 100mm; margin: 0; }
+@media print {
+  .etiqueta-equipo { width: 128.205mm; min-height: 128.205mm; margin: 0; zoom: .78; }
+}
+</style><link rel="stylesheet" href="{% static 'app/identity.css' %}"><link rel="stylesheet" href="{% static 'web/fonts.css' %}"><link rel="icon" href="{% static 'web/assets/masiscam-logo.png' %}"></head><body class="etiqueta-page" onload="window.print()">{% include "masiscam/_breadcrumbs.html" %}<main class="etiqueta-equipo">  <img
+        src="{% static 'masiscam/img/logo.png' %}"
+        alt="MASISCAM"
+        class="masiscam-logo"
+    ><dl><dt>Camaronera</dt><dd>{{ equipo.proyecto.nombre }}</dd><dt>Marca</dt><dd>{{ equipo.marca }}</dd><dt>Modelo</dt><dd>{{ equipo.modelo }}</dd><dt>Serie</dt><dd>{{ equipo.numero_serie }}</dd><dt>Ratio</dt><dd>{{ equipo.ratio|default:"—"|linebreaksbr }}</dd></dl><img class="etiqueta-qr" src="{{ qr_src }}" alt="Código QR del equipo {{ equipo.nombre }}"><p>Escanee para consultar la ficha del equipo</p></main></body></html>

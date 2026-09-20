@@ -1,0 +1,40 @@
+from django.urls import path
+from . import views
+
+app_name = "masiscam"
+
+urlpatterns = [
+    path("proyectos/", views.proyectos, name="proyectos"),
+    path("proyectos/<int:pk>/imagen/", views.proyecto_imagen_privada, name="proyecto_imagen_privada"),
+    path("proyectos/<int:pk>/documentos/<int:documento_pk>/descargar/", views.documento_privado, name="documento_privado"),
+    path("equipos/<int:pk>/foto/<str:tipo>/", views.equipo_foto_privada, name="equipo_foto_privada"),
+    path("", views.dashboard, name="dashboard"),
+    path("productos/<slug:tipo>/", views.producto_listado, name="producto_listado"),
+    path("clientes/", views.clientes, name="clientes"),
+    path("clientes/crear/", views.cliente_crear, name="cliente_crear"),
+    path("clientes/<int:pk>/", views.cliente_detalle, name="cliente_detalle"),
+    path("clientes/<int:pk>/editar/", views.cliente_editar, name="cliente_editar"),
+    path("equipos/nuevo/", views.ficha_crear, name="ficha_crear"),
+    path("equipos/<int:pk>/", views.ficha_detalle, name="ficha_detalle"),
+    path("equipos/<int:pk>/registros/crear/", views.registro_crear, name="registro_crear"),
+    path("equipos/<int:pk>/registros/<int:registro_pk>/reintentar/", views.registro_reintentar, name="registro_reintentar"),
+    path("equipos/<int:pk>/editar/", views.ficha_editar, name="ficha_editar"),
+    path("equipos/<int:pk>/archivar/", views.ficha_archivar, name="ficha_archivar"),
+    path("equipos/<int:pk>/qr/", views.equipo_qr, name="equipo_qr"),
+    path("equipos/<int:pk>/qr/etiqueta/", views.equipo_etiqueta, name="equipo_etiqueta"),
+    path("equipos/<int:pk>/qr/regenerar/", views.equipo_token_regenerar, name="equipo_token_regenerar"),
+    path("proyectos/nuevo/", views.proyecto_crear, name="proyecto_crear"),
+    path("proyectos/<int:pk>/", views.proyecto_detalle, name="proyecto_detalle"),
+    path("proyectos/<int:pk>/editar/", views.proyecto_editar, name="proyecto_editar"),
+    path("proyectos/<int:pk>/visibilidad/", views.proyecto_visibilidad, name="proyecto_visibilidad"),
+    path("proyectos/<int:pk>/archivar/", views.proyecto_archivar, name="proyecto_archivar"),
+    path("proyectos/<int:pk>/equipos/nuevo/", views.equipo_crear, name="equipo_crear"),
+    path("proyectos/<int:pk>/equipos/<int:equipo_pk>/editar/", views.equipo_editar, name="equipo_editar"),
+    path("proyectos/<int:pk>/documentos/subir/", views.documento_subir, name="documento_subir"),
+    path("proyectos/<int:pk>/documentos/<int:documento_pk>/archivar/", views.documento_archivar, name="documento_archivar"),
+    path("proyectos/<int:pk>/documentos/<int:documento_pk>/reintentar/", views.documento_reintentar, name="documento_reintentar"),
+    path("proyectos/<int:pk>/qr/", views.qr_descargar, name="qr_descargar"),
+    path("proyectos/<int:pk>/qr/etiqueta/", views.etiqueta_qr, name="etiqueta_qr"),
+    path("proyectos/<int:pk>/token/regenerar/", views.token_regenerar, name="token_regenerar"),
+    path("proyectos/<int:pk>/historial/", views.historial, name="historial"),
+]

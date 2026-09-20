@@ -1,0 +1,27 @@
+{% with vista=request.resolver_match.url_name %}
+<nav class="masiscam-breadcrumbs no-print" aria-label="Migas de pan">
+  <ol class="breadcrumb mb-0 small">
+    {% if vista == "dashboard" %}<li class="breadcrumb-item active" aria-current="page">Dashboard</li>{% else %}<li class="breadcrumb-item"><a href="{% url 'masiscam:dashboard' %}">Dashboard</a></li>{% endif %}
+    {% if vista == 'dashboard' %}
+    {% elif vista == 'producto_listado' %}
+      <li class="breadcrumb-item active" aria-current="page">{{ producto_nombre }}</li>
+    {% elif vista == 'clientes' %}
+      <li class="breadcrumb-item active" aria-current="page">Clientes</li>
+    {% elif vista == 'cliente_crear' or vista == 'cliente_editar' or vista == 'cliente_detalle' %}
+      <li class="breadcrumb-item"><a href="{% url 'masiscam:clientes' %}">Clientes</a></li>
+      <li class="breadcrumb-item active" aria-current="page">{% if vista == 'cliente_crear' %}Crear{% elif vista == 'cliente_editar' %}Editar{% else %}{{ cliente.nombre_comercial }}{% endif %}</li>
+    {% elif proyecto %}
+      <li class="breadcrumb-item">Proyectos</li>
+      {% if vista != 'proyecto_detalle' %}<li class="breadcrumb-item"><a href="{% url 'masiscam:proyecto_detalle' proyecto.pk %}">{{ proyecto.nombre }}</a></li>{% endif %}
+      <li class="breadcrumb-item active" aria-current="page">{% if vista == 'proyecto_detalle' %}{{ proyecto.nombre }}{% elif vista == 'historial' %}Historial{% elif vista == 'etiqueta_qr' %}Etiqueta QR{% else %}{{ titulo }}{% endif %}</li>
+    {% elif vista == 'proyecto_crear' %}
+      <li class="breadcrumb-item">Proyectos</li>
+      <li class="breadcrumb-item active" aria-current="page">Crear</li>
+    {% else %}
+      <li class="breadcrumb-item"><a href="{% url 'masiscam:producto_listado' 'reductor' %}">Reductores</a></li>
+      {% if equipo and vista != 'ficha_detalle' %}<li class="breadcrumb-item"><a href="{% url 'masiscam:ficha_detalle' equipo.pk %}">{{ equipo.nombre }}</a></li>{% endif %}
+      <li class="breadcrumb-item active" aria-current="page">{% if vista == 'ficha_detalle' %}Ficha{% elif vista == 'equipo_etiqueta' %}Etiqueta QR{% elif vista == 'ficha_crear' %}Crear{% elif vista == 'ficha_editar' %}Editar{% else %}{{ titulo }}{% endif %}</li>
+    {% endif %}
+  </ol>
+</nav>
+{% endwith %}

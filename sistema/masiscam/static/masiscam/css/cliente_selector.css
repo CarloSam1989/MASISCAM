@@ -1,0 +1,8 @@
+.reductor-formulario .cliente-bloque{border:1px solid #aab8c7;border-top:4px solid #5f7691;}
+.reductor-formulario input[readonly]{background:#f4f7fa;}
+.reductor-formulario #cliente-resultados button{text-align:left;white-space:normal;overflow-wrap:anywhere;min-height:44px;}
+.reductor-formulario #cliente-modal{width:min(680px,calc(100% - 2rem));max-height:90vh;border:0;border-radius:12px;padding:1.5rem;color:#151515;box-shadow:0 10px 45px #0003;}
+.reductor-formulario #cliente-modal::backdrop{background:#15151588;}
+.reductor-formulario #cliente-modal input{width:100%;min-width:0;}
+.reductor-formulario .btn{min-height:42px;}
+@media(max-width:575px){.reductor-formulario #cliente-modal{padding:1rem;}.reductor-formulario .cliente-bloque .card-body{padding:1rem;}}

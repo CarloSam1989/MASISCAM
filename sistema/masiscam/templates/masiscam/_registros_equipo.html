@@ -1,0 +1,22 @@
+{% include "masiscam/_registros_lista.html" with registros=registros equipo=equipo puede_editar=puede_editar only %}
+{% if puede_editar %}
+<dialog id="registro-modal" class="ficha-registro-modal" aria-labelledby="registro-modal-titulo"{% if registro_form.errors %} data-open="true"{% endif %}>
+  <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
+    <h2 id="registro-modal-titulo" class="h5 mb-0">Agregar registro</h2>
+    <button type="button" class="btn-close" data-registro-cerrar aria-label="Cerrar"></button>
+  </div>
+  <form method="post" action="{% url 'masiscam:registro_crear' equipo.pk %}" id="registro-form">
+    {% csrf_token %}{{ registro_form.clave_creacion }}
+    {% if registro_form.non_field_errors or registro_form.clave_creacion.errors %}<div role="alert" class="alert alert-danger">{{ registro_form.non_field_errors }}{{ registro_form.clave_creacion.errors }}</div>{% endif %}
+    <div class="row g-3">
+      <div class="col-12 col-sm-6"><label class="form-label" for="{{ registro_form.tipo.id_for_label }}">{{ registro_form.tipo.label }}</label>{{ registro_form.tipo }}{{ registro_form.tipo.errors }}</div>
+      <div class="col-12 col-sm-6"><label class="form-label" for="{{ registro_form.fecha.id_for_label }}">{{ registro_form.fecha.label }}</label>{{ registro_form.fecha }}{{ registro_form.fecha.errors }}</div>
+      <div class="col-12"><label class="form-label" for="{{ registro_form.observacion.id_for_label }}">{{ registro_form.observacion.label }}</label>{{ registro_form.observacion }}{{ registro_form.observacion.errors }}</div>
+    </div>
+    <div class="d-flex justify-content-end gap-2 mt-4">
+      <button type="button" class="btn btn-outline-secondary" data-registro-cerrar>Cancelar</button>
+      <button type="submit" class="btn btn-primary">Guardar</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}

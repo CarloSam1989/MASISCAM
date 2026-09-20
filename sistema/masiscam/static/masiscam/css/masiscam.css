@@ -1,0 +1,384 @@
+:root{
+    --masiscam-dark:#344A64;
+    --masiscam-steel:#5F7691;
+    --masiscam-light:#AAB8C7;
+    --masiscam-black:#151515;
+}
+
+.sistema-masiscam main{
+    background:#f4f7fa;
+    min-height:calc(100vh - 56px);
+}
+
+.sistema-masiscam .pwa-mobile-nav{
+    display:none!important;
+}
+
+.sistema-masiscam{
+    padding-bottom:0!important;
+}
+
+.masiscam-brand{
+    color:var(--masiscam-dark);
+    font-weight:800;
+    letter-spacing:.08em;
+}
+
+.masiscam-logo-wrap{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+}
+
+.masiscam-logo{
+    display:block;
+    max-width:220px;
+    max-height:90px;
+    width:auto;
+    height:auto;
+    object-fit:contain;
+    margin:0 auto;
+}
+
+.masiscam-logo-fallback{
+    font-size:1.5rem;
+    font-weight:800;
+    letter-spacing:.12em;
+    color:inherit;
+}
+
+.sistema-masiscam .masiscam-actions-cell{
+    white-space:nowrap;
+    width:1%;
+}
+
+.sistema-masiscam .datatable-selector{
+    box-sizing:border-box;
+    width:4.25rem;
+    min-width:4.25rem;
+    padding-left:.65rem;
+    padding-right:1.75rem;
+}
+
+.masiscam-card{
+    border:0;
+    border-radius:14px;
+    box-shadow:0 5px 20px rgba(52,74,100,.10);
+}
+
+.masiscam-stat{
+    border-left:4px solid var(--masiscam-steel);
+}
+
+.masiscam-public{
+    background:#eef2f6;
+    color:var(--masiscam-black);
+    min-height:100vh;
+}
+
+.masiscam-public header{
+    background:var(--masiscam-dark);
+    color:#fff;
+}
+
+.masiscam-public img{
+    max-width:100%;
+    height:auto;
+}
+
+/* =========================
+   HEADER DEL INFORME
+   ========================= */
+
+.informe-header .container{
+    position:relative;
+}
+
+.informe-header .masiscam-logo{
+    position:absolute;
+    left:12px;
+    top:50%;
+    transform:translateY(-50%);
+    max-width:190px;
+    max-height:65px;
+    width:auto;
+    height:auto;
+    object-fit:contain;
+    margin:0;
+}
+
+.informe-header h1{
+    margin:0;
+}
+
+.informe-header .masiscam-logo-fallback{
+    color:#fff;
+    font-size:2rem;
+}
+
+/* =========================
+   INFORME DEL EQUIPO
+   ========================= */
+
+.informe-datos dt,
+.informe-datos dd{
+    padding-top:.65rem;
+    padding-bottom:.65rem;
+    border-bottom:1px solid #e4e9ee;
+}
+
+.dato-destacado{
+    display:inline-block;
+    background:var(--masiscam-dark);
+    color:#fff;
+    border-radius:8px;
+    padding:.45rem .75rem;
+    font-size:1.15rem;
+    letter-spacing:.04em;
+}
+
+.foto-informe{
+    display:block;
+    width:100%;
+    max-height:420px;
+    object-fit:contain;
+    background:#f3f5f7;
+    border-radius:10px;
+}
+
+.informe-equipo figcaption{
+    text-align:center;
+    color:#5f6770;
+    margin-top:.4rem;
+}
+
+.masiscam-public .btn,
+.sistema-masiscam .btn{
+    min-height:42px;
+}
+
+/* =========================
+   RESPONSIVE
+   ========================= */
+
+@media(max-width:767px){
+
+    .informe-header .masiscam-logo{
+        left:8px;
+        max-width:115px;
+        max-height:42px;
+    }
+
+    .informe-header h1{
+        font-size:1.05rem;
+        padding-left:110px;
+    }
+
+    .masiscam-actions{
+        display:grid;
+        grid-template-columns:1fr;
+        gap:.5rem;
+    }
+
+    .masiscam-table{
+        display:block;
+        overflow-x:auto;
+    }
+
+    .sistema-masiscam main{
+        min-height:100vh;
+    }
+}
+
+/* =========================
+   IMPRESIÓN GENERAL
+   ========================= */
+
+@media print{
+
+    .no-print{
+        display:none!important;
+    }
+
+    .masiscam-label{
+        max-width:90mm;
+        margin:auto;
+        text-align:center;
+    }
+}
+
+/* =========================
+   ETIQUETA DEL EQUIPO
+   ========================= */
+
+.etiqueta-page{
+    margin:0;
+    background:#fff;
+    color:#151515;
+    font-family:Arial,sans-serif;
+}
+
+.etiqueta-equipo{
+    box-sizing:border-box;
+    width:90mm;
+    min-height:120mm;
+    margin:8mm auto;
+    padding:7mm;
+    border:2px solid #344A64;
+    text-align:center;
+}
+
+.etiqueta-equipo .masiscam-logo{
+    display:block;
+    max-width:60mm;
+    max-height:18mm;
+    width:auto;
+    height:auto;
+    margin:0 auto 2mm;
+    object-fit:contain;
+}
+
+.etiqueta-equipo .masiscam-logo-fallback{
+    color:#344A64;
+}
+
+.etiqueta-qr{
+    display:block;
+    width:52mm;
+    height:52mm;
+    margin:5mm auto;
+    object-fit:contain;
+}
+
+.etiqueta-equipo h1{
+    margin:2mm 0;
+    font-size:20pt;
+    color:#344A64;
+}
+
+.etiqueta-equipo dl{
+    display:grid;
+    grid-template-columns:1fr 1.4fr;
+    gap:1mm 3mm;
+    text-align:left;
+    font-size:9pt;
+}
+
+.etiqueta-equipo dt{
+    font-weight:700;
+}
+
+.etiqueta-equipo dd{
+    margin:0;
+}
+
+.etiqueta-equipo p{
+    font-size:9pt;
+    font-weight:700;
+    margin-top:4mm;
+}
+
+/* =========================
+   IMPRESIÓN DE ETIQUETA
+   ========================= */
+
+@media print{
+
+    .etiqueta-page{
+        print-color-adjust:exact;
+        -webkit-print-color-adjust:exact;
+    }
+
+    .etiqueta-equipo{
+        margin:0 auto;
+    }
+
+    .etiqueta-equipo .masiscam-logo{
+        print-color-adjust:exact;
+        -webkit-print-color-adjust:exact;
+    }
+}
+/* Foto de placa en ficha e informe, incluida la impresión a PDF. */
+.placa-informe{
+    max-width:720px;
+    margin:1.5rem auto;
+    padding:1rem;
+    text-align:center;
+    background:#f3f5f7;
+    border:1px solid #e4e9ee;
+    border-radius:10px;
+    break-inside:avoid;
+}
+.placa-informe figure{margin:0;}
+.placa-informe .foto-informe{margin:0 auto;}
+.placa-informe figcaption{margin-top:.5rem;color:#5f6770;}
+
+/* Navegacion compartida: mismas clases breadcrumb de Bootstrap. */
+.masiscam-breadcrumbs .breadcrumb{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    margin:0;
+    padding:0;
+    list-style:none;
+    font-size:.875rem;
+}
+.masiscam-breadcrumbs .breadcrumb-item{
+    display:flex;
+    align-items:center;
+    min-width:0;
+    overflow-wrap:anywhere;
+    color:#5f6770;
+}
+.masiscam-breadcrumbs .breadcrumb-item + .breadcrumb-item{padding-left:.5rem;}
+.masiscam-breadcrumbs .breadcrumb-item + .breadcrumb-item::before{
+    content:">";
+    float:none;
+    padding-right:.5rem;
+    color:#6c757d;
+}
+.masiscam-breadcrumbs a{
+    display:inline-block;
+    padding:.65rem 0;
+    color:var(--masiscam-dark);
+    text-decoration:none;
+}
+.masiscam-breadcrumbs a:hover{text-decoration:underline;}
+.etiqueta-page > .masiscam-breadcrumbs{max-width:90mm;margin:1rem auto;padding:0 1rem;}
+.masiscam-identificacion{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:1.5rem;
+    margin-bottom:1.5rem;
+}
+.masiscam-info-bloque{min-width:0;}
+.masiscam-info-bloque h2{
+    margin:0 0 1rem;
+    padding-bottom:.75rem;
+    border-bottom:2px solid var(--masiscam-light);
+    color:var(--masiscam-dark);
+    text-transform:uppercase;
+    font-size:1rem;
+    font-weight:700;
+}
+.masiscam-info-datos{
+    display:grid;
+    grid-template-columns:minmax(0,2fr) minmax(0,3fr);
+    margin:0;
+}
+.masiscam-info-datos dt,.masiscam-info-datos dd{
+    margin:0;
+    padding:.65rem .5rem .65rem 0;
+    border-bottom:1px solid #e4e9ee;
+    overflow-wrap:anywhere;
+}
+@media(max-width:767px){
+    .masiscam-identificacion{grid-template-columns:minmax(0,1fr);}
+}
+
+.sistema-masiscam .masiscam-producto{color:var(--masiscam-dark);border:1px solid #dce4ec;}
+.sistema-masiscam .masiscam-producto:hover{border-color:var(--masiscam-steel);background:#f8fafc;}
+.sistema-masiscam .masiscam-producto:focus-visible{outline:3px solid var(--masiscam-steel);outline-offset:3px;}
+.sistema-masiscam .masiscam-brand .masiscam-logo{max-width:180px;max-height:56px;}
+
+.sistema-masiscam .masiscam-producto-icono{display:inline-flex;align-items:center;justify-content:center;flex:0 0 3rem;width:3rem;height:3rem;border-radius:.75rem;background:#edf2f7;color:var(--masiscam-steel);font-family:"Segoe UI Symbol",sans-serif;font-size:2.65rem;line-height:1;}

@@ -1,0 +1,16 @@
+<div class="row g-3">
+  {% for producto in productos %}
+  <div class="col-12 col-md-6 col-xl-4">
+    <a class="card masiscam-card masiscam-producto h-100 text-decoration-none" href="{{ producto.url }}">
+      <div class="card-body p-4">
+        <div class="d-flex align-items-center justify-content-between gap-3">
+          <h2 class="h4 mb-0">{{ producto.nombre }}</h2>
+          <span class="masiscam-producto-icono" aria-hidden="true">{% if producto.codigo == "REDUCTOR" %}&#9881;{% else %}&#9638;{% endif %}</span>
+        </div>
+        <div class="display-6 fw-semibold my-3">{{ producto.total }}</div>
+        <span>Ver {{ producto.nombre|lower }} <span aria-hidden="true">&rarr;</span></span>
+      </div>
+    </a>
+  </div>
+  {% empty %}<div class="col-12"><p class="text-muted">Sin productos asociados.</p></div>{% endfor %}
+</div>

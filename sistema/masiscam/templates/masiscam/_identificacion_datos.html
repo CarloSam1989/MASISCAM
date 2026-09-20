@@ -1,0 +1,27 @@
+<div class="row g-4 mb-4">
+  <section class="col-12 col-md-6 masiscam-info-bloque">
+    <h2 class="h5">INFORMACIÓN GENERAL</h2>
+    <dl class="masiscam-info-datos">
+      <dt>Razón social</dt><dd>{{ equipo.razon_social_cliente|default:"—"|linebreaksbr }}</dd>
+      <dt>Camaronera</dt><dd>{{ equipo.proyecto.nombre|default:"—"|linebreaksbr }}</dd>
+      <dt>RUC</dt><dd>{{ equipo.ruc_cliente|default:"—"|linebreaksbr }}</dd>
+      <dt>Sector</dt><dd>{{ equipo.sector|default:"—"|linebreaksbr }}</dd>
+      <dt>Estación</dt><dd>{{ equipo.ubicacion|default:"—"|linebreaksbr }}</dd>
+      <dt>Número de equipo</dt><dd>{{ equipo.nombre|default:"—"|linebreaksbr }}</dd>
+    </dl>
+  </section>
+  <section class="col-12 col-md-6 masiscam-info-bloque">
+    <h2 class="h5">INFORMACIÓN DEL REDUCTOR</h2>
+    <dl class="masiscam-info-datos">
+      <dt>Marca</dt><dd>{{ equipo.marca|default:"—"|linebreaksbr }}</dd>
+      <dt>Modelo</dt><dd>{{ equipo.modelo|default:"—"|linebreaksbr }}</dd>
+      <dt>Número de serie</dt><dd>{{ equipo.numero_serie|default:"—"|linebreaksbr }}</dd>
+      <dt>Potencia</dt><dd>{{ equipo.potencia_hp|default:"—"|linebreaksbr }}</dd>
+      <dt>Relación motriz</dt><dd>{{ equipo.ratio|default:"—"|linebreaksbr }}</dd>
+      <dt>SF</dt><dd>{{ equipo.service_factor|default:"—"|linebreaksbr }}</dd>
+      <dt>RPM</dt><dd>{{ equipo.rpm|default:"—"|linebreaksbr }}</dd>
+      <dt>Rotación</dt><dd>{{ equipo.rotacion|default:"—"|linebreaksbr }}</dd>
+      <dt>Tipo de aceite</dt><dd>{{ equipo.tipo_aceite|default:"—"|linebreaksbr }}</dd>
+    </dl>
+  </section>
+</div>

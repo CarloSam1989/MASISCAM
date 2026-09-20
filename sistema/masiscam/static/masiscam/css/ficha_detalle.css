@@ -1,0 +1,43 @@
+.ficha-interna .ficha-cabecera,
+.ficha-interna .ficha-pie{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:1rem;
+}
+.ficha-interna .ficha-acciones{
+    display:flex;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:.5rem;
+}
+.ficha-interna .btn{min-height:42px;padding:.5rem .75rem;font-size:.875rem;}
+.ficha-interna .masiscam-info-bloque h2{margin-bottom:.5rem;}
+.ficha-interna .masiscam-info-datos{grid-template-columns:minmax(0,2fr) minmax(0,3fr);}
+.ficha-interna .masiscam-info-datos dt,
+.ficha-interna .masiscam-info-datos dd{padding:.45rem .75rem .45rem 0;}
+.ficha-interna .ficha-estado{display:flex;align-items:center;justify-content:space-between;gap:1rem;}
+.ficha-interna .ficha-observaciones{padding:1rem;background:#f4f7fa;border-radius:8px;overflow-wrap:anywhere;}
+.ficha-interna .ficha-observaciones h2{text-transform:none;border:0;padding:0;}
+.ficha-interna .ficha-placa{padding:1.25rem;text-align:center;background:#f4f7fa;border:1px solid #e4e9ee;border-radius:12px;break-inside:avoid;}
+.ficha-interna .ficha-placa h2{font-size:1rem;color:#344a64;}
+.ficha-interna .ficha-placa-imagen{display:block;width:100%;max-width:1000px;max-height:560px;object-fit:contain;margin:1rem auto 0;border-radius:6px;}
+.ficha-interna .ficha-sin-placa{padding:2rem 1rem;}
+.ficha-interna .ficha-pie form{margin:0;}
+.ficha-interna .ficha-acciones .btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;border-radius:.65rem;font-weight:600;}
+.ficha-interna .ficha-acciones .btn-outline-dark{background:#fff;border-color:#d7e0e9;color:#344a64;}
+.ficha-interna .ficha-acciones .btn-outline-dark:hover{background:#edf2f7;border-color:#8ba0b7;}
+.ficha-interna .ficha-agregar{box-shadow:0 3px 8px #0d6efd22;}
+.ficha-interna .registro-observacion{min-width:12rem;max-width:30rem;overflow-wrap:anywhere;}
+.ficha-interna .ficha-registro-modal{width:min(560px,calc(100% - 2rem));max-height:calc(100dvh - 2rem);padding:1.5rem;border:0;border-radius:1rem;box-shadow:0 20px 60px #10243b40;color:#263b52;}
+.ficha-interna .ficha-registro-modal::backdrop{background:#10243b88;}
+.ficha-interna .ficha-registro-modal .btn-close{min-width:42px;min-height:42px;}
+.ficha-interna .ficha-registro-modal .errorlist{color:#b02a37;padding-left:1.2rem;margin:.4rem 0 0;font-size:.875rem;}
+@media(max-width:575px){
+    .ficha-interna .ficha-acciones{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;}
+    .ficha-interna .ficha-agregar{grid-column:1/-1;}
+    .ficha-interna .ficha-registro-modal{padding:1rem;}
+    .ficha-interna .ficha-placa{padding:1rem .5rem;}
+    .ficha-interna .ficha-pie{align-items:flex-start;}
+}

@@ -1,0 +1,146 @@
+{% load static %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#16283d">
+  <meta name="description" content="MASISCAM: identificación, control y trazabilidad de equipos para camaroneras.">
+  <title>MASISCAM | Control inteligente de equipos</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%2316283d' d='M32 3 56 17v30L32 61 8 47V17z'/%3E%3Cpath fill='%239db2c9' d='m32 12 15 9v19l-15 9-15-9V21z'/%3E%3Cpath fill='white' d='m32 19 9 6v13l-9 6-9-6V25z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{% static 'web/styles.css' %}">
+  <link rel="stylesheet" href="{% static 'web/styles-v2.css' %}">
+<link rel="stylesheet" href="{% static 'app/identity.css' %}"><link rel="stylesheet" href="{% static 'web/fonts.css' %}"><link rel="icon" href="{% static 'web/assets/masiscam-logo.png' %}"></head>
+<body>
+  <header class="nav" id="inicio">
+    <a class="brand" href="#inicio" aria-label="MASISCAM, inicio">
+      <img src="{% static 'web/assets/masiscam-logo.png' %}" alt="MASISCAM">
+    </a>
+    <button class="menu" aria-expanded="false" aria-controls="navlinks">Menú <span>☰</span></button>
+    <nav id="navlinks" aria-label="Navegación principal">
+      <a href="#solucion">La solución</a><a class="nav-pill" href="#productos">Productos</a><a class="nav-pill nav-pill-light" href="#servicios">Servicios</a><a href="#proceso">Cómo funciona</a>
+      <a class="nav-cta" href="{% url 'web:consulta' %}">Consultar equipo</a><a href="{% url 'accounts:login' %}">Ingresar</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy reveal">
+        <p class="eyebrow">GESTIÓN TÉCNICA PARA CAMARONERAS</p>
+        <h1>Cada equipo.<br><em>Bajo control.</em></h1>
+        <p class="lead">Centraliza la información técnica, identifica activos con QR y consulta su historial en segundos.</p>
+        <div class="actions"><a class="button primary" href="#proceso">Conoce el proceso <span>→</span></a><a class="button ghost" href="#consulta">Consultar equipo</a></div>
+        <div class="hero-proof"><span><b>01</b> Identifica</span><span><b>02</b> Organiza</span><span><b>03</b> Consulta</span></div>
+      </div>
+      <div class="hero-visual reveal" aria-label="Representación de una ficha digital de equipo">
+        <div class="orbit"></div><div class="facet f1"></div><div class="facet f2"></div>
+        <div class="equipment-showcase">
+        <article class="equipment-card" aria-live="polite">
+          <div class="card-top"><span>FICHA TÉCNICA</span><span class="status">● Activo</span></div>
+          <div class="motor-icon" id="activeIcon">ME</div>
+          <h2 id="activeName">Motor eléctrico</h2><p id="activeLocation">Estación de bombeo · Sector Norte</p>
+          <dl><div><dt id="activeLabel1">Marca</dt><dd id="activeValue1">WEG</dd></div><div><dt id="activeLabel2">Modelo</dt><dd id="activeValue2">W22</dd></div><div><dt id="activeLabel3">Serie</dt><dd id="activeValue3">ME-2026-084</dd></div></dl>
+          <div class="qr" aria-hidden="true"></div>
+        </article>
+        <div class="equipment-selector" aria-label="Seleccione un tipo de equipo">
+          <button class="equipment-option active" type="button" aria-pressed="true" data-icon="ME" data-name="Motor eléctrico" data-location="Estación de bombeo · Sector Norte" data-labels="Marca|Modelo|Serie" data-values="WEG|W22|ME-2026-084"><span>ME</span><strong>Motor eléctrico</strong></button>
+          <button class="equipment-option" type="button" aria-pressed="false" data-icon="MD" data-name="Motor diésel" data-location="Generación auxiliar · Sector Central" data-labels="Marca|Potencia|Horómetro" data-values="Caterpillar|180 HP|4.286 h"><span>MD</span><strong>Motor diésel</strong></button>
+          <button class="equipment-option" type="button" aria-pressed="false" data-icon="EB" data-name="Equipo de bombeo" data-location="Estación principal · Piscina 08" data-labels="Caudal|Presión|Diámetro" data-values="1.200 m³/h|42 PSI|12 pulgadas"><span>EB</span><strong>Equipo de bombeo</strong></button>
+          <button class="equipment-option" type="button" aria-pressed="false" data-icon="TE" data-name="Transmisión de engranajes" data-location="Área mecánica · Línea 02" data-labels="Relación|Torque|Lubricante" data-values="6:1|2.400 Nm|ISO VG 220"><span>TE</span><strong>Transmisión</strong></button>
+          <button class="equipment-option" type="button" aria-pressed="false" data-icon="EM" data-name="Embarcación" data-location="Muelle operativo · Unidad 03" data-labels="Matrícula|Eslora|Capacidad" data-values="EC-MAS-003|7,5 m|12 personas"><span>EM</span><strong>Embarcaciones</strong></button>
+        </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="intro" id="solucion">
+      <div><p class="eyebrow">UNA VISIÓN CLARA</p><h2>Información técnica que sí trabaja para usted.</h2></div>
+      <p>MASISCAM transforma registros dispersos en fichas confiables y fáciles de consultar. Cada activo queda vinculado a su ubicación, especificaciones, fotografías e historial.</p>
+    </section>
+
+    <section class="features" aria-label="Características">
+      <article class="feature feature-dark"><span class="number">01</span><div class="line-icon">⌁</div><h3>Una ficha por equipo</h3><p>Datos técnicos organizados: camaronera, estación, sector, marca, modelo y serie.</p></article>
+      <article class="feature"><span class="number">02</span><div class="line-icon">▦</div><h3>Acceso mediante QR</h3><p>Escanee la etiqueta y abra la información correcta, sin buscar carpetas ni archivos.</p></article>
+      <article class="feature"><span class="number">03</span><div class="line-icon">◎</div><h3>Trazabilidad visual</h3><p>Fotografías y datos accesibles para identificar el activo y respaldar cada revisión.</p></article>
+    </section>
+
+    <section class="catalog" id="productos">
+      <div class="section-head"><p class="eyebrow">EQUIPOS REGISTRABLES</p><h2>Una ficha clara para cada activo.</h2><p>La plataforma organiza los equipos esenciales de operación con una estructura común y datos específicos por categoría.</p></div>
+      <div class="product-grid">
+        <article class="product-card featured"><span class="product-code">ME</span><div><p>ENERGÍA</p><h3>Motor eléctrico</h3><span>Potencia · Voltaje · RPM · Serie</span></div></article>
+        <article class="product-card"><span class="product-code">MD</span><div><p>GENERACIÓN</p><h3>Motor diésel</h3><span>Potencia · Combustible · Horómetro</span></div></article>
+        <article class="product-card"><span class="product-code">EB</span><div><p>HIDRÁULICA</p><h3>Equipo de bombeo</h3><span>Caudal · Presión · Diámetro</span></div></article>
+        <article class="product-card"><span class="product-code">TE</span><div><p>MECÁNICA</p><h3>Transmisión de engranajes</h3><span>Relación · Torque · Lubricación</span></div></article>
+        <article class="product-card"><span class="product-code">EM</span><div><p>OPERACIÓN MARÍTIMA</p><h3>Embarcaciones</h3><span>Matrícula · Eslora · Motor · Capacidad</span></div></article>
+      </div>
+    </section>
+
+    <section class="services" id="servicios">
+      <div><p class="eyebrow light">SERVICIOS</p><h2>Del levantamiento a la consulta.</h2></div>
+      <div class="service-list">
+        <article><b>01</b><h3>Inventario técnico</h3><p>Organización inicial de activos, ubicaciones y características.</p></article>
+        <article><b>02</b><h3>Identificación QR</h3><p>Generación de etiquetas únicas para reconocer cada equipo.</p></article>
+        <article><b>03</b><h3>Fichas e informes</h3><p>Información estructurada y disponible desde cualquier dispositivo.</p></article>
+        <article><b>04</b><h3>Control de vigencia</h3><p>Archivado y restricción de consulta cuando un activo deja de operar.</p></article>
+      </div>
+    </section>
+
+    <section class="process" id="proceso">
+      <div class="section-head"><p class="eyebrow">SIMPLE DE PRINCIPIO A FIN</p><h2>Así funciona MASISCAM</h2><p>Tres pasos para pasar de un equipo físico a información disponible en campo.</p></div>
+      <div class="steps">
+        <article><span>1</span><div><h3>Registre</h3><p>Cree la ficha con los datos esenciales y fotografías del equipo.</p></div></article>
+        <article><span>2</span><div><h3>Identifique</h3><p>Genere una etiqueta QR única y colóquela sobre el activo.</p></div></article>
+        <article><span>3</span><div><h3>Consulte</h3><p>Escanee desde cualquier dispositivo y acceda a la ficha del equipo.</p></div></article>
+      </div>
+    </section>
+
+    <section class="benefits" id="beneficios">
+      <div class="benefit-copy"><p class="eyebrow light">CONTROL OPERATIVO</p><h2>Menos tiempo buscando.<br>Más certeza decidiendo.</h2><p>Una estructura consistente facilita las inspecciones, la comunicación técnica y el seguimiento de los activos.</p></div>
+      <div class="benefit-grid"><article><b>✓</b><h3>Datos centralizados</h3><p>La información esencial permanece ordenada en un solo lugar.</p></article><article><b>✓</b><h3>Consulta inmediata</h3><p>La ficha está disponible desde celular, tableta o computador.</p></article><article><b>✓</b><h3>Identificación precisa</h3><p>Cada QR dirige únicamente al equipo al que pertenece.</p></article><article><b>✓</b><h3>Acceso controlado</h3><p>Los equipos archivados dejan de estar disponibles públicamente.</p></article></div>
+    </section>
+
+    <section class="consult" id="consulta">
+      <div><p class="eyebrow">CONSULTA RÁPIDA</p><h2>¿Tiene el código de un equipo?</h2><p>Ingrese el identificador impreso junto al QR para localizar su ficha.</p></div>
+      <form id="lookup" method="get" action="{% url 'web:consulta' %}"><label for="code">Código del equipo</label><div class="lookup-row"><input name="code" required id="code" placeholder="Ej. ME-2026-084" autocomplete="off"><button type="submit">Consultar <span>→</span></button></div><p class="form-note" role="status"></p></form>
+    </section>
+  </main>
+
+  <footer><img src="{% static 'web/assets/masiscam-logo.png' %}" alt="MASISCAM"><p>Control e identificación técnica de equipos.</p><div class="footer-links"><button type="button" data-open-legal>Términos y privacidad</button><a href="#inicio">Volver arriba ↑</a></div><small>© 2026 MASISCAM</small><a href="{% url 'terminos' %}">Términos y Condiciones</a><a href="{% url 'privacidad' %}">Privacidad</a></footer>
+
+  <dialog class="legal-modal" id="legalModal" aria-labelledby="legalTitle">
+    <div class="legal-head"><div><p class="eyebrow">INFORMACIÓN LEGAL</p><h2 id="legalTitle">Términos y privacidad</h2></div><button class="modal-close" type="button" data-close-legal aria-label="Cerrar">×</button></div>
+    <div class="legal-tabs" role="tablist" aria-label="Documentos legales"><button class="active" type="button" role="tab" aria-selected="true" data-legal-tab="terms">Términos de uso</button><button type="button" role="tab" aria-selected="false" data-legal-tab="privacy">Protección de datos</button></div>
+    <div class="legal-content">
+      <section class="legal-panel active" id="terms" role="tabpanel">
+        <p class="legal-date">Última actualización: 16 de septiembre de 2026</p>
+        <h3>1. Objeto y aceptación</h3><p>Estos términos regulan el acceso y uso de MASISCAM, aplicación destinada al registro, identificación, consulta y administración técnica de equipos. El uso de la aplicación implica conocer y aceptar estas condiciones.</p>
+        <h3>2. Uso autorizado</h3><p>El usuario debe emplear la plataforma únicamente para fines legítimos relacionados con la gestión de activos y dentro de los permisos asignados por su organización. Queda prohibido acceder, modificar, copiar, publicar o eliminar información sin autorización.</p>
+        <h3>3. Responsabilidad del usuario</h3><p>El usuario es responsable de proteger sus credenciales, registrar información veraz y actualizada, verificar los datos antes de utilizarlos y comunicar accesos indebidos o errores relevantes.</p>
+        <h3>4. Información técnica</h3><p>Las fichas constituyen herramientas de apoyo para identificación y control. No sustituyen inspecciones, manuales del fabricante, certificaciones, mantenimiento preventivo ni decisiones de personal técnico competente.</p>
+        <h3>5. Disponibilidad y cambios</h3><p>MASISCAM podrá realizar mantenimientos, actualizaciones o mejoras. Podrán existir interrupciones temporales justificadas por seguridad, soporte o causas técnicas.</p>
+        <h3>6. Propiedad intelectual</h3><p>La marca, diseño, software y estructura de MASISCAM están protegidos por la normativa aplicable. Los datos cargados por cada organización conservan la titularidad y responsabilidades que legalmente correspondan.</p>
+        <h3>7. Terminación</h3><p>El acceso podrá suspenderse ante incumplimiento, riesgo de seguridad, uso ilícito o terminación de la relación contractual, sin perjuicio de las obligaciones legales de conservación aplicables.</p>
+        <h3>8. Legislación aplicable</h3><p>Estos términos se interpretan conforme a la legislación de la República del Ecuador. Las controversias se atenderán mediante los mecanismos legales o contractuales acordados.</p>
+      </section>
+      <section class="legal-panel" id="privacy" role="tabpanel" hidden>
+        <p class="legal-date">Aviso alineado con la Ley Orgánica de Protección de Datos Personales del Ecuador y su Reglamento General.</p>
+        <h3>1. Responsable y alcance</h3><p>El responsable del tratamiento será la persona natural o jurídica que contrate y determine el uso de MASISCAM. Su identificación completa, domicilio y canal de contacto deberán constar en el contrato, aviso de privacidad particular o pantalla de registro de cada implementación.</p>
+        <h3>2. Terminología</h3><p><strong>Dato personal:</strong> información que identifica o hace identificable a una persona. <strong>Titular:</strong> persona a quien pertenecen los datos. <strong>Tratamiento:</strong> cualquier operación realizada sobre ellos. <strong>Responsable:</strong> quien decide fines y medios. <strong>Encargado:</strong> quien trata datos por cuenta del responsable. <strong>Consentimiento:</strong> autorización libre, específica, informada e inequívoca, cuando corresponda.</p>
+        <h3>3. Datos tratados</h3><p>Según la configuración, podrán tratarse datos identificativos y de contacto de usuarios, credenciales protegidas, empresa o área de trabajo, rol, registros de acceso, actividad dentro del sistema y datos de responsables técnicos. Las fichas de equipos pueden contener información operativa que no siempre constituye un dato personal.</p>
+        <h3>4. Finalidades y base legitimadora</h3><p>Los datos se utilizan para autenticar usuarios, administrar permisos, operar fichas y consultas, brindar soporte, mantener seguridad, generar trazabilidad y cumplir obligaciones contractuales o legales. La base aplicable podrá ser la ejecución contractual, el cumplimiento legal, el interés legítimo evaluado o el consentimiento, según cada tratamiento.</p>
+        <h3>5. Principios</h3><p>El tratamiento observará juridicidad, lealtad, transparencia, finalidad, pertinencia y minimización, proporcionalidad, confidencialidad, calidad, conservación limitada, seguridad y responsabilidad proactiva.</p>
+        <h3>6. Conservación y eliminación</h3><p>Los datos se conservarán durante la relación contractual y por los plazos necesarios para atender obligaciones legales, seguridad, auditoría o reclamos. Cumplido el plazo aplicable, serán eliminados, anonimizados o bloqueados de forma segura.</p>
+        <h3>7. Destinatarios y transferencias</h3><p>El acceso se limita a usuarios autorizados, proveedores tecnológicos necesarios y autoridades cuando exista obligación legal. Cualquier comunicación o transferencia nacional o internacional deberá contar con base legítima, finalidad definida, deber de confidencialidad y garantías adecuadas.</p>
+        <h3>8. Seguridad y confidencialidad</h3><p>Se aplicarán medidas técnicas y organizativas razonables según el riesgo, incluyendo control de acceso, autenticación, registros, copias de respaldo, actualización, gestión de vulnerabilidades y respuesta ante incidentes. Ningún sistema garantiza riesgo cero.</p>
+        <h3>9. Derechos de los titulares</h3><p>El titular puede solicitar información, acceso, rectificación y actualización, eliminación, oposición, anulación o limitación del tratamiento, portabilidad cuando proceda, y no ser objeto de decisiones basadas únicamente en valoraciones automatizadas. También puede revocar el consentimiento cuando esa sea la base del tratamiento.</p>
+        <h3>10. Solicitudes y reclamos</h3><p>Las solicitudes deben dirigirse al canal de privacidad señalado por la organización responsable en su contrato o aviso particular, acreditando la identidad del titular. Si la respuesta no resulta satisfactoria, el titular puede acudir ante la Superintendencia de Protección de Datos Personales del Ecuador.</p>
+        <h3>11. Menores de edad</h3><p>MASISCAM no está dirigido a niñas, niños o adolescentes ni requiere sus datos para la gestión ordinaria de equipos. No deben registrarse datos de menores salvo necesidad legítima, garantías reforzadas y autorización legal correspondiente.</p>
+        <h3>12. Incidentes y actualizaciones</h3><p>Los incidentes de seguridad serán gestionados y notificados cuando la normativa lo exija. Este aviso podrá actualizarse por cambios legales, técnicos u operativos; la fecha vigente se mostrará en este documento.</p>
+        <h3>13. Marco normativo</h3><p>Este aviso considera la <a class="legal-link" href="https://www.registroficial.gob.ec/quinto-suplemento-al-registro-oficial-no-459/" target="_blank" rel="noopener noreferrer">Ley Orgánica de Protección de Datos Personales</a>, su <a class="legal-link" href="https://www.registroficial.gob.ec/tercer-suplemento-al-registro-oficial-no-435/" target="_blank" rel="noopener noreferrer">Reglamento General</a> y las disposiciones emitidas por la autoridad competente.</p>
+        <div class="legal-notice"><strong>Importante:</strong> este aviso general debe completarse con la identidad, domicilio, correo, teléfono, plazos concretos y proveedores del responsable de cada implementación antes de utilizarse como política definitiva.</div>
+      </section>
+    </div>
+  </dialog>
+  <script src="{% static 'web/script.js' %}"></script>
+</body>
+</html>

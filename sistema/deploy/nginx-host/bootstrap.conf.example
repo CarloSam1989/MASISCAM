@@ -1,0 +1,12 @@
+# HTTP de arranque ANTES del certificado. No depende de archivos SSL.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMINIO__ __WWW__;
+    server_tokens off;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        try_files $uri =404;
+    }
+    location / { return 503; }
+}
