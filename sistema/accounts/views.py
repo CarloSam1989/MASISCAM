@@ -16,6 +16,9 @@ class MasiscamLoginView(LoginView):
     redirect_authenticated_user = True
 
     def get_success_url(self):
+        redirect_url = self.get_redirect_url()
+        if redirect_url:
+            return redirect_url
         empresas = empresas_disponibles(self.request.user)
         empresa = empresas.filter(pk=self.request.session.get("empresa_activa_id")).first()
         if not empresa and empresas.count() == 1:
