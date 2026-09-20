@@ -19,23 +19,29 @@ class LoginFlowTests(TestCase):
         response = self.client.get(reverse("accounts:login"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'method="post"')
+        self.assertContains(response, 'action="/app/cuentas/login/"')
         self.assertContains(response, "csrfmiddlewaretoken")
         self.assertContains(response, 'name="username"')
         self.assertContains(response, 'name="password"')
         self.assertContains(response, 'type="button"')
         self.assertContains(response, 'id="toggle-password"')
         self.assertContains(response, 'aria-label="Mostrar contraseña"')
+        self.assertContains(response, 'aria-pressed="false"')
+        self.assertContains(response, 'class="password-wrapper"')
+        self.assertNotContains(response, 'type="checkbox"')
         self.assertContains(response, 'static/app/login.js')
 
     def test_invalid_credentials_show_error_and_do_not_authenticate(self):
         response = self.client.post(reverse("accounts:login"), {"username": "admin", "password": "wrong-password"})
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'role="alert"')
+        self.assertContains(response, "Usuario o contraseña incorrectos.")
         self.assertNotIn("_auth_user_id", self.client.session)
 
     def test_valid_credentials_keep_session_and_open_dashboard(self):
         response = self.client.post(reverse("accounts:login"), {"username": "admin", "password": self.password})
         self.assertRedirects(response, "/app/", fetch_redirect_response=False)
+        self.assertEqual(self.client.session["_auth_user_id"], str(self.user.pk))
         self.assertEqual(self.client.get("/app/").status_code, 200)
         self.assertEqual(self.client.session.get("empresa_activa_id"), self.empresa.pk)
 

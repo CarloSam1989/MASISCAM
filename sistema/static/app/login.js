@@ -6,6 +6,7 @@ if (passwordInput && togglePassword) {
         const visible = passwordInput.type === "password";
         passwordInput.type = visible ? "text" : "password";
         togglePassword.setAttribute("aria-label", visible ? "Ocultar contraseña" : "Mostrar contraseña");
+        togglePassword.setAttribute("aria-pressed", visible ? "true" : "false");
         togglePassword.classList.toggle("is-visible", visible);
     });
 }
