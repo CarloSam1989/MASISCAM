@@ -1,18 +1,19 @@
-(() => {
-  const block = document.getElementById('cliente-bloque');
-  if (!block) return;
-  const ruc = document.getElementById('id_ruc');
-  const selected = document.getElementById('id_cliente');
-  const reason = document.getElementById('id_razon_social');
-  const name = document.getElementById('cliente-nombre');
-  const email = document.getElementById('cliente-correo');
-  const phone = document.getElementById('cliente-telefono');
-  const status = document.getElementById('cliente-estado');
-  const results = document.getElementById('cliente-resultados');
-  const create = document.getElementById('cliente-crear');
-  const change = document.getElementById('cliente-cambiar');
-  const legacy = document.getElementById('cliente-sin-asociar');
-  const initial = JSON.parse(document.getElementById('masiscam-cliente-inicial').textContent);
+window.masiscamInitClienteSelector = (root = document) => {
+  const block = root.querySelector('#cliente-bloque');
+  if (!block || block.dataset.initialized) return;
+  block.dataset.initialized = 'true';
+  const ruc = root.querySelector('#id_ruc');
+  const selected = root.querySelector('#id_cliente');
+  const reason = root.querySelector('#id_razon_social');
+  const name = root.querySelector('#cliente-nombre');
+  const email = root.querySelector('#cliente-correo');
+  const phone = root.querySelector('#cliente-telefono');
+  const status = root.querySelector('#cliente-estado');
+  const results = root.querySelector('#cliente-resultados');
+  const create = root.querySelector('#cliente-crear');
+  const change = root.querySelector('#cliente-cambiar');
+  const legacy = root.querySelector('#cliente-sin-asociar');
+  const initial = JSON.parse(root.querySelector('#masiscam-cliente-inicial').textContent);
   const old = {ruc: ruc.value, reason: reason.value};
   let timer, controller, revision = 0;
   const cancelSearch = () => {
@@ -20,6 +21,7 @@
     if (controller) controller.abort();
     revision += 1;
   };
+  root.addEventListener('masiscam:unmount', cancelSearch, {once: true});
   const choose = client => {
     cancelSearch();
     selected.value = client.id;
@@ -95,17 +97,17 @@
     if (reason.readOnly && ruc.value.trim()) search();
   }
 
-  const modal = document.getElementById('cliente-modal');
+  const modal = root.querySelector('#cliente-modal');
   if (!create || !modal) return;
-  const form = document.getElementById('cliente-modal-form');
-  const errors = document.getElementById('cliente-modal-errores');
-  const save = document.getElementById('cliente-modal-guardar');
-  const close = document.getElementById('cliente-modal-cerrar');
+  const form = root.querySelector('#cliente-modal-form');
+  const errors = root.querySelector('#cliente-modal-errores');
+  const save = root.querySelector('#cliente-modal-guardar');
+  const close = root.querySelector('#cliente-modal-cerrar');
   let saving = false;
   create.addEventListener('click', () => {
     form.reset(); errors.hidden = true; errors.replaceChildren();
-    document.getElementById('id_nuevo-ruc').value = ruc.value.trim();
-    modal.showModal(); document.getElementById('id_nuevo-nombre_comercial').focus();
+    root.querySelector('#id_nuevo-ruc').value = ruc.value.trim();
+    modal.showModal(); root.querySelector('#id_nuevo-nombre_comercial').focus();
   });
   close.addEventListener('click', () => modal.close());
   modal.addEventListener('cancel', event => { if (saving) event.preventDefault(); });
@@ -133,4 +135,5 @@
       saving = false; save.disabled = close.disabled = false; save.textContent = 'Guardar y seleccionar';
     }
   });
-})();
+};
+window.masiscamInitClienteSelector();

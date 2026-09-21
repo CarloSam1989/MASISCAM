@@ -4,107 +4,103 @@
   const body = modal.querySelector('[data-modal-body]');
   const footer = modal.querySelector('[data-modal-footer]');
   const title = modal.querySelector('#masiscamFormModalTitle');
-  const status = modal.querySelector('.masiscam-form-modal__status');
-  let trigger;
-  let loading = false;
-
+  const status = modal.querySelector('[role="alert"]');
+  let trigger, controller, saving = false;
   const showStatus = (message, error = false) => {
     status.textContent = message;
     status.className = `masiscam-form-modal__status alert ${error ? 'alert-danger' : 'alert-info'}`;
     status.hidden = !message;
   };
-  const enhance = container => {
-    container.querySelectorAll('input:not([type=checkbox]):not([type=file]), select, textarea').forEach(element => element.classList.add('form-control'));
-    container.querySelectorAll('input[type=checkbox]').forEach(element => element.classList.add('form-check-input'));
-  };
-  const mountForm = form => {
+  const mount = (html, url) => {
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    const content = parsed.querySelector('main') || parsed.body;
+    const form = content.querySelector('form');
+    if (!form || parsed.querySelector('.login-page')) throw new Error('form');
+    const initial = parsed.getElementById('masiscam-cliente-inicial');
+    content.querySelectorAll('script').forEach(script => script.remove());
+    body.dispatchEvent(new Event('masiscam:unmount'));
+    body.replaceChildren(...content.childNodes);
+    if (initial) body.append(initial);
+    form.action = form.getAttribute('action') || url;
     form.id = form.id || 'masiscam-modal-form';
-    form.querySelectorAll('[type="submit"]').forEach(button => button.setAttribute('form', form.id));
-    const submit = form.querySelector('[type="submit"]');
+    const submit = form.querySelector('button:not([type]), button[type="submit"], input[type="submit"]');
     const actions = submit && submit.closest('.d-flex');
     footer.replaceChildren();
-    if (actions) footer.append(actions);
-  };
-  const extractForm = html => {
-    const document = new DOMParser().parseFromString(html, 'text/html');
-    return document.querySelector('form');
-  };
-  const loadForm = async url => {
-    const response = await fetch(url, {headers: {Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest'}});
-    if (!response.ok) throw new Error('load');
-    const form = extractForm(await response.text());
-    if (!form) throw new Error('form');
-    if (!form.getAttribute('action')) form.action = url;
-    body.replaceChildren(form);
-    enhance(body);
-    mountForm(form);
+    if (actions) {
+      actions.querySelectorAll('button:not([type]), [type="submit"]').forEach(button => button.setAttribute('form', form.id));
+      actions.querySelectorAll('a.btn-outline-secondary').forEach(link => {
+        const cancel = document.createElement('button');
+        cancel.type = 'button'; cancel.className = link.className;
+        cancel.textContent = link.textContent; cancel.dataset.modalClose = '';
+        link.replaceWith(cancel);
+      });
+      footer.append(actions);
+    }
+    window.masiscamEnhanceForms(body);
+    window.masiscamInitClienteSelector(body);
     form.addEventListener('submit', submitForm);
   };
   const submitForm = async event => {
     event.preventDefault();
-    if (loading) return;
+    if (saving) return;
     const form = event.currentTarget;
-    loading = true;
-    showStatus('');
-    const button = footer.querySelector('[type="submit"]');
-    if (button) { button.disabled = true; button.dataset.label = button.textContent; button.textContent = 'Guardando...'; }
+    const url = form.action;
+    const payload = new FormData(form);
+    saving = true;
+    const buttons = [...modal.querySelectorAll('button')];
+    const states = buttons.map(button => button.disabled);
+    buttons.forEach(button => { button.disabled = true; });
+    showStatus('Guardando...');
     try {
-      const response = await fetch(form.action || window.location.href, {
-        method: 'POST', body: new FormData(form),
-        headers: {Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest'}
-      });
+      const response = await fetch(url, {method: 'POST', body: payload,
+        headers: {Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest'}});
       const data = await response.json();
       if (!response.ok || !data.success) {
-        const nextForm = extractForm(data.html || '');
-        if (nextForm) {
-          body.replaceChildren(nextForm);
-          enhance(body);
-          mountForm(nextForm);
-          nextForm.addEventListener('submit', submitForm);
-        }
+        if (data.html) mount(data.html, url);
         showStatus(data.message || 'Revisa los datos del formulario.', true);
         return;
       }
-      modal.close();
-      showStatus('');
-      const scroll = window.scrollY;
-      sessionStorage.setItem('masiscam-modal-scroll', String(scroll));
       window.location.reload();
     } catch (_) {
-      showStatus('No se pudo cargar o guardar el formulario. Inténtalo de nuevo.', true);
+      showStatus('No se pudo guardar. Revisa la conexión e inténtalo de nuevo.', true);
     } finally {
-      loading = false;
-      if (button) { button.disabled = false; button.textContent = button.dataset.label || 'Guardar'; }
+      saving = false;
+      buttons.forEach((button, index) => { button.disabled = states[index]; });
     }
   };
   document.addEventListener('click', async event => {
-    const link = event.target.closest('[data-modal-form], [data-bs-target], a[href*="/proyectos/nuevo/"]');
-    if (!link) return;
-    let url = link.href;
-    if (!url && link.dataset.bsTarget) {
-      const inlineForm = document.querySelector(`${link.dataset.bsTarget} form`);
-      url = inlineForm && inlineForm.action;
-    }
-    if (!url) return;
+    const link = event.target.closest('a[data-modal-form]');
+    if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    if (loading) return;
+    if (modal.open || saving) return;
     trigger = link;
-    title.textContent = link.dataset.modalTitle || link.textContent.trim() || 'Nuevo registro';
-    body.replaceChildren();
-    footer.replaceChildren();
-    showStatus('Cargando...');
-    modal.showModal();
+    title.textContent = link.dataset.modalTitle || link.textContent.trim();
+    body.replaceChildren(); footer.replaceChildren();
+    showStatus('Cargando...'); modal.showModal();
+    const request = new AbortController();
+    controller = request;
     try {
-      await loadForm(url);
-      showStatus('');
-    } catch (_) {
-      showStatus('No se pudo cargar el formulario.', true);
+      const response = await fetch(link.href, {signal: request.signal,
+        headers: {Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest'}});
+      if (!response.ok) throw new Error('load');
+      const html = await response.text();
+      if (request.signal.aborted || !modal.open) return;
+      mount(html, link.href); showStatus('');
+      body.querySelector('input:not([type="hidden"]), select, textarea')?.focus();
+    } catch (error) {
+      if (error.name !== 'AbortError') showStatus('No se pudo cargar el formulario. Cierra e inténtalo de nuevo.', true);
     }
   });
-  modal.querySelector('[data-modal-close]').addEventListener('click', () => modal.close());
-  modal.addEventListener('click', event => { if (event.target.closest('[data-modal-close]') && !loading) modal.close(); });
-  modal.addEventListener('click', event => { if (event.target === modal && !loading) modal.close(); });
-  modal.addEventListener('close', () => { body.replaceChildren(); footer.replaceChildren(); showStatus(''); if (trigger) trigger.focus(); });
-  const scroll = sessionStorage.getItem('masiscam-modal-scroll');
-  if (scroll) { sessionStorage.removeItem('masiscam-modal-scroll'); window.scrollTo(0, Number(scroll)); }
+  modal.addEventListener('click', event => {
+    if (event.target.closest('[data-modal-close]') && !saving) modal.close();
+    if (event.target === modal && !saving) {
+      const rect = modal.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) modal.close();
+    }
+  });
+  modal.addEventListener('cancel', event => { if (saving) event.preventDefault(); });
+  modal.addEventListener('close', () => {
+    controller?.abort(); body.dispatchEvent(new Event('masiscam:unmount'));
+    body.replaceChildren(); footer.replaceChildren(); showStatus(''); trigger?.focus();
+  });
 })();

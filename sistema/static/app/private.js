@@ -1,9 +1,6 @@
-// Solo los controles Bootstrap usados por los formularios existentes.
-document.addEventListener('click', event => {
-  const button = event.target.closest('[data-bs-toggle="collapse"]');
-  if (!button) return;
-  const selector = button.getAttribute('data-bs-target');
-  if (!selector || !selector.startsWith('#')) return;
-  const target = document.getElementById(selector.slice(1));
-  if (target) button.setAttribute('aria-expanded', String(target.classList.toggle('show')));
-});
+window.masiscamEnhanceForms = container => {
+  container.querySelectorAll('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="submit"]), textarea').forEach(element => element.classList.add('form-control'));
+  container.querySelectorAll('select').forEach(element => { element.classList.remove('form-control'); element.classList.add('form-select'); });
+  container.querySelectorAll('input[type="checkbox"], input[type="radio"]').forEach(element => element.classList.add('form-check-input'));
+};
+window.masiscamEnhanceForms(document);

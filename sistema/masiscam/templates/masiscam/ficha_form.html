@@ -1,5 +1,5 @@
 {% extends "masiscam/base.html" %}{% load static %}
-{% block extra_css %}{{ block.super }}<link rel="stylesheet" href="{% static 'masiscam/css/cliente_selector.css' %}?v=1">{% endblock %}
+
 {% block content %}
 <div class="container py-4 reductor-formulario">
   <h1 class="h3 mb-4">{{ titulo }}</h1>
@@ -45,4 +45,4 @@
   {% endif %}
 </div>
 {% endblock %}
-{% block javascript %}{{ form.cliente_inicial|json_script:"masiscam-cliente-inicial" }}<script src="{% static 'masiscam/js/cliente_selector.js' %}?v=2" defer></script>{% endblock %}
+{% block javascript %}{{ form.cliente_inicial|json_script:"masiscam-cliente-inicial" }}{% endblock %}
