@@ -6,6 +6,7 @@ from django.urls import reverse
 
 from accounts.models import Empresa, Perfil
 
+from . import views
 from .models import Cliente, Documento, Equipo, Proyecto, RolMasiscam
 
 
@@ -117,7 +118,8 @@ class ClienteAccessTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_qr_protegido_redirige_a_login_y_retorna(self):
-        destino = reverse("masiscam:ficha_detalle", args=[self.equipo.pk])
+        destino = reverse("masiscam:equipo_informe", args=[self.equipo.pk])
+        self.assertEqual(views._url_publica_equipo(self.equipo), "http://localhost:8000" + destino)
         response = self.client.get(destino)
         self.assertRedirects(response, reverse("accounts:login") + "?next=" + destino, fetch_redirect_response=False)
         response = self.client.post(
@@ -125,7 +127,9 @@ class ClienteAccessTests(TestCase):
             {"username": self.cliente_user.username, "password": "Cliente-Pass-123", "next": destino},
         )
         self.assertRedirects(response, destino, fetch_redirect_response=False)
-        self.assertEqual(self.client.get(destino).status_code, 200)
+        response = self.client.get(destino)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "INFORME DE IDENTIFICACIÓN DEL EQUIPO")
 
     def test_usuario_interno_conserva_acceso(self):
         self.login_as(self.admin)

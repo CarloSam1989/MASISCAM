@@ -383,7 +383,7 @@ def equipo_token_regenerar(request, pk):
 
 
 def _url_publica_equipo(equipo):
-    ruta = reverse("masiscam:ficha_detalle", args=[equipo.pk])
+    ruta = reverse("masiscam:equipo_informe", args=[equipo.pk])
     return f"{settings.MASISCAM_PUBLIC_BASE_URL.rstrip('/')}{ruta}"
 
 

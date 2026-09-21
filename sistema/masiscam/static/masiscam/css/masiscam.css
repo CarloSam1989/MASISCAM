@@ -77,8 +77,8 @@
 }
 
 .masiscam-public header{
-    background:var(--masiscam-dark);
-    color:#fff;
+    background:var(--masiscam-border);
+    color:var(--masiscam-primary-dark);
 }
 
 .masiscam-public img{
@@ -112,7 +112,7 @@
 }
 
 .informe-header .masiscam-logo-fallback{
-    color:#fff;
+    color:var(--masiscam-primary-dark);
     font-size:2rem;
 }
 
