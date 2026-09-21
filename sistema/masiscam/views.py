@@ -10,6 +10,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
@@ -27,6 +28,17 @@ def _proyecto(request, pk):
 
 def _contexto_permisos(request):
     return {f"puede_{p}": tiene_permiso(request, p) for p in ("crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial")}
+
+
+def _es_modal(request):
+    return request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+
+def _respuesta_formulario_modal(request, template, contexto, form, status=200):
+    if _es_modal(request):
+        html = render_to_string(template, contexto, request=request)
+        return JsonResponse({"success": False, "html": html}, status=status)
+    return render(request, template, contexto, status=status)
 
 
 def _productos(equipos, cliente=None):
@@ -100,7 +112,8 @@ def cliente_detalle(request, pk):
 
 
 def _cliente_formulario(request, cliente=None):
-    respuesta_json = "application/json" in request.headers.get("Accept", "")
+    modal = _es_modal(request)
+    respuesta_json = "application/json" in request.headers.get("Accept", "") and not modal
     if respuesta_json and request.method == "POST" and cliente is None:
         existente = Cliente.objects.filter(empresa=request.empresa_activa, ruc=request.POST.get("ruc", "").strip()).first()
         if existente:
@@ -118,10 +131,16 @@ def _cliente_formulario(request, cliente=None):
                     return JsonResponse({"cliente": datos_cliente(existente), "creado": False})
             form.add_error("ruc", "Ya existe un cliente con este RUC en la empresa.")
         else:
+            if modal:
+                messages.success(request, "Cliente creado correctamente." if cliente is None else "Cliente actualizado correctamente.")
+                return JsonResponse({"success": True, "id": guardado.pk})
             if respuesta_json:
                 return JsonResponse({"cliente": datos_cliente(guardado), "creado": cliente is None}, status=201 if cliente is None else 200)
             messages.success(request, "Cliente guardado correctamente.")
             return redirect("masiscam:cliente_detalle", pk=guardado.pk)
+    if modal and request.method == "POST":
+        contexto = {"form": form, "cliente": cliente, "titulo": "Editar cliente" if cliente else "Crear cliente"}
+        return _respuesta_formulario_modal(request, "masiscam/cliente_form.html", contexto, form, status=400)
     if respuesta_json and request.method == "POST":
         return JsonResponse({"errores": form.errors.get_json_data()}, status=400)
     return render(request, "masiscam/cliente_form.html", {"form": form, "cliente": cliente, "titulo": "Editar cliente" if cliente else "Crear cliente"})
@@ -167,9 +186,15 @@ def ficha_crear(request):
             form.add_error(None, str(exc))
         else:
             auditar(empresa=request.empresa_activa, usuario=request.user, accion="FICHA_EQUIPO_CREADA", objeto=equipo)
+            if _es_modal(request):
+                messages.success(request, "Equipo registrado correctamente.")
+                return JsonResponse({"success": True, "id": equipo.pk})
             messages.success(request, "Ficha del equipo creada correctamente.")
             return redirect("masiscam:ficha_detalle", pk=equipo.pk)
-    return render(request, "masiscam/ficha_form.html", _contexto_formulario_reductor(request, form))
+    contexto = _contexto_formulario_reductor(request, form)
+    if _es_modal(request) and request.method == "POST":
+        return _respuesta_formulario_modal(request, "masiscam/ficha_form.html", contexto, form, status=400)
+    return render(request, "masiscam/ficha_form.html", contexto)
 
 
 @masiscam_access_required
@@ -387,9 +412,15 @@ def proyecto_crear(request):
             form.add_error("codigo", "Ya existe un proyecto con este código en la empresa.")
         else:
             encolar_drive(crear_carpeta_proyecto, proyecto.pk)
+            if _es_modal(request):
+                messages.success(request, "Proyecto creado correctamente.")
+                return JsonResponse({"success": True, "id": proyecto.pk})
             messages.success(request, "Proyecto creado; la estructura de Drive se procesará en segundo plano.")
             return redirect("masiscam:proyecto_detalle", pk=proyecto.pk)
-    return render(request, "masiscam/form.html", {"form": form, "titulo": "Crear proyecto"})
+    contexto = {"form": form, "titulo": "Crear proyecto"}
+    if _es_modal(request) and request.method == "POST":
+        return _respuesta_formulario_modal(request, "masiscam/form.html", contexto, form, status=400)
+    return render(request, "masiscam/form.html", contexto)
 
 
 @masiscam_access_required
@@ -436,10 +467,11 @@ def proyecto_archivar(request, pk):
     return redirect("masiscam:proyecto_detalle", pk=pk)
 
 
-@require_POST
 @permiso_masiscam_required("equipos")
 def equipo_crear(request, pk):
     proyecto = _proyecto(request, pk)
+    if request.method == "GET":
+        return render(request, "masiscam/_equipo_form.html", {"form": EquipoForm(empresa=request.empresa_activa), "proyecto": proyecto})
     form = EquipoForm(request.POST, request.FILES, empresa=request.empresa_activa)
     if form.is_valid():
         equipo = form.save(commit=False)
@@ -447,8 +479,13 @@ def equipo_crear(request, pk):
         equipo.save()
         form.guardar_ruc()
         auditar(empresa=request.empresa_activa, usuario=request.user, accion="EQUIPO_CREADO", objeto=equipo)
+        if _es_modal(request):
+            messages.success(request, "Equipo creado correctamente.")
+            return JsonResponse({"success": True, "id": equipo.pk})
         messages.success(request, "Equipo registrado.")
     else:
+        if _es_modal(request):
+            return _respuesta_formulario_modal(request, "masiscam/_equipo_form.html", {"form": form, "proyecto": proyecto}, form, status=400)
         messages.error(request, "Revise los datos del equipo.")
     return redirect("masiscam:proyecto_detalle", pk=pk)
 
@@ -465,10 +502,11 @@ def equipo_editar(request, pk, equipo_pk):
     return render(request, "masiscam/form.html", {"form": form, "titulo": "Editar equipo", "proyecto": proyecto})
 
 
-@require_POST
 @permiso_masiscam_required("documentos")
 def documento_subir(request, pk):
     proyecto = _proyecto(request, pk)
+    if request.method == "GET":
+        return render(request, "masiscam/_documento_form.html", {"form": DocumentoForm(proyecto=proyecto), "proyecto": proyecto})
     form = DocumentoForm(request.POST, request.FILES, proyecto=proyecto)
     if form.is_valid():
         archivo = form.cleaned_data["archivo"]
@@ -486,8 +524,13 @@ def documento_subir(request, pk):
         else:
             auditar(empresa=request.empresa_activa, usuario=request.user, accion="DOCUMENTO_SUBIDO", objeto=documento)
             encolar_drive(sincronizar_documento, documento.pk)
+            if _es_modal(request):
+                messages.success(request, "Documento registrado correctamente.")
+                return JsonResponse({"success": True, "id": documento.pk})
             messages.success(request, "Documento registrado y enviado a sincronización.")
     else:
+        if _es_modal(request):
+            return _respuesta_formulario_modal(request, "masiscam/_documento_form.html", {"form": form, "proyecto": proyecto}, form, status=400)
         messages.error(request, "No se pudo cargar: " + "; ".join(sum(form.errors.values(), [])))
     return redirect("masiscam:proyecto_detalle", pk=pk)
 

@@ -1,0 +1,8 @@
+<form method="post" enctype="multipart/form-data" action="{% url 'masiscam:documento_subir' proyecto.pk %}" novalidate>
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  <div class="row g-3">
+    {% for field in form %}<div class="col-12 col-md-6"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} *{% endif %}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</div>{% endfor %}
+  </div>
+  <div class="d-flex justify-content-end gap-2 mt-4"><button type="button" class="btn btn-outline-secondary" data-modal-close>Cancelar</button><button type="submit" class="btn btn-primary">Cargar y sincronizar</button></div>
+</form>
