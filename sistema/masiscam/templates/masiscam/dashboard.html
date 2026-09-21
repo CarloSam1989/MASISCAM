@@ -3,7 +3,6 @@
 <div class="container py-4">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div><h1 class="h3 mb-1">Productos</h1><p class="text-muted mb-0">{{ request.empresa_activa.nombre }}</p></div>
-    <a class="btn btn-outline-primary" href="{% url 'masiscam:clientes' %}">Clientes</a>
   </div>
   {% include "masiscam/_productos_cards.html" %}
 </div>

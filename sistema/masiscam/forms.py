@@ -122,6 +122,8 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
                 "consulta_publica_activa": equipo.consulta_publica_activa,
             }
         super().__init__(*args, **kwargs)
+        if equipo is None:
+            self.fields["consulta_publica_activa"].initial = True
         self.fields["cliente"].queryset = Cliente.objects.filter(empresa=empresa)
         self.permite_sin_cliente = bool(equipo and not equipo.cliente_id)
         self.fields["cliente"].required = not self.permite_sin_cliente
