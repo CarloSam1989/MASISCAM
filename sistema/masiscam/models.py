@@ -18,13 +18,19 @@ class RolMasiscam(models.Model):
         ADMINISTRADOR = "ADMIN", "Administrador MASISCAM"
         TECNICO = "TECNICO", "Técnico"
         CONSULTA = "CONSULTA", "Consulta"
+        CLIENTE = "CLIENTE", "Cliente (solo sus productos)"
 
     perfil = models.OneToOneField(Perfil, on_delete=models.CASCADE, related_name="rol_masiscam")
     rol = models.CharField(max_length=12, choices=Rol.choices, default=Rol.CONSULTA)
     activo = models.BooleanField(default=True)
+    cliente = models.OneToOneField("Cliente", on_delete=models.PROTECT, null=True, blank=True, related_name="acceso_usuario")
 
     class Meta:
         verbose_name = "rol MASISCAM"
+        constraints = [models.CheckConstraint(
+            condition=(models.Q(rol="CLIENTE", cliente__isnull=False) | (~models.Q(rol="CLIENTE") & models.Q(cliente__isnull=True))),
+            name="masiscam_rol_cliente_vinculado",
+        )]
         permissions = [
             ("archivar_proyecto", "Puede archivar proyectos MASISCAM"),
             ("administrar_equipos", "Puede administrar equipos MASISCAM"),
@@ -37,6 +43,11 @@ class RolMasiscam(models.Model):
 
     def __str__(self):
         return f"{self.perfil} — {self.get_rol_display()}"
+
+    def clean(self):
+        super().clean()
+        if self.cliente_id and self.perfil_id and self.cliente.empresa_id != self.perfil.empresa_id:
+            raise ValidationError({"cliente": "El cliente debe pertenecer a la empresa del perfil."})
 
 
 class Proyecto(models.Model):

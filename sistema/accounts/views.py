@@ -43,10 +43,16 @@ class MasiscamLoginView(LoginView):
         return response
 
     def get_success_url(self):
+        from masiscam.access import acceso_cliente_usuario
+        acceso_cliente = acceso_cliente_usuario(self.request.user)
+        if acceso_cliente:
+            self.request.session["empresa_activa_id"] = acceso_cliente.perfil.empresa_id
         redirect_url = self.get_redirect_url()
         if redirect_url:
             logger.info("Login redirección username=%r url=%s", self.request.user.get_username(), redirect_url)
             return redirect_url
+        if acceso_cliente:
+            return reverse("masiscam:cliente_productos")
         empresas = empresas_disponibles(self.request.user)
         empresa = empresas.filter(pk=self.request.session.get("empresa_activa_id")).first()
         if not empresa and empresas.count() == 1:

@@ -1,7 +1,7 @@
 {% extends "masiscam/base.html" %}
 {% block content %}
 <div class="container py-4">
-  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4"><h1 class="h3 mb-0">{{ cliente.nombre_comercial }}</h1>{% if puede_editar %}<a class="btn btn-outline-primary" href="{% url 'masiscam:cliente_editar' cliente.pk %}">Editar cliente</a>{% endif %}</div>
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4"><h1 class="h3 mb-0">{{ cliente.nombre_comercial }}</h1><div class="d-flex flex-wrap gap-2">{% if puede_usuarios and not acceso_cliente %}<form method="post" action="{% url 'masiscam:cliente_usuario_crear' cliente.pk %}">{% csrf_token %}<button class="btn btn-outline-success">Crear usuario</button></form>{% endif %}{% if puede_editar %}<a class="btn btn-outline-primary" href="{% url 'masiscam:cliente_editar' cliente.pk %}">Editar cliente</a>{% endif %}</div></div>
   <div class="card masiscam-card card-body mb-4"><dl class="masiscam-info-datos mb-0"><dt>RUC</dt><dd>{{ cliente.ruc }}</dd><dt>Razón social</dt><dd>{{ cliente.razon_social }}</dd><dt>Correo</dt><dd>{{ cliente.correo|default:"—" }}</dd><dt>Teléfono</dt><dd>{{ cliente.telefono|default:"—" }}</dd></dl></div>
   <h2 class="h5 mb-3">Productos asociados</h2>
   {% include "masiscam/_productos_cards.html" %}

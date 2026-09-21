@@ -1,4 +1,5 @@
 from django.shortcuts import redirect
+from django.core.exceptions import PermissionDenied
 from .models import Empresa, Perfil
 
 
@@ -9,7 +10,15 @@ class EmpresaActivaMiddleware:
     def __call__(self, request):
         request.empresa_activa = None
         request.perfil_activo = None
+        request.cliente_usuario = None
         if request.user.is_authenticated:
+            from masiscam.access import acceso_cliente_usuario
+            acceso_cliente = acceso_cliente_usuario(request.user)
+            if acceso_cliente:
+                request.cliente_usuario = acceso_cliente.cliente
+                request.session["empresa_activa_id"] = acceso_cliente.perfil.empresa_id
+                if request.path.startswith("/admin/") or request.path.startswith("/app/cuentas/empresa/"):
+                    raise PermissionDenied("El cliente no tiene acceso a administración.")
             empresa_id = request.session.get("empresa_activa_id")
             perfiles = Perfil.objects.filter(user=request.user, activo=True, empresa__activa=True, rol_masiscam__activo=True).select_related("empresa")
             perfil = perfiles.filter(empresa_id=empresa_id).first() if empresa_id else None

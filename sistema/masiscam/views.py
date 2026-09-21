@@ -3,6 +3,7 @@ from io import BytesIO
 import mimetypes
 
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError, SuspiciousFileOperation
 from django.core.paginator import Paginator
@@ -17,7 +18,8 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .access import masiscam_access_required, permiso_masiscam_required, tiene_permiso
 from .forms import ClienteForm, DocumentoForm, EquipoForm, FichaEquipoForm, ProyectoForm, VisibilidadProyectoForm, RegistroEquipoForm, datos_cliente
-from .models import Cliente, Auditoria, Documento, Equipo, Proyecto, RegistroEquipo
+from .models import Cliente, Auditoria, Documento, Equipo, Proyecto, RegistroEquipo, RolMasiscam
+from accounts.models import Perfil
 from .services import auditar, encolar_carpeta_registro, encolar_drive
 from .tasks import crear_carpeta_proyecto, sincronizar_documento
 
@@ -27,7 +29,41 @@ def _proyecto(request, pk):
 
 
 def _contexto_permisos(request):
-    return {f"puede_{p}": tiene_permiso(request, p) for p in ("crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial")}
+    return {f"puede_{p}": tiene_permiso(request, p) for p in ("crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios")}
+
+
+def _equipos_autorizados(request):
+    equipos = Equipo.objects.filter(proyecto__empresa=request.empresa_activa)
+    if request.cliente_usuario:
+        equipos = equipos.filter(cliente=request.cliente_usuario, cliente__empresa=request.empresa_activa)
+    return equipos.select_related("cliente", "proyecto")
+
+
+def _comprobar_equipo_cliente(request, equipo):
+    if request.cliente_usuario and (equipo.cliente_id != request.cliente_usuario.pk
+            or equipo.proyecto.empresa_id != request.cliente_usuario.empresa_id
+            or equipo.cliente.empresa_id != request.empresa_activa.pk):
+        raise PermissionDenied("Este producto no pertenece a su cliente.")
+    return equipo
+
+
+def _documentos_cliente(request):
+    return Documento.objects.filter(
+        proyecto__empresa=request.empresa_activa,
+        equipo__in=_equipos_autorizados(request),
+        publico=True, estado_sincronizacion=Documento.Sincronizacion.SINCRONIZADO,
+    )
+
+
+@require_GET
+@masiscam_access_required
+def cliente_productos(request):
+    if not request.cliente_usuario:
+        return redirect("masiscam:dashboard")
+    equipos = _equipos_autorizados(request)
+    if equipos.count() == 1:
+        return redirect("masiscam:ficha_detalle", pk=equipos.first().pk)
+    return render(request, "masiscam/cliente_productos.html", {"equipos": equipos})
 
 
 def _es_modal(request):
@@ -106,9 +142,39 @@ def clientes(request):
 @masiscam_access_required
 def cliente_detalle(request, pk):
     cliente = get_object_or_404(Cliente, pk=pk, empresa=request.empresa_activa)
-    contexto = {"cliente": cliente, "productos": _productos(cliente.equipos.filter(proyecto__empresa=request.empresa_activa), cliente)}
+    contexto = {"cliente": cliente, "productos": _productos(cliente.equipos.filter(proyecto__empresa=request.empresa_activa), cliente),
+                "acceso_cliente": RolMasiscam.objects.filter(cliente=cliente).select_related("perfil__user").first()}
     contexto.update(_contexto_permisos(request))
     return render(request, "masiscam/cliente_detalle.html", contexto)
+
+
+@require_POST
+@permiso_masiscam_required("usuarios")
+def cliente_usuario_crear(request, pk):
+    cliente = get_object_or_404(Cliente, pk=pk, empresa=request.empresa_activa)
+    identificacion = cliente.ruc.strip()
+    if not identificacion.isascii() or not identificacion.isdecimal() or len(identificacion) not in {10, 13}:
+        messages.error(request, "El cliente debe tener una cédula de 10 dígitos o un RUC de 13 dígitos.")
+        return redirect("masiscam:cliente_detalle", pk=cliente.pk)
+    try:
+        with transaction.atomic():
+            cliente = Cliente.objects.select_for_update().get(pk=cliente.pk, empresa=request.empresa_activa)
+            if RolMasiscam.objects.filter(cliente=cliente).exists():
+                messages.info(request, "El cliente ya tiene un usuario vinculado. No se modificó su clave.")
+                return redirect("masiscam:cliente_detalle", pk=cliente.pk)
+            User = get_user_model()
+            if User.objects.filter(username=identificacion).exists():
+                messages.error(request, "La identificación ya está registrada como usuario. No se reasignó la cuenta.")
+                return redirect("masiscam:cliente_detalle", pk=cliente.pk)
+            usuario = User.objects.create_user(username=identificacion, password=identificacion, email=cliente.correo)
+            perfil = Perfil.objects.create(user=usuario, empresa=cliente.empresa)
+            RolMasiscam.objects.create(perfil=perfil, rol=RolMasiscam.Rol.CLIENTE, cliente=cliente)
+            auditar(empresa=request.empresa_activa, usuario=request.user, accion="USUARIO_CLIENTE_CREADO", objeto=cliente)
+    except IntegrityError:
+        messages.error(request, "Ya existe un usuario con esa identificación o un acceso para este cliente.")
+    else:
+        messages.success(request, "Usuario creado. El usuario y la clave inicial son la identificación del cliente.")
+    return redirect("masiscam:cliente_detalle", pk=cliente.pk)
 
 
 def _cliente_formulario(request, cliente=None):
@@ -158,11 +224,10 @@ def cliente_editar(request, pk):
 
 
 def _equipo(request, pk):
-    return get_object_or_404(
-        Equipo.objects.select_related("proyecto", "cliente"),
-        pk=pk,
-        proyecto__empresa=request.empresa_activa,
-    )
+    if request.cliente_usuario:
+        equipo = get_object_or_404(Equipo.objects.select_related("proyecto", "cliente"), pk=pk)
+        return _comprobar_equipo_cliente(request, equipo)
+    return get_object_or_404(_equipos_autorizados(request), pk=pk)
 
 
 def _contexto_formulario_reductor(request, form, equipo=None):
@@ -214,6 +279,18 @@ def ficha_detalle(request, pk):
     return _render_ficha(request, equipo, placa_disponible=placa_disponible)
 
 
+@require_GET
+@masiscam_access_required
+def equipo_informe(request, pk):
+    equipo = _equipo(request, pk)
+    activo = (
+        equipo.proyecto.empresa.activa
+        and equipo.estado != Equipo.Estado.INACTIVO
+        and equipo.proyecto.estado != Proyecto.Estado.ARCHIVADO
+    )
+    return render(request, "masiscam/equipo_publico.html", {"equipo": equipo, "activo": activo, "privado": True})
+
+
 def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, status=200):
     if placa_disponible is None:
         placa = equipo.fotografia_placa
@@ -222,6 +299,8 @@ def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, st
                 "registros": equipo.registros.all(),
                 "registro_form": registro_form if registro_form is not None else RegistroEquipoForm()}
     contexto.update(_contexto_permisos(request))
+    if request.cliente_usuario:
+        contexto["documentos_cliente"] = _documentos_cliente(request).filter(equipo=equipo, proyecto=equipo.proyecto)
     return render(request, "masiscam/ficha_detalle.html", contexto, status=status)
 
 
@@ -304,7 +383,7 @@ def equipo_token_regenerar(request, pk):
 
 
 def _url_publica_equipo(equipo):
-    ruta = reverse("masiscam:equipo_publico", args=[equipo.token_publico])
+    ruta = reverse("masiscam:ficha_detalle", args=[equipo.pk])
     return f"{settings.MASISCAM_PUBLIC_BASE_URL.rstrip('/')}{ruta}"
 
 
@@ -662,7 +741,10 @@ def equipo_foto_privada(request, pk, tipo):
 @masiscam_access_required
 def documento_privado(request, pk, documento_pk):
     proyecto = _proyecto(request, pk)
-    documento = get_object_or_404(proyecto.documentos.exclude(estado_sincronizacion=Documento.Sincronizacion.ARCHIVADO), pk=documento_pk)
+    documentos = proyecto.documentos.exclude(estado_sincronizacion=Documento.Sincronizacion.ARCHIVADO)
+    if request.cliente_usuario:
+        documentos = documentos.filter(equipo__in=_equipos_autorizados(request))
+    documento = get_object_or_404(documentos, pk=documento_pk)
     return _archivo_protegido(documento.archivo, filename=documento.nombre_original, attachment=True)
 
 
