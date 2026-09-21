@@ -2,6 +2,7 @@
   const modal = document.getElementById('masiscamFormModal');
   if (!modal) return;
   const body = modal.querySelector('[data-modal-body]');
+  const footer = modal.querySelector('[data-modal-footer]');
   const title = modal.querySelector('#masiscamFormModalTitle');
   const status = modal.querySelector('.masiscam-form-modal__status');
   let trigger;
@@ -16,6 +17,14 @@
     container.querySelectorAll('input:not([type=checkbox]):not([type=file]), select, textarea').forEach(element => element.classList.add('form-control'));
     container.querySelectorAll('input[type=checkbox]').forEach(element => element.classList.add('form-check-input'));
   };
+  const mountForm = form => {
+    form.id = form.id || 'masiscam-modal-form';
+    form.querySelectorAll('[type="submit"]').forEach(button => button.setAttribute('form', form.id));
+    const submit = form.querySelector('[type="submit"]');
+    const actions = submit && submit.closest('.d-flex');
+    footer.replaceChildren();
+    if (actions) footer.append(actions);
+  };
   const extractForm = html => {
     const document = new DOMParser().parseFromString(html, 'text/html');
     return document.querySelector('form');
@@ -28,6 +37,7 @@
     if (!form.getAttribute('action')) form.action = url;
     body.replaceChildren(form);
     enhance(body);
+    mountForm(form);
     form.addEventListener('submit', submitForm);
   };
   const submitForm = async event => {
@@ -36,7 +46,7 @@
     const form = event.currentTarget;
     loading = true;
     showStatus('');
-    const button = form.querySelector('[type="submit"]');
+    const button = footer.querySelector('[type="submit"]');
     if (button) { button.disabled = true; button.dataset.label = button.textContent; button.textContent = 'Guardando...'; }
     try {
       const response = await fetch(form.action || window.location.href, {
@@ -49,6 +59,7 @@
         if (nextForm) {
           body.replaceChildren(nextForm);
           enhance(body);
+          mountForm(nextForm);
           nextForm.addEventListener('submit', submitForm);
         }
         showStatus(data.message || 'Revisa los datos del formulario.', true);
@@ -80,6 +91,7 @@
     trigger = link;
     title.textContent = link.dataset.modalTitle || link.textContent.trim() || 'Nuevo registro';
     body.replaceChildren();
+    footer.replaceChildren();
     showStatus('Cargando...');
     modal.showModal();
     try {
@@ -92,7 +104,7 @@
   modal.querySelector('[data-modal-close]').addEventListener('click', () => modal.close());
   modal.addEventListener('click', event => { if (event.target.closest('[data-modal-close]') && !loading) modal.close(); });
   modal.addEventListener('click', event => { if (event.target === modal && !loading) modal.close(); });
-  modal.addEventListener('close', () => { body.replaceChildren(); showStatus(''); if (trigger) trigger.focus(); });
+  modal.addEventListener('close', () => { body.replaceChildren(); footer.replaceChildren(); showStatus(''); if (trigger) trigger.focus(); });
   const scroll = sessionStorage.getItem('masiscam-modal-scroll');
   if (scroll) { sessionStorage.removeItem('masiscam-modal-scroll'); window.scrollTo(0, Number(scroll)); }
 })();
