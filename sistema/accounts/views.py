@@ -1,6 +1,7 @@
 import logging
 
 from django.contrib.auth.decorators import login_required
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.contrib import messages
 from django.contrib.auth.views import LoginView, LogoutView
 from django.shortcuts import get_object_or_404, redirect, render
@@ -21,7 +22,17 @@ class MasiscamLoginView(LoginView):
     template_name = "accounts/login.html"
     redirect_authenticated_user = True
 
+    def _next_seguro(self, valor):
+        if not valor:
+            return ""
+        if url_has_allowed_host_and_scheme(valor, allowed_hosts=self.get_success_url_allowed_hosts()):
+            return valor
+        return ""
+
     def form_invalid(self, form):
+        next_url = self._next_seguro(form.data.get(self.redirect_field_name))
+        if next_url:
+            self.request.session["masiscam_login_next"] = next_url
         logger.info(
             "Login inválido username=%r form_valid=%s authenticated=%s",
             form.data.get("username", ""),
@@ -47,7 +58,7 @@ class MasiscamLoginView(LoginView):
         acceso_cliente = acceso_cliente_usuario(self.request.user)
         if acceso_cliente:
             self.request.session["empresa_activa_id"] = acceso_cliente.perfil.empresa_id
-        redirect_url = self.get_redirect_url()
+        redirect_url = self.get_redirect_url() or self.request.session.pop("masiscam_login_next", "")
         if redirect_url:
             logger.info("Login redirección username=%r url=%s", self.request.user.get_username(), redirect_url)
             return redirect_url

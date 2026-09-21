@@ -48,3 +48,13 @@ class LoginFlowTests(TestCase):
     def test_safe_next_is_preserved(self):
         response = self.client.post(reverse("accounts:login"), {"username": "admin", "password": self.password, "next": "/app/proyectos/"})
         self.assertRedirects(response, "/app/proyectos/", fetch_redirect_response=False)
+
+    def test_safe_next_survives_invalid_login_retry(self):
+        response = self.client.post(reverse("accounts:login"), {"username": "admin", "password": "incorrecta", "next": "/app/proyectos/"})
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post(reverse("accounts:login"), {"username": "admin", "password": self.password})
+        self.assertRedirects(response, "/app/proyectos/", fetch_redirect_response=False)
+
+    def test_external_next_is_rejected(self):
+        response = self.client.post(reverse("accounts:login"), {"username": "admin", "password": self.password, "next": "https://evil.example/"})
+        self.assertRedirects(response, "/app/", fetch_redirect_response=False)

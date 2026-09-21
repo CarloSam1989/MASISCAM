@@ -1,7 +1,7 @@
 from datetime import date
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from accounts.models import Empresa, Perfil
@@ -117,9 +117,10 @@ class ClienteAccessTests(TestCase):
         response = self.client.get(reverse("masiscam:documento_privado", args=[self.otro_proyecto.pk, self.documento_ajeno.pk]))
         self.assertEqual(response.status_code, 404)
 
+    @override_settings(MASISCAM_PUBLIC_BASE_URL="https://masiscam.com")
     def test_qr_protegido_redirige_a_login_y_retorna(self):
         destino = reverse("masiscam:equipo_informe", args=[self.equipo.pk])
-        self.assertEqual(views._url_publica_equipo(self.equipo), "http://localhost:8000" + destino)
+        self.assertEqual(views._url_publica_equipo(self.equipo), "https://masiscam.com" + destino)
         response = self.client.get(destino)
         self.assertRedirects(response, reverse("accounts:login") + "?next=" + destino, fetch_redirect_response=False)
         response = self.client.post(
