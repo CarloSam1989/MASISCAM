@@ -118,9 +118,9 @@ class ClienteAccessTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
     @override_settings(MASISCAM_PUBLIC_BASE_URL="https://masiscam.com")
-    def test_qr_protegido_redirige_a_login_y_retorna(self):
+    def test_informe_interno_exige_login_y_qr_usa_token(self):
         destino = reverse("masiscam:equipo_informe", args=[self.equipo.pk])
-        self.assertEqual(views._url_publica_equipo(self.equipo), "https://masiscam.com" + destino)
+        self.assertEqual(views._url_publica_equipo(self.equipo), "https://masiscam.com" + reverse("masiscam:equipo_publico", args=[self.equipo.token_publico]))
         response = self.client.get(destino)
         self.assertRedirects(response, reverse("accounts:login") + "?next=" + destino, fetch_redirect_response=False)
         response = self.client.post(

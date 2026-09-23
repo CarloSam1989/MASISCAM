@@ -13,6 +13,7 @@
       {% if puede_editar %}<a class="btn btn-outline-primary" href="{% url 'masiscam:ficha_editar' equipo.pk %}">Editar ficha</a>{% endif %}
       <a class="btn btn-outline-dark" target="_blank" rel="noopener" href="{% url 'masiscam:equipo_informe' equipo.pk %}">Ver informe</a>
       {% if puede_qr %}<a class="btn btn-outline-dark" href="{% url 'masiscam:equipo_qr' equipo.pk %}?download=1">Descargar QR</a><a class="btn btn-outline-dark" href="{% url 'masiscam:equipo_etiqueta' equipo.pk %}" target="_blank" rel="noopener">Imprimir etiqueta</a>{% endif %}
+      {% if puede_archivar and equipo.estado != "INACTIVO" %}<form method="post" action="{% url 'masiscam:ficha_archivar' equipo.pk %}">{% csrf_token %}<button class="btn btn-outline-danger">Marcar inactivo</button></form>{% endif %}
     </div>
   </header>
   <article class="card masiscam-card"><div class="card-body p-3 p-lg-4">
@@ -60,10 +61,12 @@
     <footer class="ficha-pie mt-3 pt-3 border-top">
       <span class="text-muted small">Identificación del equipo</span>
       <form method="post" action="{% url 'masiscam:equipo_token_regenerar' equipo.pk %}" onsubmit="return confirm('¿Invalidar inmediatamente el QR anterior?')">{% csrf_token %}<button class="btn btn-outline-danger">Regenerar código QR</button></form>
+      {% if equipo.consulta_publica_activa %}<form method="post" action="{% url 'masiscam:equipo_publico_desactivar' equipo.pk %}">{% csrf_token %}<button class="btn btn-outline-danger">Desactivar URL pública</button></form>{% endif %}
     </footer>
     {% endif %}
   </div></article>
   {% if documentos_cliente %}<section class="card masiscam-card mt-4"><div class="card-body"><h2 class="h5">Documentos disponibles</h2><ul class="mb-0">{% for documento in documentos_cliente %}<li><a href="{% url 'masiscam:documento_privado' equipo.proyecto.pk documento.pk %}">{{ documento.titulo }}</a></li>{% endfor %}</ul></div></section>{% endif %}
+  {% include "masiscam/_documentos_drive.html" %}
   {% include "masiscam/_registros_equipo.html" %}
 </div>
 {% endblock %}

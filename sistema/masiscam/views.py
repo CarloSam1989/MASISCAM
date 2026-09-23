@@ -302,7 +302,10 @@ def equipo_informe(request, pk):
         and equipo.estado != Equipo.Estado.INACTIVO
         and equipo.proyecto.estado != Proyecto.Estado.ARCHIVADO
     )
-    return render(request, "masiscam/equipo_publico.html", {"equipo": equipo, "activo": activo, "privado": True})
+    contexto = {"equipo": equipo, "activo": activo, "privado": True}
+    if activo:
+        contexto.update(_contexto_documentos_drive(equipo))
+    return render(request, "masiscam/equipo_publico.html", contexto)
 
 
 def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, status=200):
@@ -313,6 +316,8 @@ def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, st
                 "registros": equipo.registros.all(),
                 "registro_form": registro_form if registro_form is not None else RegistroEquipoForm()}
     contexto.update(_contexto_permisos(request))
+    contexto.update(_contexto_documentos_drive(equipo))
+    contexto["privado"] = True
     if request.cliente_usuario:
         contexto["documentos_cliente"] = _documentos_cliente(request).filter(equipo=equipo, proyecto=equipo.proyecto)
     return render(request, "masiscam/ficha_detalle.html", contexto, status=status)
@@ -397,7 +402,7 @@ def equipo_token_regenerar(request, pk):
 
 
 def _url_publica_equipo(equipo):
-    ruta = reverse("masiscam:equipo_informe", args=[equipo.pk])
+    ruta = reverse("masiscam:equipo_publico", args=[equipo.token_publico])
     return f"{settings.MASISCAM_PUBLIC_BASE_URL.rstrip('/')}{ruta}"
 
 
@@ -444,12 +449,6 @@ def equipo_publico(request, token):
         and equipo.estado != Equipo.Estado.INACTIVO
         and equipo.proyecto.estado != Proyecto.Estado.ARCHIVADO
     )
-    documentos, error_documentos = [], False
-    if activo and equipo.drive_folder_id:
-        try:
-            documentos = EquipoDriveDocuments(equipo).list()
-        except Exception:
-            error_documentos = True
     response = render(
         request,
         "masiscam/equipo_publico.html",
@@ -457,12 +456,40 @@ def equipo_publico(request, token):
             "equipo": equipo,
             "activo": activo,
             "empresa_ruc": empresa_ruc,
-            "documentos_publicos": True, "documentos_drive": documentos,
-            "error_documentos": error_documentos,
+            "documentos_publicos": True,
+            **(_contexto_documentos_drive(equipo) if activo else {}),
         },
     )
 
     return _cabeceras_documentos(response)
+
+
+def _contexto_documentos_drive(equipo):
+    contexto = {"documentos_drive": [], "error_documentos": False}
+    if equipo.drive_folder_id:
+        try:
+            contexto["documentos_drive"] = EquipoDriveDocuments(equipo).list()
+        except Exception:
+            contexto["error_documentos"] = True
+    return contexto
+
+
+@require_POST
+@permiso_masiscam_required("qr")
+def equipo_publico_desactivar(request, pk):
+    equipo = _equipo(request, pk)
+    equipo.consulta_publica_activa = False
+    equipo.regenerar_token()
+    equipo.save(update_fields=["consulta_publica_activa", "token_publico", "actualizado_en"])
+    auditar(empresa=request.empresa_activa, usuario=request.user, accion="CONSULTA_EQUIPO_DESACTIVADA", objeto=equipo)
+    messages.success(request, "Consulta publica desactivada; el enlace anterior queda invalidado.")
+    return redirect("masiscam:ficha_detalle", pk=pk)
+
+
+@require_GET
+@masiscam_access_required
+def equipo_documento_privado(request, pk, archivo_id):
+    return _servir_documento_drive(_equipo(request, pk), archivo_id)
 
 
 def _cabeceras_documentos(response):
@@ -480,6 +507,10 @@ def equipo_documento_drive(request, token, archivo_id):
     ).exclude(estado=Equipo.Estado.INACTIVO).exclude(proyecto__estado=Proyecto.Estado.ARCHIVADO).first()
     if equipo is None or not equipo.drive_folder_id:
         return _cabeceras_documentos(HttpResponse("Documento no disponible.", status=404))
+    return _servir_documento_drive(equipo, archivo_id)
+
+
+def _servir_documento_drive(equipo, archivo_id):
     try:
         archivo, nombre, mime = EquipoDriveDocuments(equipo).download(archivo_id)
     except DocumentUnavailable:

@@ -7,14 +7,14 @@
       <h2 id="registro-tipo-{{ forloop.counter }}" class="h5 mb-3">{{ grupo.grouper }}</h2>
       <div class="table-responsive">
         <table class="table align-middle ficha-registros mb-0">
-          <thead><tr><th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Estado Drive</th>{% if not ocultar_drive %}<th scope="col">Carpeta Drive</th>{% endif %}{% if not informe %}<th scope="col">Acciones</th>{% endif %}</tr></thead>
+          <thead><tr><th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Estado Drive</th>{% if not ocultar_drive %}<th scope="col">Documentos</th>{% endif %}{% if not informe %}<th scope="col">Acciones</th>{% endif %}</tr></thead>
           <tbody>{% for registro in grupo.list %}
             <tr>
               <td class="text-nowrap">{{ registro.fecha|date:"d/m/Y" }}</td>
               <td>{{ registro.get_tipo_display }}</td>
               <td>{% if registro.drive_folder_id %}<span class="badge bg-success">Disponible</span>{% elif registro.drive_error %}<span class="badge bg-danger">Error de Drive</span>{% else %}<span class="badge bg-secondary">Pendiente</span>{% endif %}</td>
               {% if not ocultar_drive %}<td>
-                {% if registro.drive_folder_url %}<a class="btn btn-outline-primary text-nowrap" target="_blank" rel="noopener" href="{{ registro.drive_folder_url }}">Abrir carpeta</a>
+                {% if registro.drive_folder_id %}<a class="btn btn-outline-primary text-nowrap" href="#documentos-titulo">Ver documentos</a>
                 {% else %}<span class="text-muted">{% if registro.drive_error %}No disponible{% else %}Pendiente{% endif %}</span>{% endif %}
               </td>{% endif %}
               {% if not informe %}<td>{% if not registro.drive_folder_id and registro.drive_error and puede_editar %}<form method="post" action="{% url 'masiscam:registro_reintentar' equipo.pk registro.pk %}">{% csrf_token %}<button class="btn btn-outline-primary text-nowrap">Reintentar Drive</button></form>{% else %}<span class="text-muted">—</span>{% endif %}</td>{% endif %}

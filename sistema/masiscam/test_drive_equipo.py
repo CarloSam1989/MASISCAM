@@ -84,7 +84,7 @@ class DriveEquipoTests(TestCase):
         dos = sincronizar_carpeta_equipo(segundo.pk)
         self.assertNotEqual(uno, dos)
         self.assertEqual([f["name"] for f in self.archivos.values()],
-                         [f"{self.cliente.nombre_comercial}-{self.cliente.ruc}",
+                         [self.cliente.razon_social,
                           "REDUCTOR", "SERIE123", "SERIE456"])
         self.assertEqual(self.archivos[uno]["parents"], self.archivos[dos]["parents"])
         self.assertEqual(sincronizar_carpeta_equipo(primero.pk), uno)
@@ -132,7 +132,7 @@ class DriveEquipoTests(TestCase):
 
     def test_razon_social_legacy_y_producto_fijo_y_empresa_validada(self):
         sincronizar_carpeta_equipo(self.antiguo.pk)
-        self.assertIn(f"{self.proyecto.razon_social}-{self.proyecto.identificacion_cliente}", [f["name"] for f in self.archivos.values()])
+        self.assertIn(self.proyecto.razon_social, [f["name"] for f in self.archivos.values()])
         futuro = self.nuevo(tipo_producto="BOMBA", nombre="BOMBA-001")
         sincronizar_carpeta_equipo(futuro.pk)
         self.assertIn("BOMBA", [f["name"] for f in self.archivos.values()])
@@ -176,16 +176,16 @@ class DriveEquipoTests(TestCase):
             self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [padre["id"]])
             self.assertIn("2026-09-15 - " + registro.get_tipo_display(), self.archivos[registro.drive_folder_id]["name"])
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
-        for texto in ["Nuevo", "Asistencia", "Garantía", "Abrir carpeta", "Disponible", "registro-modal", "Editar ficha", "Ver informe", "Descargar QR", "Imprimir etiqueta"]:
+        for texto in ["Nuevo", "Asistencia", "Garantía", "Ver documentos", "Disponible", "registro-modal", "Editar ficha", "Ver informe", "Descargar QR", "Imprimir etiqueta"]:
             self.assertContains(response, texto)
-        self.assertContains(response, RegistroEquipo.objects.first().drive_folder_url)
+        self.assertNotContains(response, "https://drive.google.com/")
         html = response.content.decode()
         tabla = html.split('id="historial-registros"', 1)[1].split('<dialog', 1)[0]
         self.assertNotIn("Historial / Registros", html)
         self.assertNotIn("Observación", tabla)
         for tipo in RegistroEquipo.Tipo.labels:
             self.assertIn('class="h5 mb-3">' + tipo + '</h2>', tabla)
-        self.assertEqual(tabla.count("Abrir carpeta</a>"), 5)
+        self.assertEqual(tabla.count("Ver documentos</a>"), 5)
         RegistroEquipo.objects.create(equipo=self.antiguo, tipo="ASISTENCIA", fecha="2026-09-16")
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         tabla = response.content.decode().split('id="historial-registros"', 1)[1].split('<dialog', 1)[0]
@@ -407,7 +407,7 @@ class DriveEquipoTests(TestCase):
         self.assertNotEqual(*ids)
 
     def test_tipos_comparten_cliente_y_reutilizan_estructura_existente(self):
-        nombre = f"{self.cliente.nombre_comercial}-{self.cliente.ruc}"
+        nombre = self.cliente.razon_social
         padre = self.servicio.obtener_carpeta_equipo(nombre, "root-masiscam")["id"]
         tipo = self.servicio.obtener_carpeta_equipo("REDUCTOR", padre)["id"]
         serie = self.servicio.obtener_carpeta_equipo("SERIE123", tipo)["id"]
@@ -423,7 +423,7 @@ class DriveEquipoTests(TestCase):
 
     def test_sanitizacion_reintentos_y_colisiones_de_series(self):
         from .services import nombre_carpeta_drive
-        self.cliente.nombre_comercial = "Cliente / especial?"
+        self.cliente.razon_social = "Cliente / especial?"
         self.cliente.save()
         ids = []
         for serie in ("SER/123", "SER?123"):
@@ -436,3 +436,21 @@ class DriveEquipoTests(TestCase):
         self.assertEqual(len(self.archivos), 4)
         for carpeta in self.archivos.values():
             self.assertNotRegex(carpeta["name"], r"[/\\?]")
+
+    def test_regenerar_y_desactivar_token_no_crean_carpetas(self):
+        from . import views
+        equipo = self.nuevo(numero_serie="SERIE-TOKEN", consulta_publica_activa=True)
+        carpeta = sincronizar_carpeta_equipo(equipo.pk)
+        antes = self.archivos.copy()
+        for action in ("equipo_token_regenerar", "equipo_publico_desactivar"):
+            with patch("masiscam.signals.encolar_carpeta_equipo") as cola:
+                with self.captureOnCommitCallbacks(execute=True):
+                    request = self.request_registro(action, equipo=equipo.pk)
+                    self.assertEqual(getattr(views, action)(request, equipo.pk).status_code, 302)
+                cola.assert_not_called()
+            equipo.refresh_from_db()
+            self.assertEqual(equipo.drive_folder_id, carpeta)
+            self.assertEqual(sincronizar_carpeta_equipo(equipo.pk), carpeta)
+            self.assertEqual(self.archivos, antes)
+        self.api.files().update.assert_not_called()
+        self.api.files().delete.assert_not_called()

@@ -18,7 +18,9 @@ def nombre_seguro(texto):
 
 def nombre_carpeta_drive(texto):
     original = texto.strip()
-    seguro = nombre_seguro(original).strip(" .") or "SIN-NOMBRE"
+    seguro = nombre_seguro(original).strip() or "SIN-NOMBRE"
+    if seguro in {".", ".."}:
+        seguro = "SIN-NOMBRE"
     # Distinct series must not collapse into the same name after sanitization.
     if seguro != original:
         seguro = seguro[:169] + "-" + hashlib.sha256(original.encode("utf-8")).hexdigest()[:10]
@@ -77,9 +79,10 @@ class GoogleDriveService:
             raise ValueError("El cliente del equipo no pertenece a su empresa.")
         if equipo.drive_folder_id:
             return {"id": equipo.drive_folder_id, "webViewLink": equipo.drive_folder_url}
-        cliente = equipo.cliente.nombre_comercial if equipo.cliente_id else equipo.razon_social_cliente.strip()
-        identificador = equipo.ruc_cliente.strip() or f"CLIENTE-{equipo.cliente_id or equipo.proyecto_id}"
-        niveles = [f"{cliente}-{identificador}", equipo.tipo_producto,
+        cliente = equipo.razon_social_cliente.strip()
+        if not cliente or equipo.tipo_producto not in {"REDUCTOR", "BOMBA"}:
+            raise ValueError("El equipo requiere razon social y un tipo de producto valido.")
+        niveles = [cliente, equipo.tipo_producto,
                    equipo.numero_serie.strip() or f"EQUIPO-{equipo.pk}"]
         padre = settings.GOOGLE_DRIVE_ROOT_FOLDER_ID
         for nombre in niveles:

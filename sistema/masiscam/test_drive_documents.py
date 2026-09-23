@@ -204,3 +204,89 @@ class PublicDriveDocumentsTests(TestCase):
         self.nodes["pdf"]["size"] = str(65 * 1024 * 1024)
         self.assertEqual(self.client.get(self.url()).status_code, 404)
         self.api.files().get_media.assert_not_called()
+
+    def login(self):
+        self.client.force_login(self.usuario)
+
+    def private_url(self, file="pdf", equipo=None):
+        return reverse("masiscam:equipo_documento_privado", args=[equipo or self.antiguo.pk, file])
+
+    def test_internal_documents_require_login_and_ignore_public_flag(self):
+        response = self.client.get(self.private_url())
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("accounts:login"), response.url)
+        self.service_factory.assert_not_called()
+        self.login()
+        Equipo.objects.filter(pk=self.antiguo.pk).update(consulta_publica_activa=False)
+        response = self.client.get(self.private_url())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        response.close()
+        self.assertEqual(self.client.get(self.private_url("foreign")).status_code, 404)
+        for vista in ("ficha_detalle", "equipo_informe"):
+            response = self.client.get(reverse("masiscam:" + vista, args=[self.antiguo.pk]))
+            self.assertContains(response, self.private_url())
+            self.assertNotContains(response, "drive.google.com")
+            self.assertNotContains(response, self.url())
+
+    def test_internal_customer_cannot_access_another_customer(self):
+        from .models import RolMasiscam
+        Equipo.objects.filter(pk=self.antiguo.pk).update(cliente=self.cliente)
+        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="CLIENTE", cliente=self.cliente)
+        self.login()
+        response = self.client.get(self.private_url())
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        self.assertEqual(self.client.get(self.private_url("foreign", self.other.pk)).status_code, 403)
+
+    def test_token_rotation_changes_url_qr_and_keeps_data(self):
+        from . import views
+        old = self.antiguo.token_publico
+        old_url = self.url()
+        self.login()
+        qr_url = reverse("masiscam:equipo_qr", args=[self.antiguo.pk])
+        before_qr = self.client.get(qr_url).content
+        response = self.client.post(reverse("masiscam:equipo_token_regenerar", args=[self.antiguo.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.antiguo.refresh_from_db()
+        self.assertNotEqual(self.antiguo.token_publico, old)
+        self.assertEqual(self.antiguo.drive_folder_id, "series-root")
+        self.assertNotEqual(self.client.get(qr_url).content, before_qr)
+        self.assertIn(self.antiguo.token_publico, views._url_publica_equipo(self.antiguo))
+        self.client.logout()
+        self.assertEqual(self.client.get(old_url).status_code, 404)
+        self.assertEqual(self.client.get(reverse("masiscam:equipo_publico", args=[old])).status_code, 404)
+        response = self.client.get(self.url())
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        self.assertContains(self.client.get(reverse("masiscam:equipo_publico", args=[self.antiguo.token_publico])), "informe.pdf")
+        self.api.files().create.assert_not_called()
+        self.api.files().update.assert_not_called()
+        self.api.files().delete.assert_not_called()
+
+    def test_disable_url_and_soft_delete_preserve_history_and_files(self):
+        from .models import Documento, RolMasiscam
+        registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO", fecha="2026-09-22")
+        documento = Documento.objects.create(proyecto=self.proyecto, equipo=self.antiguo,
+            titulo="Conservar", archivo="conservar.pdf", hash_sha256="f" * 64, subido_por=self.usuario)
+        self.login()
+        old_url = self.url()
+        response = self.client.post(reverse("masiscam:equipo_publico_desactivar", args=[self.antiguo.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.antiguo.refresh_from_db()
+        self.assertFalse(self.antiguo.consulta_publica_activa)
+        self.assertEqual(self.client.get(old_url).status_code, 404)
+        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="ADMIN")
+        for tipo in ("REDUCTOR", "BOMBA"):
+            Equipo.objects.filter(pk=self.antiguo.pk).update(tipo_producto=tipo, estado="ACTIVO", consulta_publica_activa=True)
+            response = self.client.post(reverse("masiscam:ficha_archivar", args=[self.antiguo.pk]))
+            self.assertEqual(response.status_code, 302)
+            self.antiguo.refresh_from_db()
+            self.assertEqual(self.antiguo.estado, "INACTIVO")
+            self.assertEqual(self.antiguo.drive_folder_id, "series-root")
+            self.assertTrue(RegistroEquipo.objects.filter(pk=registro.pk).exists())
+            self.assertTrue(Documento.objects.filter(pk=documento.pk).exists())
+            self.assertEqual(self.client.get(self.url()).status_code, 404)
+            self.assertNotContains(self.client.get(reverse("masiscam:equipo_publico", args=[self.antiguo.token_publico])), "informe.pdf")
+        self.api.files().delete.assert_not_called()
+        self.api.files().update.assert_not_called()
