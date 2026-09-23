@@ -94,8 +94,16 @@ class GoogleDriveService:
         return self.obtener_carpeta_equipo(nombre, proyecto.drive_folder_id)["id"]
 
     def crear_estructura_registro(self, registro, equipo_folder_id):
-        nombre = f"{registro.fecha:%Y-%m-%d} - {registro.get_tipo_display()}"
-        return self.obtener_carpeta_equipo(nombre_carpeta_drive(nombre), equipo_folder_id)
+        from .models import Equipo, RegistroEquipo
+        if Equipo.objects.exclude(pk=registro.equipo_id).filter(drive_folder_id=equipo_folder_id).exists():
+            raise ValueError("La carpeta del equipo esta compartida; requiere revision manual.")
+        nombre = nombre_carpeta_drive(registro.tipo)
+        carpeta = self.obtener_carpeta_equipo(nombre, equipo_folder_id)
+        if RegistroEquipo.objects.exclude(pk=registro.pk).filter(drive_folder_id=carpeta["id"]).exists():
+            carpeta = self.obtener_carpeta_equipo(f"{nombre} - REGISTRO-{registro.pk}", equipo_folder_id)
+        if RegistroEquipo.objects.exclude(pk=registro.pk).filter(drive_folder_id=carpeta["id"]).exists():
+            raise ValueError("La carpeta del registro esta compartida; requiere revision manual.")
+        return carpeta
 
     def reservar_documento(self, documento_id):
         """Commit the remote ID before any upload, independently of final DB save."""

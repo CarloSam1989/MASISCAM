@@ -176,7 +176,7 @@ class DriveEquipoTests(TestCase):
         self.assertEqual(padre["id"], self.antiguo.drive_folder_id)
         for registro in RegistroEquipo.objects.all():
             self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [padre["id"]])
-            self.assertIn("2026-09-15 - " + registro.get_tipo_display(), self.archivos[registro.drive_folder_id]["name"])
+            self.assertEqual(registro.tipo, self.archivos[registro.drive_folder_id]["name"])
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         for texto in ["Nuevo", "Asistencia", "Garantía", "Sin documentos", "Disponible", "registro-modal", "Editar ficha", "Ver informe", "Descargar QR", "Imprimir etiqueta"]:
             self.assertContains(response, texto)
@@ -454,5 +454,30 @@ class DriveEquipoTests(TestCase):
             self.assertEqual(equipo.drive_folder_id, carpeta)
             self.assertEqual(sincronizar_carpeta_equipo(equipo.pk), carpeta)
             self.assertEqual(self.archivos, antes)
+        self.api.files().update.assert_not_called()
+        self.api.files().delete.assert_not_called()
+
+    def test_five_equipment_and_repeated_records_have_independent_folders(self):
+        from .models import RegistroEquipo
+        from .services import sincronizar_carpeta_registro
+        registros = []
+        for index in range(5):
+            equipo = self.nuevo(nombre=f"EQ-{index}", numero_serie=f"SER-{index}")
+            with self.captureOnCommitCallbacks(execute=True), patch(
+                "masiscam.signals.encolar_carpeta_registro", side_effect=sincronizar_carpeta_registro
+            ):
+                registro = RegistroEquipo.objects.create(equipo=equipo, tipo="MANTENIMIENTO", fecha="2026-09-23")
+            registro.refresh_from_db()
+            equipo.refresh_from_db()
+            self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [equipo.drive_folder_id])
+            self.assertEqual(self.archivos[registro.drive_folder_id]["name"], "MANTENIMIENTO")
+            registros.append(registro)
+        self.assertEqual(len({r.drive_folder_id for r in registros}), 5)
+        segundo = RegistroEquipo.objects.create(equipo=registros[0].equipo, tipo="MANTENIMIENTO", fecha="2026-09-23")
+        folder = sincronizar_carpeta_registro(segundo.pk)
+        self.assertNotEqual(folder, registros[0].drive_folder_id)
+        count = len(self.archivos)
+        self.assertEqual(sincronizar_carpeta_registro(segundo.pk), folder)
+        self.assertEqual(len(self.archivos), count)
         self.api.files().update.assert_not_called()
         self.api.files().delete.assert_not_called()

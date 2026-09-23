@@ -407,3 +407,38 @@ class PublicDriveDocumentsTests(TestCase):
                 expected = self.url() if index == 2 else self.private_url()
                 self.assertIn(expected, maintenance)
                 self.assertEqual(html.count('aria-label="Ver informe.pdf"'), 1)
+
+    def test_inactive_equipment_hides_records_and_files_without_deleting(self):
+        registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="MANTENIMIENTO",
+            fecha="2026-09-23", drive_folder_id="internal")
+        Equipo.objects.filter(pk=self.antiguo.pk).update(estado="INACTIVO")
+        self.login()
+        response = self.client.get(reverse("masiscam:ficha_detalle", args=[self.antiguo.pk]))
+        self.assertContains(response, self.antiguo.numero_serie)
+        self.assertContains(response, "Inactivo")
+        for text in ("historial-registros", "registro-modal", "Pendiente", "informe.pdf", "Agregar registro"):
+            self.assertNotContains(response, text)
+        self.assertEqual(self.client.get(self.private_url()).status_code, 403)
+        self.assertEqual(self.client.get(self.url()).status_code, 404)
+        self.service_factory.assert_not_called()
+        registro.refresh_from_db()
+        self.assertEqual(registro.drive_folder_id, "internal")
+        self.assertTrue(RegistroEquipo.objects.filter(pk=registro.pk).exists())
+
+    def test_nested_or_shared_record_folders_do_not_duplicate_files(self):
+        self.login()
+        parent = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO",
+            fecha="2026-09-22", drive_folder_id="series-root")
+        child = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="MANTENIMIENTO",
+            fecha="2026-09-23", drive_folder_id="internal")
+        url = reverse("masiscam:ficha_detalle", args=[self.antiguo.pk])
+        response = self.client.get(url)
+        registros = {r.pk: r for r in response.context["registros"]}
+        self.assertEqual(registros[parent.pk].documentos_drive, [])
+        self.assertEqual([d["id"] for d in registros[child.pk].documentos_drive], ["pdf"])
+        RegistroEquipo.objects.create(equipo=self.antiguo, tipo="ASISTENCIA",
+            fecha="2026-09-24", drive_folder_id="internal")
+        response = self.client.get(url)
+        self.assertNotContains(response, "informe.pdf")
+        self.api.files().update.assert_not_called()
+        self.api.files().delete.assert_not_called()

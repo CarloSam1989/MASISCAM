@@ -318,7 +318,7 @@ def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, st
     contexto.update(_contexto_permisos(request))
     contexto.update(_contexto_documentos_drive(equipo, request))
     contexto["privado"] = True
-    if request.cliente_usuario:
+    if request.cliente_usuario and equipo.estado != Equipo.Estado.INACTIVO:
         contexto["documentos_cliente"] = _documentos_cliente(request).filter(equipo=equipo, proyecto=equipo.proyecto)
     return render(request, "masiscam/ficha_detalle.html", contexto, status=status)
 
@@ -465,7 +465,8 @@ def equipo_publico(request, token):
 
 
 def _puede_ver_documentos(request, equipo):
-    return (request.user.is_authenticated and tiene_permiso(request, "ver")
+    return (request.user.is_authenticated and equipo.estado != Equipo.Estado.INACTIVO
+            and tiene_permiso(request, "ver")
             and equipo.proyecto.empresa_id == request.empresa_activa.pk
             and (not request.cliente_usuario or (
                 equipo.cliente_id == request.cliente_usuario.pk
@@ -480,7 +481,7 @@ def _documentos_listado(request, equipos):
 
 
 def _contexto_documentos_drive(equipo, request=None, registros=True):
-    permitido = request is None or _puede_ver_documentos(request, equipo)
+    permitido = equipo.estado != Equipo.Estado.INACTIVO and (request is None or _puede_ver_documentos(request, equipo))
     contexto = {"documentos_drive": [], "error_documentos": False,
                 "puede_ver_documentos": permitido}
     if permitido and equipo.drive_folder_id:
@@ -489,10 +490,19 @@ def _contexto_documentos_drive(equipo, request=None, registros=True):
         except Exception:
             contexto["error_documentos"] = True
     if registros:
-        contexto["registros"] = list(equipo.registros.all())
+        contexto["registros"] = list(equipo.registros.all()) if equipo.estado != Equipo.Estado.INACTIVO else []
+        # Assign each file only to its nearest, uniquely owned record folder.
+        folders = [r.drive_folder_id for r in contexto["registros"] if r.drive_folder_id]
+        owners = dict(RegistroEquipo.objects.filter(drive_folder_id__in=folders)
+                      .values("drive_folder_id").annotate(total=Count("pk"))
+                      .values_list("drive_folder_id", "total")) if folders else {}
+        por_carpeta = {folder: [] for folder in folders}
+        for doc in contexto["documentos_drive"]:
+            folder = next((f for f in reversed(doc.get("folders", ())) if f in owners), None)
+            if folder and owners[folder] == 1:
+                por_carpeta[folder].append(doc)
         for registro in contexto["registros"]:
-            registro.documentos_drive = [doc for doc in contexto["documentos_drive"]
-                                        if registro.drive_folder_id in doc.get("folders", ())]
+            registro.documentos_drive = por_carpeta.get(registro.drive_folder_id, [])
     return contexto
 
 
@@ -838,7 +848,7 @@ def proyecto_imagen_privada(request, pk):
 @masiscam_access_required
 def equipo_foto_privada(request, pk, tipo):
     equipo = _equipo(request, pk)
-    if tipo not in {"equipo", "placa"}:
+    if equipo.estado == Equipo.Estado.INACTIVO or tipo not in {"equipo", "placa"}:
         raise Http404
     return _archivo_protegido(equipo.fotografia_general if tipo == "equipo" else equipo.fotografia_placa)
 
@@ -847,7 +857,7 @@ def equipo_foto_privada(request, pk, tipo):
 @masiscam_access_required
 def documento_privado(request, pk, documento_pk):
     proyecto = _proyecto(request, pk)
-    documentos = proyecto.documentos.exclude(estado_sincronizacion=Documento.Sincronizacion.ARCHIVADO)
+    documentos = proyecto.documentos.exclude(estado_sincronizacion=Documento.Sincronizacion.ARCHIVADO).exclude(equipo__estado=Equipo.Estado.INACTIVO)
     if request.cliente_usuario:
         documentos = documentos.filter(equipo__in=_equipos_autorizados(request))
     documento = get_object_or_404(documentos, pk=documento_pk)
