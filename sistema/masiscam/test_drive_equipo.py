@@ -155,7 +155,9 @@ class DriveEquipoTests(TestCase):
         request.resolver_match = resolve(url)
         return request
 
-    def test_registros_tipos_historial_y_jerarquia(self):
+    @patch("masiscam.views.EquipoDriveDocuments")
+    def test_registros_tipos_historial_y_jerarquia(self, documentos):
+        documentos.return_value.list.return_value = []
         import uuid
         from . import views
         from .models import RegistroEquipo
@@ -176,7 +178,7 @@ class DriveEquipoTests(TestCase):
             self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [padre["id"]])
             self.assertIn("2026-09-15 - " + registro.get_tipo_display(), self.archivos[registro.drive_folder_id]["name"])
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
-        for texto in ["Nuevo", "Asistencia", "Garantía", "Ver documentos", "Disponible", "registro-modal", "Editar ficha", "Ver informe", "Descargar QR", "Imprimir etiqueta"]:
+        for texto in ["Nuevo", "Asistencia", "Garantía", "Sin documentos", "Disponible", "registro-modal", "Editar ficha", "Ver informe", "Descargar QR", "Imprimir etiqueta"]:
             self.assertContains(response, texto)
         self.assertNotContains(response, "https://drive.google.com/")
         html = response.content.decode()
@@ -185,7 +187,7 @@ class DriveEquipoTests(TestCase):
         self.assertNotIn("Observación", tabla)
         for tipo in RegistroEquipo.Tipo.labels:
             self.assertIn('class="h5 mb-3">' + tipo + '</h2>', tabla)
-        self.assertEqual(tabla.count("Ver documentos</a>"), 5)
+        self.assertEqual(tabla.count("Sin documentos"), 5)
         RegistroEquipo.objects.create(equipo=self.antiguo, tipo="ASISTENCIA", fecha="2026-09-16")
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         tabla = response.content.decode().split('id="historial-registros"', 1)[1].split('<dialog', 1)[0]
@@ -330,7 +332,7 @@ class DriveEquipoTests(TestCase):
         interna, externa = Tablas(), Tablas()
         interna.feed(ficha.content.decode())
         externa.feed(informe.content.decode())
-        self.assertEqual([fila[:3] for fila in interna.filas], externa.filas)
+        self.assertEqual(interna.filas, externa.filas)
         self.assertEqual(len(externa.filas), 4)
         for tipo in ["Nuevo", "Asistencia", "Garantía", "REVISION"]:
             self.assertContains(informe, 'class="h5 mb-3">' + tipo + '</h2>')

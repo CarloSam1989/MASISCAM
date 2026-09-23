@@ -66,7 +66,7 @@
     {% endif %}
   </div></article>
   {% if documentos_cliente %}<section class="card masiscam-card mt-4"><div class="card-body"><h2 class="h5">Documentos disponibles</h2><ul class="mb-0">{% for documento in documentos_cliente %}<li><a href="{% url 'masiscam:documento_privado' equipo.proyecto.pk documento.pk %}">{{ documento.titulo }}</a></li>{% endfor %}</ul></div></section>{% endif %}
-  {% include "masiscam/_documentos_drive.html" %}
+
   {% include "masiscam/_registros_equipo.html" %}
 </div>
 {% endblock %}

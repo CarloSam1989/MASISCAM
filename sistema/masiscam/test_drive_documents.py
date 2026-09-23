@@ -163,6 +163,8 @@ class PublicDriveDocumentsTests(TestCase):
         self.service_factory.assert_not_called()
 
     def test_provider_failure_does_not_expose_details(self):
+        RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO", fecha="2026-09-22",
+                                      drive_folder_id="internal")
         self.api.files().get.side_effect = RuntimeError("access_token=SECRET /internal/credentials.json")
         response = self.client.get(self.url())
         self.assertEqual(response.status_code, 503)
@@ -172,6 +174,8 @@ class PublicDriveDocumentsTests(TestCase):
         self.assertNotContains(response, "credentials")
 
     def test_listing_pagination(self):
+        RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO", fecha="2026-09-22",
+                                      drive_folder_id="series-root")
         pdf = self.nodes["pdf"].copy()
         pdf["parents"] = ["series-root"]
         def pages(**kwargs):
@@ -212,6 +216,8 @@ class PublicDriveDocumentsTests(TestCase):
         return reverse("masiscam:equipo_documento_privado", args=[equipo or self.antiguo.pk, file])
 
     def test_internal_documents_require_login_and_ignore_public_flag(self):
+        RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO", fecha="2026-09-22",
+                                      drive_folder_id="internal")
         response = self.client.get(self.private_url())
         self.assertEqual(response.status_code, 302)
         self.assertIn(reverse("accounts:login"), response.url)
@@ -240,6 +246,8 @@ class PublicDriveDocumentsTests(TestCase):
         self.assertEqual(self.client.get(self.private_url("foreign", self.other.pk)).status_code, 403)
 
     def test_token_rotation_changes_url_qr_and_keeps_data(self):
+        RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO", fecha="2026-09-22",
+                                      drive_folder_id="internal")
         from . import views
         old = self.antiguo.token_publico
         old_url = self.url()
@@ -290,3 +298,112 @@ class PublicDriveDocumentsTests(TestCase):
             self.assertNotContains(self.client.get(reverse("masiscam:equipo_publico", args=[self.antiguo.token_publico])), "informe.pdf")
         self.api.files().delete.assert_not_called()
         self.api.files().update.assert_not_called()
+
+    def test_live_documents_empty_then_added_without_manual_state(self):
+        self.login()
+        registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="MANTENIMIENTO",
+            fecha="2026-09-23", drive_folder_id="internal", drive_error="estado antiguo")
+        empty = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO", fecha="2026-09-22")
+        pdf = self.nodes.pop("pdf")
+        ficha = reverse("masiscam:ficha_detalle", args=[self.antiguo.pk])
+        response = self.client.get(ficha)
+        self.assertContains(response, "Sin documentos")
+        self.assertEqual(response.context["documentos_drive"], [])
+        self.assertEqual(response.context["registros"][0].documentos_drive, [])
+        self.service_factory.reset_mock()
+        self.nodes["pdf"] = pdf
+        response = self.client.get(ficha)
+        self.service_factory.assert_called_once()
+        self.assertContains(response, self.private_url())
+        registros = {r.pk: r for r in response.context["registros"]}
+        self.assertEqual([d["id"] for d in registros[registro.pk].documentos_drive], ["pdf"])
+        self.assertEqual(registros[empty.pk].documentos_drive, [])
+        registro.refresh_from_db()
+        self.assertEqual(registro.drive_error, "estado antiguo")
+        self.assertNotContains(response, "drive.google.com")
+        self.assertNotContains(response, "series-root")
+        self.api.files().create.assert_not_called()
+        self.api.files().update.assert_not_called()
+
+    def test_listing_uses_live_files(self):
+        self.login()
+        url = reverse("masiscam:producto_listado", args=["reductor"])
+        pdf = self.nodes.pop("pdf")
+        response = self.client.get(url)
+        self.assertContains(response, "Sin documentos")
+        self.assertNotContains(response, self.private_url())
+        self.nodes["pdf"] = pdf
+        self.assertContains(self.client.get(url), self.private_url())
+
+    def test_no_read_permission_hides_section_and_blocks_direct_url(self):
+        from .models import RolMasiscam
+        self.login()
+        with patch.dict("masiscam.access.PERMISOS_ROL", {RolMasiscam.Rol.TECNICO: set()}):
+            response = self.client.get(reverse("masiscam:ficha_detalle", args=[self.antiguo.pk]))
+            self.assertNotContains(response, 'id="documentos-titulo"')
+            self.assertNotContains(response, '<th scope="col">Documentos</th>')
+            self.assertNotContains(response, "informe.pdf")
+            self.assertEqual(self.client.get(self.private_url()).status_code, 403)
+        self.service_factory.assert_not_called()
+
+    def test_unauthorized_customer_never_lists_or_downloads_other_equipment(self):
+        from .models import RolMasiscam
+        Equipo.objects.filter(pk=self.antiguo.pk).update(cliente=self.cliente)
+        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="CLIENTE", cliente=self.cliente)
+        self.login()
+        for vista in ("ficha_detalle", "equipo_informe"):
+            response = self.client.get(reverse("masiscam:" + vista, args=[self.other.pk]))
+            self.assertEqual(response.status_code, 403)
+            self.assertNotContains(response, "ajeno.pdf", status_code=403)
+        self.assertEqual(self.client.get(self.private_url("foreign", self.other.pk)).status_code, 403)
+        self.service_factory.assert_not_called()
+
+    def test_record_only_lists_its_own_descendants(self):
+        self.login()
+        registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="MANTENIMIENTO",
+            fecha="2026-09-23", drive_folder_id="internal")
+        self.nodes["nested"] = self.node("nested", "Fotos", FOLDER, "internal")
+        self.nodes["photo"] = self.node("photo", "foto.png", "image/png", "nested")
+        self.nodes["rootfile"] = self.node("rootfile", "general.pdf", "application/pdf", "series-root")
+        response = self.client.get(reverse("masiscam:ficha_detalle", args=[self.antiguo.pk]))
+        self.assertEqual({d["id"] for d in response.context["registros"][0].documentos_drive}, {"pdf", "photo"})
+        self.assertEqual(len(response.context["documentos_drive"]), 3)
+        self.service_factory.assert_called_once()
+
+    def test_documents_only_in_matching_record_in_internal_and_public_views(self):
+        RegistroEquipo.objects.create(equipo=self.antiguo, tipo="MANTENIMIENTO",
+            fecha="2026-09-23", drive_folder_id="internal")
+        RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO",
+            fecha="2026-09-22", drive_folder_id="new-folder")
+        RegistroEquipo.objects.create(equipo=self.antiguo, tipo="ASISTENCIA", fecha="2026-09-21")
+        self.nodes["new-folder"] = self.node("new-folder", "Nuevo", FOLDER, "series-root")
+        self.nodes["new-file"] = self.node("new-file", "nuevo.png", "image/png", "new-folder")
+        self.nodes["root-file"] = self.node("root-file", "sin-categoria.pdf", "application/pdf", "series-root")
+        self.login()
+        urls = [reverse("masiscam:" + name, args=[self.antiguo.pk])
+                for name in ("ficha_detalle", "equipo_informe")]
+        urls.append(reverse("masiscam:equipo_publico", args=[self.antiguo.token_publico]))
+        for index, url in enumerate(urls):
+            with self.subTest(url=url):
+                if index == 2:
+                    self.client.logout()
+                self.service_factory.reset_mock()
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.service_factory.assert_called_once()
+                self.assertNotContains(response, 'id="documentos-titulo"')
+                self.assertNotContains(response, "sin-categoria.pdf")
+                self.assertNotContains(response, "drive.google.com")
+                html = response.content.decode()
+                rows = re.findall(r"<tr>(.*?)</tr>", html, re.S)
+                maintenance = next(row for row in rows if "<td>Mantenimiento</td>" in row)
+                new = next(row for row in rows if "<td>Nuevo</td>" in row)
+                empty = next(row for row in rows if "<td>Asistencia</td>" in row)
+                self.assertIn("informe.pdf", maintenance)
+                self.assertNotIn("nuevo.png", maintenance)
+                self.assertIn("nuevo.png", new)
+                self.assertNotIn("informe.pdf", new)
+                self.assertIn("Sin documentos", empty)
+                expected = self.url() if index == 2 else self.private_url()
+                self.assertIn(expected, maintenance)
+                self.assertEqual(html.count('aria-label="Ver informe.pdf"'), 1)
