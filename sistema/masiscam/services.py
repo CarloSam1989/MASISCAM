@@ -195,10 +195,10 @@ def encolar_carpeta_registro(registro_id):
         return
     RegistroEquipo.objects.filter(pk=registro_id, drive_folder_id="").update(drive_error="")
     try:
-        from .tasks import crear_carpeta_registro
-        crear_carpeta_registro.apply_async(args=[registro_id], retry=False)
+        # Called after commit: persist the folder before returning to the user.
+        sincronizar_carpeta_registro(registro_id)
     except Exception as exc:
-        logger.error("No se pudo encolar Drive del registro %s", registro_id)
+        logger.error("No se pudo sincronizar Drive del registro %s", registro_id)
         RegistroEquipo.objects.filter(pk=registro_id, drive_folder_id="").update(drive_error="No se pudo sincronizar con Drive. Reintente o contacte al administrador.")
 
 

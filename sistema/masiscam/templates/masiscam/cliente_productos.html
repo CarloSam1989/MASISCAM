@@ -7,11 +7,11 @@
     <table class="table align-middle mb-0">
       <thead><tr><th>Producto</th><th>Proyecto</th><th>Serie</th><th>Estado</th><th>Documentos</th><th>Acciones</th></tr></thead>
       <tbody>{% for equipo in equipos %}
-        <tr>
+        <tr>{% if equipo.estado == "INACTIVO" %}<td colspan="6">Equipo inactivo</td>{% else %}
           <td>{{ equipo.nombre }}</td><td>{{ equipo.proyecto.nombre }}</td><td>{{ equipo.numero_serie|default:"—" }}</td><td>{{ equipo.get_estado_display }}</td>
           <td>{% if equipo.documentos_contexto.puede_ver_documentos %}{% include "masiscam/_documentos_archivos.html" with documentos_drive=equipo.documentos_contexto.documentos_drive error_documentos=equipo.documentos_contexto.error_documentos privado=True %}{% endif %}</td>
       <td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a> <a class="btn btn-sm btn-outline-secondary" href="{% url 'masiscam:equipo_informe' equipo.pk %}" target="_blank" rel="noopener">Ver informe</a></td>
-        </tr>
+        {% endif %}</tr>
       {% endfor %}</tbody>
     </table>
   </div>

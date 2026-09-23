@@ -193,7 +193,7 @@ class DriveEquipoTests(TestCase):
         tabla = response.content.decode().split('id="historial-registros"', 1)[1].split('<dialog', 1)[0]
         self.assertEqual(tabla.count('class="h5 mb-3">Asistencia</h2>'), 1)
         self.assertLess(tabla.index("16/09/2026"), tabla.index("15/09/2026"))
-        self.assertIn("Pendiente", tabla)
+        self.assertIn("Sin documentos", tabla)
 
     def test_registro_doble_envio_y_edicion_no_duplican(self):
         import uuid
@@ -220,33 +220,25 @@ class DriveEquipoTests(TestCase):
         import uuid
         from . import views
         from .models import RegistroEquipo
-        from .services import sincronizar_carpeta_registro
         self.fallar_despues = 3
-        def enviar(args, **kwargs):
-            return sincronizar_carpeta_registro(*args)
-        with patch("masiscam.tasks.crear_carpeta_registro.apply_async", side_effect=enviar):
-            with self.assertLogs("masiscam.services", level="ERROR"), self.captureOnCommitCallbacks(execute=True):
-                response = views.registro_crear(self.request_registro("registro_crear", {
-                    "tipo": "GARANTIA", "fecha": "2026-09-15", "clave_creacion": str(uuid.uuid4()),
-                }), self.antiguo.pk)
-            self.assertEqual(response.status_code, 302)
-            registro = RegistroEquipo.objects.get()
-            self.assertTrue(registro.drive_error)
-            self.assertFalse(registro.drive_folder_id)
-            response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
-            self.assertContains(response, "Reintentar Drive")
-            self.assertContains(response, "Error de Drive")
-            response = views.registro_reintentar(self.request_registro("registro_reintentar", registro=registro), self.antiguo.pk, registro.pk)
-            self.assertEqual(response.status_code, 302)
+        with self.assertLogs("masiscam.services", level="ERROR"), self.captureOnCommitCallbacks(execute=True):
+            response = views.registro_crear(self.request_registro("registro_crear", {
+                "tipo": "GARANTIA", "fecha": "2026-09-15", "clave_creacion": str(uuid.uuid4()),
+            }), self.antiguo.pk)
+        self.assertEqual(response.status_code, 302)
+        registro = RegistroEquipo.objects.get()
+        self.assertTrue(registro.drive_error)
+        self.assertFalse(registro.drive_folder_id)
+        views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         registro.refresh_from_db()
         self.assertEqual(registro.drive_folder_id, "folder-4")
         self.assertFalse(registro.drive_error)
         self.assertEqual(len(self.archivos), 4)
 
-    def test_registro_cola_caida_y_equipo_sin_drive(self):
+    def test_registro_drive_caido_y_equipo_sin_drive(self):
         from .models import RegistroEquipo
         from .services import sincronizar_carpeta_registro
-        with patch("masiscam.tasks.crear_carpeta_registro.apply_async", side_effect=ConnectionError("Cola caída")):
+        with patch("masiscam.services.sincronizar_carpeta_registro", side_effect=ConnectionError("Drive caido")):
             with self.assertLogs("masiscam.services", level="ERROR"), self.captureOnCommitCallbacks(execute=True):
                 registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO", fecha="2026-09-15")
         registro.refresh_from_db()
@@ -481,3 +473,30 @@ class DriveEquipoTests(TestCase):
         self.assertEqual(len(self.archivos), count)
         self.api.files().update.assert_not_called()
         self.api.files().delete.assert_not_called()
+
+    @override_settings(GOOGLE_DRIVE_ENABLED=True)
+    def test_record_folder_created_immediately_after_commit(self):
+        from .models import RegistroEquipo
+        with self.captureOnCommitCallbacks(execute=True):
+            registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="MANTENIMIENTO", fecha="2026-09-23")
+        registro.refresh_from_db()
+        self.antiguo.refresh_from_db()
+        self.assertTrue(registro.drive_folder_id)
+        self.assertEqual(self.archivos[registro.drive_folder_id]["name"], "MANTENIMIENTO")
+        self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [self.antiguo.drive_folder_id])
+
+    @override_settings(GOOGLE_DRIVE_ENABLED=True)
+    @patch("masiscam.views.EquipoDriveDocuments")
+    def test_loading_repairs_missing_record_folder(self, documents):
+        from . import views
+        from .models import RegistroEquipo
+        documents.return_value.list.return_value = []
+        registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="MANTENIMIENTO", fecha="2026-09-23")
+        response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
+        registro.refresh_from_db()
+        self.assertTrue(registro.drive_folder_id)
+        self.assertEqual(self.archivos[registro.drive_folder_id]["name"], "MANTENIMIENTO")
+        self.assertContains(response, "Sin documentos")
+        total = len(self.archivos)
+        views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
+        self.assertEqual(len(self.archivos), total)

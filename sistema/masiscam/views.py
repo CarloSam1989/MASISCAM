@@ -224,10 +224,13 @@ def cliente_editar(request, pk):
     return _cliente_formulario(request, cliente)
 
 
-def _equipo(request, pk):
+def _equipo(request, pk, permitir_inactivo_cliente=False):
     if request.cliente_usuario:
         equipo = get_object_or_404(Equipo.objects.select_related("proyecto", "cliente"), pk=pk)
-        return _comprobar_equipo_cliente(request, equipo)
+        _comprobar_equipo_cliente(request, equipo)
+        if equipo.estado == Equipo.Estado.INACTIVO and not permitir_inactivo_cliente:
+            raise PermissionDenied("Equipo inactivo")
+        return equipo
     return get_object_or_404(_equipos_autorizados(request), pk=pk)
 
 
@@ -278,7 +281,9 @@ def ficha_crear(request):
 
 @masiscam_access_required
 def ficha_detalle(request, pk):
-    equipo = _equipo(request, pk)
+    equipo = _equipo(request, pk, permitir_inactivo_cliente=True)
+    if request.cliente_usuario and equipo.estado == Equipo.Estado.INACTIVO:
+        return HttpResponse("Equipo inactivo", content_type="text/plain; charset=utf-8")
     placa = equipo.fotografia_placa
     placa_disponible = bool(placa and placa.storage.exists(placa.name))
     if request.GET.get("foto") == "placa":
@@ -484,13 +489,20 @@ def _contexto_documentos_drive(equipo, request=None, registros=True):
     permitido = equipo.estado != Equipo.Estado.INACTIVO and (request is None or _puede_ver_documentos(request, equipo))
     contexto = {"documentos_drive": [], "error_documentos": False,
                 "puede_ver_documentos": permitido}
+    if registros:
+        contexto["registros"] = list(equipo.registros.all()) if equipo.estado != Equipo.Estado.INACTIVO else []
+        if permitido and settings.GOOGLE_DRIVE_ENABLED:
+            for registro in contexto["registros"]:
+                if not registro.drive_folder_id:
+                    encolar_carpeta_registro(registro.pk)
+                    registro.refresh_from_db(fields=["drive_folder_id", "drive_error"])
+            equipo.refresh_from_db(fields=["drive_folder_id"])
     if permitido and equipo.drive_folder_id:
         try:
             contexto["documentos_drive"] = EquipoDriveDocuments(equipo).list()
         except Exception:
             contexto["error_documentos"] = True
     if registros:
-        contexto["registros"] = list(equipo.registros.all()) if equipo.estado != Equipo.Estado.INACTIVO else []
         # Assign each file only to its nearest, uniquely owned record folder.
         folders = [r.drive_folder_id for r in contexto["registros"] if r.drive_folder_id]
         owners = dict(RegistroEquipo.objects.filter(drive_folder_id__in=folders)

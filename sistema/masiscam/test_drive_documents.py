@@ -442,3 +442,16 @@ class PublicDriveDocumentsTests(TestCase):
         self.assertNotContains(response, "informe.pdf")
         self.api.files().update.assert_not_called()
         self.api.files().delete.assert_not_called()
+
+    def test_inactive_customer_only_message_and_direct_urls_blocked(self):
+        from .models import RolMasiscam
+        Equipo.objects.filter(pk=self.antiguo.pk).update(cliente=self.cliente, estado="INACTIVO")
+        self.login()
+        ficha = reverse("masiscam:ficha_detalle", args=[self.antiguo.pk])
+        self.assertContains(self.client.get(ficha), self.antiguo.numero_serie)
+        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="CLIENTE", cliente=self.cliente)
+        for url in (ficha, ficha + "?foto=placa"):
+            self.assertEqual(self.client.get(url).content.decode(), "Equipo inactivo")
+        self.assertEqual(self.client.get(reverse("masiscam:equipo_informe", args=[self.antiguo.pk])).status_code, 403)
+        self.assertEqual(self.client.get(self.private_url()).status_code, 403)
+        self.service_factory.assert_not_called()

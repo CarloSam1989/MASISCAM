@@ -12,7 +12,7 @@
             <tr>
               <td class="text-nowrap">{{ registro.fecha|date:"d/m/Y" }}</td>
               <td>{{ registro.get_tipo_display }}</td>
-              <td>{% if registro.drive_folder_id %}<span class="badge bg-success">Disponible</span>{% elif registro.drive_error %}<span class="badge bg-danger">Error de Drive</span>{% else %}<span class="badge bg-secondary">Pendiente</span>{% endif %}</td>
+              <td>{% if registro.drive_folder_id %}<span class="badge bg-success">Disponible</span>{% elif registro.drive_error %}<span class="badge bg-danger">Error de Drive</span>{% else %}<span class="badge bg-secondary">Sin carpeta</span>{% endif %}</td>
               {% if puede_ver_documentos %}<td>
                 {% include "masiscam/_documentos_archivos.html" with documentos_drive=registro.documentos_drive %}
               </td>{% endif %}
