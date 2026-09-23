@@ -325,15 +325,14 @@ class PublicDriveDocumentsTests(TestCase):
         self.api.files().create.assert_not_called()
         self.api.files().update.assert_not_called()
 
-    def test_listing_uses_live_files(self):
+    def test_product_listing_does_not_query_or_show_drive(self):
         self.login()
-        url = reverse("masiscam:producto_listado", args=["reductor"])
-        pdf = self.nodes.pop("pdf")
-        response = self.client.get(url)
-        self.assertContains(response, "Sin documentos")
-        self.assertNotContains(response, self.private_url())
-        self.nodes["pdf"] = pdf
-        self.assertContains(self.client.get(url), self.private_url())
+        for tipo in ("reductor", "bomba"):
+            response = self.client.get(reverse("masiscam:producto_listado", args=[tipo]))
+            self.assertNotContains(response, "<th>Documentos</th>")
+            self.assertNotContains(response, "<th>QR</th>")
+            self.assertNotContains(response, "informe.pdf")
+        self.service_factory.assert_not_called()
 
     def test_no_read_permission_hides_section_and_blocks_direct_url(self):
         from .models import RolMasiscam

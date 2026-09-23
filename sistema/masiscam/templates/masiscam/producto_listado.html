@@ -1,16 +1,17 @@
 {% extends "masiscam/base.html" %}
+{% block contexto_superior %}<div class="container-fluid px-3 px-lg-4 py-2">{% include "masiscam/_breadcrumbs.html" %}</div>{% endblock %}
 {% block content %}
-<div class="container-fluid px-3 px-lg-4 py-4">
-  <div class="d-flex flex-wrap justify-content-between gap-3 align-items-center mb-4">
+<div class="container-fluid px-3 px-lg-4 py-2">
+  <div class="d-flex flex-wrap justify-content-between gap-3 align-items-center mb-3">
     <div><h1 class="h3 mb-1">{{ producto_nombre }}</h1><p class="text-muted mb-0">{{ request.empresa_activa.nombre }}</p></div>
     {% if puede_crear %}<a class="btn btn-primary" data-modal-form data-modal-size="wide" data-modal-title="Crear {{ producto_singular|lower }}" href="{% url 'masiscam:ficha_crear' %}?tipo={{ producto_codigo }}{% if cliente_seleccionado %}&amp;cliente={{ cliente_seleccionado.pk }}{% endif %}"><i class="fas fa-plus me-1"></i>Crear {{ producto_singular|lower }}</a>{% endif %}
   </div>
-  <div class="row g-3 mb-4">
+  <div class="row g-3 mb-3">
     <div class="col-6 col-lg-4"><div class="card masiscam-card masiscam-stat"><div class="card-body"><div class="h3">{{ total }}</div><div>Total de {{ producto_nombre|lower }}</div></div></div></div>
-    <div class="col-6 col-lg-4"><div class="card masiscam-card masiscam-stat"><div class="card-body"><div class="h3">{{ publicos }}</div><div>QR activos</div></div></div></div>
+    <div class="col-6 col-lg-4"><div class="card masiscam-card masiscam-stat"><div class="card-body"><div class="h3">{{ activos }}</div><div>Activos</div></div></div></div>
     <div class="col-6 col-lg-4"><div class="card masiscam-card masiscam-stat"><div class="card-body"><div class="h3">{{ inactivos }}</div><div>Archivados</div></div></div></div>
   </div>
-  <form class="card masiscam-card card-body mb-4" method="get">
+  <form class="card masiscam-card card-body mb-3" method="get">
     <div class="row g-3 align-items-end">
     <div class="col-12 col-lg-4"><label class="form-label" for="cliente">Cliente</label>
       <select class="form-select" id="cliente" name="cliente">
@@ -23,13 +24,16 @@
     </div></div>
   </form>
   <div class="card masiscam-card"><div class="table-responsive"><table class="table table-hover align-middle mb-0 masiscam-table">
-    <thead><tr><th>N.º equipo</th><th>Camaronera</th><th>Estación</th><th>Sector</th><th>Marca</th><th>Modelo</th><th>Serie</th><th>Potencia</th><th>QR</th><th>Documentos</th><th>Acciones</th></tr></thead>
+    <thead><tr><th>N.º equipo</th><th>Camaronera</th><th>Estación</th><th>Sector</th><th>Marca</th><th>Modelo</th><th>Serie</th><th>Potencia</th><th>Acciones</th></tr></thead>
     <tbody>{% for equipo in equipos %}<tr>
       <td class="fw-bold">{{ equipo.nombre }}</td><td>{{ equipo.proyecto.nombre }}</td><td>{{ equipo.ubicacion }}</td><td>{{ equipo.sector }}</td><td>{{ equipo.marca }}</td><td>{{ equipo.modelo }}</td><td>{{ equipo.numero_serie }}</td><td>{{ equipo.potencia_hp }}</td>
-      <td>{% if equipo.consulta_publica_activa and equipo.estado != 'INACTIVO' %}<span class="badge bg-success">Activo</span>{% else %}<span class="badge bg-secondary">Inactivo</span>{% endif %}</td>
-      <td>{% if equipo.documentos_contexto.puede_ver_documentos %}{% include "masiscam/_documentos_archivos.html" with documentos_drive=equipo.documentos_contexto.documentos_drive error_documentos=equipo.documentos_contexto.error_documentos privado=True %}{% endif %}</td>
-      <td class="masiscam-actions-cell"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a></td>
-    </tr>{% empty %}<tr><td colspan="11" class="text-center py-5 text-muted">No existen {{ producto_nombre|lower }} registrados con estos filtros.</td></tr>{% endfor %}</tbody>
+      <td class="masiscam-actions-cell"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a>
+        {% if puede_archivar %}<form method="post" class="d-inline" onsubmit="return confirm('{% if equipo.estado == 'INACTIVO' %}Activar{% else %}Desactivar{% endif %} este equipo?');">
+          {% csrf_token %}<input type="hidden" name="equipo_id" value="{{ equipo.pk }}">
+          <input type="hidden" name="estado" value="{% if equipo.estado == 'INACTIVO' %}ACTIVO{% else %}INACTIVO{% endif %}">
+          <button class="btn btn-sm btn-outline-secondary" type="submit">{% if equipo.estado == 'INACTIVO' %}Activar{% else %}Desactivar{% endif %}</button>
+        </form>{% endif %}</td>
+    </tr>{% empty %}<tr><td colspan="9" class="text-center py-5 text-muted">No existen {{ producto_nombre|lower }} registrados con estos filtros.</td></tr>{% endfor %}</tbody>
   </table></div></div>
 </div>
 {% endblock %}

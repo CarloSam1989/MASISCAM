@@ -114,3 +114,42 @@ class ProductosTests(TestCase):
             creado = json.loads(response.content)
             self.assertTrue(creado["success"])
             self.assertEqual(Equipo.objects.get(pk=creado["id"]).tipo_producto, tipo)
+
+    def test_list_state_actions_preserve_all_other_equipment_data(self):
+        self.client.force_login(self.usuario)
+        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="ADMIN")
+        for tipo in ("REDUCTOR", "BOMBA"):
+            Equipo.objects.filter(pk=self.antiguo.pk).update(tipo_producto=tipo)
+            url = reverse("masiscam:producto_listado", args=[tipo.lower()])
+            for estado in ("INACTIVO", "ACTIVO"):
+                before = Equipo.objects.values().get(pk=self.antiguo.pk)
+                response = self.client.post(url, {"equipo_id": self.antiguo.pk, "estado": estado})
+                self.assertRedirects(response, url)
+                after = Equipo.objects.values().get(pk=self.antiguo.pk)
+                self.assertEqual(after.pop("estado"), estado)
+                before.pop("estado")
+                self.assertEqual(before, after)
+            response = self.client.get(url)
+            self.assertTemplateUsed(response, "masiscam/producto_listado.html")
+            self.assertNotContains(response, "Empresa:")
+            self.assertContains(response, "Migas de pan", count=1)
+            self.assertContains(response, "return confirm(")
+            self.assertContains(response, "Desactivar")
+        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="CONSULTA")
+        self.assertEqual(self.client.post(url, {"equipo_id": self.antiguo.pk, "estado": "INACTIVO"}).status_code, 403)
+        self.assertNotContains(self.client.get(url), "Desactivar</button>")
+
+    def test_state_action_scoped_to_company_and_product_and_csrf(self):
+        from django.test import Client
+        self.client.force_login(self.usuario)
+        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="ADMIN")
+        url = reverse("masiscam:producto_listado", args=["bomba"])
+        self.assertEqual(self.client.post(url, {"equipo_id": self.antiguo.pk, "estado": "INACTIVO"}).status_code, 404)
+        url = reverse("masiscam:producto_listado", args=["reductor"])
+        self.assertEqual(self.client.post(url, {"equipo_id": self.antiguo.pk, "estado": "INVALID"}).status_code, 400)
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(self.usuario)
+        self.assertEqual(csrf_client.post(url, {"equipo_id": self.antiguo.pk, "estado": "INACTIVO"}).status_code, 403)
+        self.proyecto.empresa = self.otra
+        self.proyecto.save(update_fields=["empresa"])
+        self.assertEqual(self.client.post(url, {"equipo_id": self.antiguo.pk, "estado": "INACTIVO"}).status_code, 404)

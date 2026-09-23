@@ -13,7 +13,7 @@ from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 
 from .drive_documents import EquipoDriveDocuments, DocumentUnavailable
@@ -93,6 +93,7 @@ def dashboard(request):
     productos = _productos(Equipo.objects.filter(proyecto__empresa=request.empresa_activa))
     return render(request, "masiscam/dashboard.html", {"productos": productos})
 
+@require_http_methods(["GET", "POST"])
 @masiscam_access_required
 def producto_listado(request, tipo):
     codigo = tipo.upper()
@@ -100,6 +101,16 @@ def producto_listado(request, tipo):
     if nombre is None:
         raise Http404
     base = Equipo.objects.filter(proyecto__empresa=request.empresa_activa, tipo_producto=codigo)
+    if request.method == "POST":
+        if not tiene_permiso(request, "archivar"):
+            raise PermissionDenied
+        estado = request.POST.get("estado")
+        equipo_id = request.POST.get("equipo_id", "")
+        if estado not in {Equipo.Estado.ACTIVO, Equipo.Estado.INACTIVO} or not equipo_id.isdecimal() or len(equipo_id) > 18:
+            return HttpResponse("Solicitud no valida", status=400)
+        equipo = get_object_or_404(base, pk=int(equipo_id))
+        base.filter(pk=equipo.pk).update(estado=estado)
+        return redirect(request.get_full_path())
     cliente = None
     cliente_id = request.GET.get("cliente", "").strip()
     clientes = Cliente.objects.filter(empresa=request.empresa_activa)
@@ -118,8 +129,8 @@ def producto_listado(request, tipo):
             | Q(sector__icontains=q) | Q(nombre__icontains=q) | Q(marca__icontains=q)
             | Q(modelo__icontains=q) | Q(numero_serie__icontains=q)
         )
-    contexto = {"equipos": _documentos_listado(request, equipos[:200]), "q": q, "producto_nombre": nombre, "producto_codigo": codigo, "producto_singular": Equipo(tipo_producto=codigo).producto_singular, "cliente_seleccionado": cliente, "clientes": clientes,
-                "total": base.count(), "publicos": base.filter(consulta_publica_activa=True).count(),
+    contexto = {"equipos": equipos[:200], "q": q, "producto_nombre": nombre, "producto_codigo": codigo, "producto_singular": Equipo(tipo_producto=codigo).producto_singular, "cliente_seleccionado": cliente, "clientes": clientes,
+                "total": base.count(), "activos": base.filter(estado=Equipo.Estado.ACTIVO).count(),
                 "inactivos": base.filter(estado=Equipo.Estado.INACTIVO).count()}
     contexto.update(_contexto_permisos(request))
     return render(request, "masiscam/producto_listado.html", contexto)
