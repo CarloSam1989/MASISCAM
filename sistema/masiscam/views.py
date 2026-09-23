@@ -64,7 +64,7 @@ def cliente_productos(request):
     equipos = _equipos_autorizados(request)
     if equipos.count() == 1:
         return redirect("masiscam:ficha_detalle", pk=equipos.first().pk)
-    return render(request, "masiscam/cliente_productos.html", {"equipos": equipos})
+    return render(request, "masiscam/cliente_productos.html", {"equipos": _documentos_listado(request, equipos)})
 
 
 def _es_modal(request):
@@ -118,7 +118,7 @@ def producto_listado(request, tipo):
             | Q(sector__icontains=q) | Q(nombre__icontains=q) | Q(marca__icontains=q)
             | Q(modelo__icontains=q) | Q(numero_serie__icontains=q)
         )
-    contexto = {"equipos": equipos[:200], "q": q, "producto_nombre": nombre, "producto_codigo": codigo, "producto_singular": Equipo(tipo_producto=codigo).producto_singular, "cliente_seleccionado": cliente, "clientes": clientes,
+    contexto = {"equipos": _documentos_listado(request, equipos[:200]), "q": q, "producto_nombre": nombre, "producto_codigo": codigo, "producto_singular": Equipo(tipo_producto=codigo).producto_singular, "cliente_seleccionado": cliente, "clientes": clientes,
                 "total": base.count(), "publicos": base.filter(consulta_publica_activa=True).count(),
                 "inactivos": base.filter(estado=Equipo.Estado.INACTIVO).count()}
     contexto.update(_contexto_permisos(request))
@@ -304,7 +304,7 @@ def equipo_informe(request, pk):
     )
     contexto = {"equipo": equipo, "activo": activo, "privado": True}
     if activo:
-        contexto.update(_contexto_documentos_drive(equipo))
+        contexto.update(_contexto_documentos_drive(equipo, request))
     return render(request, "masiscam/equipo_publico.html", contexto)
 
 
@@ -316,7 +316,7 @@ def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, st
                 "registros": equipo.registros.all(),
                 "registro_form": registro_form if registro_form is not None else RegistroEquipoForm()}
     contexto.update(_contexto_permisos(request))
-    contexto.update(_contexto_documentos_drive(equipo))
+    contexto.update(_contexto_documentos_drive(equipo, request))
     contexto["privado"] = True
     if request.cliente_usuario:
         contexto["documentos_cliente"] = _documentos_cliente(request).filter(equipo=equipo, proyecto=equipo.proyecto)
@@ -464,13 +464,35 @@ def equipo_publico(request, token):
     return _cabeceras_documentos(response)
 
 
-def _contexto_documentos_drive(equipo):
-    contexto = {"documentos_drive": [], "error_documentos": False}
-    if equipo.drive_folder_id:
+def _puede_ver_documentos(request, equipo):
+    return (request.user.is_authenticated and tiene_permiso(request, "ver")
+            and equipo.proyecto.empresa_id == request.empresa_activa.pk
+            and (not request.cliente_usuario or (
+                equipo.cliente_id == request.cliente_usuario.pk
+                and equipo.cliente.empresa_id == request.empresa_activa.pk)))
+
+
+def _documentos_listado(request, equipos):
+    equipos = list(equipos)
+    for equipo in equipos:
+        equipo.documentos_contexto = _contexto_documentos_drive(equipo, request, registros=False)
+    return equipos
+
+
+def _contexto_documentos_drive(equipo, request=None, registros=True):
+    permitido = request is None or _puede_ver_documentos(request, equipo)
+    contexto = {"documentos_drive": [], "error_documentos": False,
+                "puede_ver_documentos": permitido}
+    if permitido and equipo.drive_folder_id:
         try:
             contexto["documentos_drive"] = EquipoDriveDocuments(equipo).list()
         except Exception:
             contexto["error_documentos"] = True
+    if registros:
+        contexto["registros"] = list(equipo.registros.all())
+        for registro in contexto["registros"]:
+            registro.documentos_drive = [doc for doc in contexto["documentos_drive"]
+                                        if registro.drive_folder_id in doc.get("folders", ())]
     return contexto
 
 
@@ -489,7 +511,10 @@ def equipo_publico_desactivar(request, pk):
 @require_GET
 @masiscam_access_required
 def equipo_documento_privado(request, pk, archivo_id):
-    return _servir_documento_drive(_equipo(request, pk), archivo_id)
+    equipo = _equipo(request, pk)
+    if not _puede_ver_documentos(request, equipo):
+        raise PermissionDenied
+    return _servir_documento_drive(equipo, archivo_id)
 
 
 def _cabeceras_documentos(response):

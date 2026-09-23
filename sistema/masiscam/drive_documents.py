@@ -77,9 +77,9 @@ class EquipoDriveDocuments:
     def list(self):
         if self.metadata(self.root).get("mimeType") != FOLDER:
             raise DocumentUnavailable()
-        pending, seen, result = [self.root], set(), []
+        pending, seen, result = [(self.root, ())], set(), []
         while pending:
-            parent = pending.pop()
+            parent, ancestors = pending.pop()
             if parent in seen or parent in self.other_roots:
                 continue
             seen.add(parent)
@@ -97,9 +97,10 @@ class EquipoDriveDocuments:
                     if item.get("trashed") or item.get("parents") != [parent]:
                         continue
                     if item.get("mimeType") == FOLDER:
-                        pending.append(item["id"])
+                        pending.append((item["id"], ancestors + (parent,)))
                     elif self.allowed(item):
-                        result.append({"id": item["id"], "name": item["name"]})
+                        result.append({"id": item["id"], "name": item["name"],
+                                       "folders": ancestors + (parent,)})
                     if len(result) > 2000:
                         raise DocumentUnavailable()
                 token = response.get("nextPageToken")

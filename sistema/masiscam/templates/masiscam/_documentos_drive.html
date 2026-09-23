@@ -1,10 +1,6 @@
+{% if puede_ver_documentos %}
 <section class="mt-4" aria-labelledby="documentos-titulo">
   <h2 id="documentos-titulo" class="h5">Documentos</h2>
-  {% if error_documentos %}<p class="text-muted" role="status">Los documentos no están disponibles temporalmente. Intente más tarde.</p>
-  {% else %}<ul class="list-group">
-    {% for documento in documentos_drive %}<li class="list-group-item d-flex flex-wrap justify-content-between align-items-center gap-2">
-      <span class="text-break">{{ documento.name }}</span>
-      <a class="btn btn-outline-primary" href="{% if privado %}{% url 'masiscam:equipo_documento_privado' equipo.pk documento.id %}{% else %}{% url 'masiscam:equipo_documento_drive' equipo.token_publico documento.id %}{% endif %}" target="_blank" rel="noopener noreferrer" aria-label="Ver {{ documento.name }}">Ver</a>
-    </li>{% empty %}<li class="list-group-item text-muted">No hay documentos disponibles.</li>{% endfor %}
-  </ul>{% endif %}
+  {% include "masiscam/_documentos_archivos.html" %}
 </section>
+{% endif %}

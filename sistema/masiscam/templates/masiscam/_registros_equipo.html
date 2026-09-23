@@ -1,4 +1,4 @@
-{% include "masiscam/_registros_lista.html" with registros=registros equipo=equipo puede_editar=puede_editar only %}
+{% include "masiscam/_registros_lista.html" with registros=registros equipo=equipo puede_editar=puede_editar puede_ver_documentos=puede_ver_documentos privado=privado error_documentos=error_documentos only %}
 {% if puede_editar %}
 <dialog id="registro-modal" class="ficha-registro-modal" aria-labelledby="registro-modal-titulo"{% if registro_form.errors %} data-open="true"{% endif %}>
   <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
