@@ -74,6 +74,7 @@
     event.preventDefault();
     if (modal.open || saving) return;
     trigger = link;
+    modal.classList.toggle('masiscam-form-modal--wide', link.dataset.modalSize === 'wide');
     title.textContent = link.dataset.modalTitle || link.textContent.trim();
     body.replaceChildren(); footer.replaceChildren();
     showStatus('Cargando...'); modal.showModal();

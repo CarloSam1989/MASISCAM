@@ -92,3 +92,25 @@ class ProductosTests(TestCase):
         from django.http import Http404
         with self.assertRaises(Http404):
             views.ficha_crear(request)
+
+    def test_creacion_modal_ambos_tipos_y_reintento_con_errores(self):
+        import json
+        for tipo in ("REDUCTOR", "BOMBA"):
+            request = self.request("dashboard")
+            response = views.producto_listado(request, tipo.lower())
+            self.assertContains(response, 'data-modal-form data-modal-size="wide"')
+            datos = self.datos_reductor(numero_equipo=tipo, numero_serie=tipo)
+            request = self.request("ficha_crear", dict(datos, numero_serie=""), post=True)
+            request.GET = {"tipo": tipo}
+            request.META["HTTP_X_REQUESTED_WITH"] = "XMLHttpRequest"
+            response = views.ficha_crear(request)
+            self.assertEqual(response.status_code, 400)
+            error = json.loads(response.content)
+            self.assertFalse(error["success"])
+            self.assertIn('id="reductor-form"', error["html"])
+            request.POST = datos
+            response = views.ficha_crear(request)
+            self.assertEqual(response.status_code, 200)
+            creado = json.loads(response.content)
+            self.assertTrue(creado["success"])
+            self.assertEqual(Equipo.objects.get(pk=creado["id"]).tipo_producto, tipo)

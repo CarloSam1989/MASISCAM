@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 
@@ -13,6 +14,15 @@ CATEGORIA_CARPETA = {"FOTOGRAFIAS": "01_Fotografias", "PLACAS": "02_Equipos", "P
 
 def nombre_seguro(texto):
     return re.sub(r"[^\w. -]+", "_", texto, flags=re.UNICODE).strip()[:180]
+
+
+def nombre_carpeta_drive(texto):
+    original = texto.strip()
+    seguro = nombre_seguro(original).strip(" .") or "SIN-NOMBRE"
+    # Distinct series must not collapse into the same name after sanitization.
+    if seguro != original:
+        seguro = seguro[:169] + "-" + hashlib.sha256(original.encode("utf-8")).hexdigest()[:10]
+    return seguro
 
 
 class GoogleDriveService:
@@ -69,11 +79,11 @@ class GoogleDriveService:
             return {"id": equipo.drive_folder_id, "webViewLink": equipo.drive_folder_url}
         cliente = equipo.cliente.nombre_comercial if equipo.cliente_id else equipo.razon_social_cliente.strip()
         identificador = equipo.ruc_cliente.strip() or f"CLIENTE-{equipo.cliente_id or equipo.proyecto_id}"
-        niveles = [f"{empresa.nombre} - {empresa.pk}", f"{cliente}-{identificador}",
-                   equipo.get_tipo_producto_display(), equipo.numero_serie.strip() or f"EQUIPO-{equipo.pk}"]
+        niveles = [f"{cliente}-{identificador}", equipo.tipo_producto,
+                   equipo.numero_serie.strip() or f"EQUIPO-{equipo.pk}"]
         padre = settings.GOOGLE_DRIVE_ROOT_FOLDER_ID
         for nombre in niveles:
-            carpeta = self.obtener_carpeta_equipo(nombre, padre)
+            carpeta = self.obtener_carpeta_equipo(nombre_carpeta_drive(nombre), padre)
             padre = carpeta["id"]
         return carpeta
 
@@ -82,7 +92,7 @@ class GoogleDriveService:
 
     def crear_estructura_registro(self, registro, equipo_folder_id):
         nombre = f"{registro.fecha:%Y-%m-%d} - {registro.get_tipo_display()}"
-        return self.obtener_carpeta_equipo(nombre, equipo_folder_id)
+        return self.obtener_carpeta_equipo(nombre_carpeta_drive(nombre), equipo_folder_id)
 
     def reservar_documento(self, documento_id):
         """Commit the remote ID before any upload, independently of final DB save."""

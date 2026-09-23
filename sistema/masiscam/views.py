@@ -16,6 +16,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
 
+from .drive_documents import EquipoDriveDocuments, DocumentUnavailable
 from .access import masiscam_access_required, permiso_masiscam_required, tiene_permiso
 from .forms import ClienteForm, DocumentoForm, EquipoForm, FichaEquipoForm, ProyectoForm, VisibilidadProyectoForm, RegistroEquipoForm, datos_cliente
 from .models import Cliente, Auditoria, Documento, Equipo, Proyecto, RegistroEquipo, RolMasiscam
@@ -443,15 +444,51 @@ def equipo_publico(request, token):
         and equipo.estado != Equipo.Estado.INACTIVO
         and equipo.proyecto.estado != Proyecto.Estado.ARCHIVADO
     )
-    return render(
+    documentos, error_documentos = [], False
+    if activo and equipo.drive_folder_id:
+        try:
+            documentos = EquipoDriveDocuments(equipo).list()
+        except Exception:
+            error_documentos = True
+    response = render(
         request,
         "masiscam/equipo_publico.html",
         {
             "equipo": equipo,
             "activo": activo,
             "empresa_ruc": empresa_ruc,
+            "documentos_publicos": True, "documentos_drive": documentos,
+            "error_documentos": error_documentos,
         },
     )
+
+    return _cabeceras_documentos(response)
+
+
+def _cabeceras_documentos(response):
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Referrer-Policy"] = "no-referrer"
+    response["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    return response
+
+
+@require_GET
+def equipo_documento_drive(request, token, archivo_id):
+    equipo = Equipo.objects.select_related("proyecto").filter(
+        token_publico=token, consulta_publica_activa=True, proyecto__empresa__activa=True,
+    ).exclude(estado=Equipo.Estado.INACTIVO).exclude(proyecto__estado=Proyecto.Estado.ARCHIVADO).first()
+    if equipo is None or not equipo.drive_folder_id:
+        return _cabeceras_documentos(HttpResponse("Documento no disponible.", status=404))
+    try:
+        archivo, nombre, mime = EquipoDriveDocuments(equipo).download(archivo_id)
+    except DocumentUnavailable:
+        return _cabeceras_documentos(HttpResponse("Documento no disponible.", status=404))
+    except Exception:
+        return _cabeceras_documentos(HttpResponse("Documento no disponible temporalmente.", status=503))
+    response = FileResponse(archivo, as_attachment=False, filename=nombre, content_type=mime)
+    response["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'self'"
+    return _cabeceras_documentos(response)
 
 
 @require_GET

@@ -382,3 +382,11 @@
 .sistema-masiscam .masiscam-brand .masiscam-logo{max-width:180px;max-height:56px;}
 
 .sistema-masiscam .masiscam-producto-icono{display:inline-flex;align-items:center;justify-content:center;flex:0 0 3rem;width:3rem;height:3rem;border-radius:.75rem;background:#edf2f7;color:var(--masiscam-steel);font-family:"Segoe UI Symbol",sans-serif;font-size:2.65rem;line-height:1;}
+
+/* Product forms share the existing modal, with space for their full field set. */
+.masiscam-form-modal.masiscam-form-modal--wide[open]{width:min(1180px,96vw);max-width:1180px;max-height:92vh;max-height:92dvh}
+.masiscam-form-modal--wide .masiscam-form-modal__body{overflow-x:hidden}
+@media(max-width:600px){
+  .masiscam-form-modal.masiscam-form-modal--wide[open]{width:96vw;max-width:96vw;max-height:96vh;max-height:96dvh}
+  .masiscam-form-modal--wide .masiscam-form-modal__header,.masiscam-form-modal--wide .masiscam-form-modal__body,.masiscam-form-modal--wide .masiscam-form-modal__footer{padding:12px}
+}
