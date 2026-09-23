@@ -294,3 +294,86 @@ class DriveRebuildTests(TestCase):
         self.assertEqual(self.equipo.drive_folder_id, "target")
         self.api.files().create.assert_not_called()
         self.api.files().update.assert_not_called()
+
+    def test_ownership_diagnostic_lists_all_conflicts_without_writes(self):
+        self.nodes["old"]["name"] = "REDUCTORES"
+        self.node("unowned", "sin_asignar.pdf", "old", "application/pdf")
+        self.node("owned", "asignado.pdf", "old", "application/pdf")
+        Documento.objects.create(proyecto=self.proyecto, equipo=self.equipo, titulo="Asignado",
+            drive_file_id="owned", archivo="asignado.pdf", subido_por=self.usuario)
+        before = deepcopy(self.nodes)
+        equipos_before = list(Equipo.objects.values())
+        docs_before = list(Documento.objects.values())
+        output = self.run_command("--dry-run", error=True)
+        for text in (f"DIAGNOSTICO SOLO LECTURA - Equipo #{self.equipo.pk}", self.cliente.razon_social,
+                     "Tipo: REDUCTOR", 'Serie: "SERIE1"', 'ID carpeta: "old"',
+                     'Carpeta Drive actual: "MASISCAM / Anterior / REDUCTORES"',
+                     'Subcarpeta: "MASISCAM / Anterior / REDUCTORES / 01_Fotografias"',
+                     'ID: "photos"', 'ID: "file"', 'ID: "unowned"', "Sin referencias directas en BD."):
+            self.assertIn(text, output)
+        self.assertNotIn('ID: "owned"', output)
+        self.assertEqual(self.nodes, before)
+        self.assertEqual(list(Equipo.objects.values()), equipos_before)
+        self.assertEqual(list(Documento.objects.values()), docs_before)
+        self.api.files().create.assert_not_called()
+        self.api.files().update.assert_not_called()
+
+    def test_diagnostic_reports_other_equipment_and_shared_record_folders(self):
+        self.nodes["old"]["name"] = "REDUCTORES"
+        second = Equipo.objects.create(proyecto=self.proyecto, cliente=self.cliente, nombre="EQ2",
+            numero_serie="SERIE2", tipo_producto="BOMBA", drive_folder_id="old")
+        first_record = RegistroEquipo.objects.create(equipo=self.equipo, tipo="NUEVO", fecha="2026-09-22", drive_folder_id="photos")
+        second_record = RegistroEquipo.objects.create(equipo=second, tipo="NUEVO", fecha="2026-09-22", drive_folder_id="photos")
+        before = list(RegistroEquipo.objects.values())
+        output = self.run_command("--dry-run", error=True)
+        self.assertIn(f"DIAGNOSTICO SOLO LECTURA - Equipo #{self.equipo.pk}", output)
+        self.assertIn(f"DIAGNOSTICO SOLO LECTURA - Equipo #{second.pk}", output)
+        self.assertIn(f"Equipo #{second.pk} (OTRO EQUIPO)", output)
+        self.assertIn('tipo=BOMBA; serie="SERIE2"', output)
+        for record in (first_record, second_record):
+            self.assertIn(f"RegistroEquipo.drive_folder_id (registro BD #{record.pk})", output)
+        self.assertIn("Referencias por carpetas contenedoras", output)
+        self.assertIn("corresponde a varios equipos", output)
+        self.assertEqual(list(RegistroEquipo.objects.values()), before)
+        self.api.files().create.assert_not_called()
+        self.api.files().update.assert_not_called()
+
+    def test_diagnostic_reports_document_and_upload_references(self):
+        self.nodes["old"]["name"] = "REDUCTORES"
+        second = Equipo.objects.create(proyecto=self.proyecto, cliente=self.cliente, nombre="EQ2",
+            numero_serie="SERIE2", tipo_producto="BOMBA")
+        doc = Documento.objects.create(proyecto=self.proyecto, equipo=self.equipo, titulo="Uno",
+            drive_file_id="file", archivo="uno.png", hash_sha256="a" * 64, subido_por=self.usuario)
+        upload = Documento.objects.create(proyecto=self.proyecto, equipo=second, titulo="Dos",
+            drive_upload_id="file", archivo="dos.png", hash_sha256="b" * 64, subido_por=self.usuario)
+        output = self.run_command("--dry-run", error=True)
+        self.assertIn(f"Documento.drive_file_id (registro BD #{doc.pk})", output)
+        self.assertIn(f"Documento.drive_upload_id (registro BD #{upload.pk})", output)
+        self.assertIn(f"Equipo #{second.pk} (OTRO EQUIPO)", output)
+        self.api.files().create.assert_not_called()
+        self.api.files().update.assert_not_called()
+
+    def test_diagnostic_identifies_documents_without_equipment(self):
+        self.nodes["old"]["name"] = "REDUCTORES"
+        doc = Documento.objects.create(proyecto=self.proyecto, titulo="Sin equipo",
+            drive_file_id="file", archivo="foto.png", subido_por=self.usuario)
+        output = self.run_command("--dry-run", error=True)
+        self.assertIn(f"Documento.drive_file_id (registro BD #{doc.pk}): sin equipo asociado.", output)
+        self.assertIn("referencia de documento sin equipo asociado", output)
+
+    def test_apply_does_not_run_diagnostics_or_change_error_decision(self):
+        self.nodes["old"]["name"] = "REDUCTORES"
+        with patch("masiscam.management.commands.regenerar_estructura_drive.OwnershipDiagnostics") as diagnostic:
+            output = self.run_command(error=True)
+            diagnostic.assert_not_called()
+        self.assertIn("Contenido sin propietario", output)
+        self.assertNotIn("DIAGNOSTICO SOLO LECTURA", output)
+        self.api.files().create.assert_not_called()
+        self.api.files().update.assert_not_called()
+
+    def test_diagnostic_names_escape_newlines(self):
+        self.nodes["old"]["name"] = "REDUCTORES"
+        self.nodes["file"]["name"] = "foto\nNO_ES_OTRA_LINEA.png"
+        output = self.run_command("--dry-run", error=True)
+        self.assertIn(r"foto\nNO_ES_OTRA_LINEA.png", output)
+        self.assertNotIn("foto\nNO_ES_OTRA_LINEA.png", output)

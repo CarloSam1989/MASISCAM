@@ -4,6 +4,7 @@ from django.db import transaction
 from masiscam.models import Empresa, Equipo
 from masiscam.services import GoogleDriveService, nombre_carpeta_drive
 from masiscam.drive_rebuild import Plan, RebuildError, snapshot
+from masiscam.drive_rebuild_diagnostics import OwnershipDiagnostics
 
 
 class Command(BaseCommand):
@@ -40,6 +41,8 @@ class Command(BaseCommand):
                 counts["errores"] += 1
                 self.stdout.write("Resumen " + ", ".join(f"{key}={value}" for key, value in counts.items()))
                 raise CommandError("No se pudo leer Drive. No se realizaron cambios.") from None
+            observed_nodes = nodes  # Keep actual Drive paths, not the simulated dry-run moves.
+            diagnostics = None
             resolved, paths = {}, {}
             for equipo in equipos:
                 if equipo.cliente_id and equipo.numero_serie.strip():
@@ -59,6 +62,11 @@ class Command(BaseCommand):
                 except RebuildError as exc:
                     counts["errores"] += 1
                     self.stderr.write(f"Equipo {equipo.pk}: ERROR: {exc}")
+                    if not apply and str(exc).startswith("Contenido sin propietario"):
+                        if diagnostics is None:
+                            diagnostics = OwnershipDiagnostics(observed_nodes)
+                        for line in diagnostics.lines(equipo):
+                            self.stderr.write(line)
                     continue
                 moves = sum(op[0] == "move" for op in plan.operations)
                 creates = sum(op[0] == "create" for op in plan.operations)
