@@ -451,7 +451,20 @@ class PublicDriveDocumentsTests(TestCase):
         self.assertContains(self.client.get(ficha), self.antiguo.numero_serie)
         RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="CLIENTE", cliente=self.cliente)
         for url in (ficha, ficha + "?foto=placa"):
-            self.assertEqual(self.client.get(url).content.decode(), "Equipo inactivo")
+            response = self.client.get(url)
+            self.assertTemplateUsed(response, "masiscam/equipo_inactivo.html")
+            self.assertTemplateUsed(response, "masiscam/base.html")
+            self.assertTrue(response.context["equipo_inactivo"])
+            self.assertContains(response, "Este equipo se encuentra actualmente inactivo.")
+            self.assertContains(response, 'id="appMenu"')
+            self.assertContains(response, "Mis productos")
+            self.assertContains(response, "Salir")
+            self.assertContains(response, reverse("accounts:logout"))
+            self.assertContains(response, "csrfmiddlewaretoken")
+            self.assertEqual(response["Cache-Control"], "private, no-store")
+            for hidden in (self.antiguo.numero_serie, "Ver informe", "historial-registros",
+                           "informe.pdf", "INFORMACIÓN GENERAL", "Descargar QR"):
+                self.assertNotContains(response, hidden)
         self.assertEqual(self.client.get(reverse("masiscam:equipo_informe", args=[self.antiguo.pk])).status_code, 403)
         self.assertEqual(self.client.get(self.private_url()).status_code, 403)
         self.service_factory.assert_not_called()

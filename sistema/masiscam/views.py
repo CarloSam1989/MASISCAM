@@ -283,7 +283,7 @@ def ficha_crear(request):
 def ficha_detalle(request, pk):
     equipo = _equipo(request, pk, permitir_inactivo_cliente=True)
     if request.cliente_usuario and equipo.estado == Equipo.Estado.INACTIVO:
-        return HttpResponse("Equipo inactivo", content_type="text/plain; charset=utf-8")
+        return render(request, "masiscam/equipo_inactivo.html", {"equipo_inactivo": True})
     placa = equipo.fotografia_placa
     placa_disponible = bool(placa and placa.storage.exists(placa.name))
     if request.GET.get("foto") == "placa":

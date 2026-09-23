@@ -1,0 +1,24 @@
+{% extends "masiscam/base.html" %}
+{% block title %}Equipo inactivo | MASISCAM{% endblock %}
+{% block breadcrumbs %}
+<nav class="masiscam-breadcrumbs" aria-label="Migas de pan">
+  <ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'masiscam:cliente_productos' %}">Mis productos</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Equipo inactivo</li>
+  </ol>
+</nav>
+{% endblock %}
+{% block content %}
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-12 col-md-9 col-lg-7">
+      <section class="card masiscam-card text-center" aria-labelledby="equipo-inactivo-titulo">
+        <div class="card-body px-3 py-5 p-md-5">
+          <h1 id="equipo-inactivo-titulo" class="h3 mb-3">Equipo inactivo</h1>
+          <p class="text-muted mb-0">Este equipo se encuentra actualmente inactivo.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}
