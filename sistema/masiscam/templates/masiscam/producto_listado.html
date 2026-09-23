@@ -3,7 +3,7 @@
 <div class="container-fluid px-3 px-lg-4 py-4">
   <div class="d-flex flex-wrap justify-content-between gap-3 align-items-center mb-4">
     <div><h1 class="h3 mb-1">{{ producto_nombre }}</h1><p class="text-muted mb-0">{{ request.empresa_activa.nombre }}</p></div>
-    {% if puede_crear and producto_codigo == "REDUCTOR" %}<a class="btn btn-primary" href="{% url 'masiscam:ficha_crear' %}" data-modal-form data-modal-title="Nuevo reductor"><i class="fas fa-plus me-1"></i>Crear reductor</a>{% endif %}
+    {% if puede_crear %}<a class="btn btn-primary" href="{% url 'masiscam:ficha_crear' %}?tipo={{ producto_codigo }}{% if cliente_seleccionado %}&amp;cliente={{ cliente_seleccionado.pk }}{% endif %}"><i class="fas fa-plus me-1"></i>Crear {{ producto_singular|lower }}</a>{% endif %}
   </div>
   <div class="row g-3 mb-4">
     <div class="col-6 col-lg-4"><div class="card masiscam-card masiscam-stat"><div class="card-body"><div class="h3">{{ total }}</div><div>Total de {{ producto_nombre|lower }}</div></div></div></div>

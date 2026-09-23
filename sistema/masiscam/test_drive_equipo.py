@@ -75,21 +75,23 @@ class DriveEquipoTests(TestCase):
                 equipo.save()
             self.assertEqual(callbacks, [])
             self.assertEqual(encolar.call_count, 1)
-            self.assertEqual(len(self.archivos), 2)
+            self.assertEqual(len(self.archivos), 4)
 
-    def test_jerarquia_razon_social_y_reductores_compartidos(self):
-        primero = self.nuevo()
-        segundo = self.nuevo(nombre="REDUCTOR-002")
+    def test_series_separadas_y_fallback_id(self):
+        primero = self.nuevo(numero_serie="SERIE123")
+        segundo = self.nuevo(nombre="REDUCTOR-002", numero_serie="SERIE456")
         uno = sincronizar_carpeta_equipo(primero.pk)
         dos = sincronizar_carpeta_equipo(segundo.pk)
-        self.assertEqual(uno, dos)
-        self.assertEqual(len(self.archivos), 2)
-        self.assertEqual([f["name"] for f in self.archivos.values()], [self.cliente.razon_social, "REDUCTORES"])
-        self.assertEqual(self.archivos["folder-1"]["parents"], ["root-masiscam"])
-        self.assertEqual(self.archivos[uno]["parents"], ["folder-1"])
+        self.assertNotEqual(uno, dos)
+        self.assertEqual([f["name"] for f in self.archivos.values()],
+                         [f"{self.empresa.nombre} - {self.empresa.pk}",
+                          f"{self.cliente.nombre_comercial}-{self.cliente.ruc}",
+                          "Reductores", "SERIE123", "SERIE456"])
+        self.assertEqual(self.archivos[uno]["parents"], self.archivos[dos]["parents"])
         self.assertEqual(sincronizar_carpeta_equipo(primero.pk), uno)
-        primero.refresh_from_db()
-        self.assertEqual(primero.drive_folder_url, self.archivos[uno]["webViewLink"])
+        vacio = self.nuevo()
+        carpeta = sincronizar_carpeta_equipo(vacio.pk)
+        self.assertEqual(self.archivos[carpeta]["name"], f"EQUIPO-{vacio.pk}")
 
     def test_fallo_drive_conserva_equipo_y_reintento_recupera_sin_duplicar(self):
         equipo = self.nuevo()
@@ -104,9 +106,9 @@ class DriveEquipoTests(TestCase):
         salida = StringIO()
         call_command("reintentar_drive_equipo", equipo.pk, stdout=salida)
         equipo.refresh_from_db()
-        self.assertEqual(equipo.drive_folder_id, "folder-2")
+        self.assertEqual(equipo.drive_folder_id, "folder-4")
         self.assertEqual(equipo.drive_error, "")
-        self.assertEqual(len(self.archivos), 2)
+        self.assertEqual(len(self.archivos), 4)
 
     def test_fallo_cola_no_pierde_alta_y_registra_error(self):
         with patch("masiscam.tasks.crear_carpeta_equipo.apply_async", side_effect=ConnectionError("Cola no disponible")), self.assertLogs("masiscam.services", level="ERROR"):
@@ -131,11 +133,11 @@ class DriveEquipoTests(TestCase):
 
     def test_razon_social_legacy_y_producto_fijo_y_empresa_validada(self):
         sincronizar_carpeta_equipo(self.antiguo.pk)
-        self.assertIn(self.proyecto.razon_social, [f["name"] for f in self.archivos.values()])
+        self.assertIn(f"{self.proyecto.razon_social}-{self.proyecto.identificacion_cliente}", [f["name"] for f in self.archivos.values()])
         futuro = self.nuevo(tipo_producto="BOMBA", nombre="BOMBA-001")
         sincronizar_carpeta_equipo(futuro.pk)
-        self.assertNotIn("BOMBA", [f["name"] for f in self.archivos.values()])
-        self.assertEqual(sum(f["name"] == "REDUCTORES" for f in self.archivos.values()), 2)
+        self.assertIn("Bombas", [f["name"] for f in self.archivos.values()])
+        self.assertEqual(sum(f["name"] == "Reductores" for f in self.archivos.values()), 1)
         invalido = self.nuevo(cliente=self.ajeno)
         with self.assertLogs("masiscam.services", level="ERROR"), self.assertRaises(ValueError):
             sincronizar_carpeta_equipo(invalido.pk)
@@ -167,9 +169,9 @@ class DriveEquipoTests(TestCase):
                 }), self.antiguo.pk)
             self.assertEqual(response.status_code, 302)
         self.assertEqual(RegistroEquipo.objects.count(), 5)
-        self.assertEqual(len(self.archivos), 7)
+        self.assertEqual(len(self.archivos), 9)
         self.antiguo.refresh_from_db()
-        padre = next(f for f in self.archivos.values() if f["name"] == "REDUCTORES")
+        padre = next(f for f in self.archivos.values() if f["name"] == self.antiguo.numero_serie)
         self.assertEqual(padre["id"], self.antiguo.drive_folder_id)
         for registro in RegistroEquipo.objects.all():
             self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [padre["id"]])
@@ -211,7 +213,7 @@ class DriveEquipoTests(TestCase):
                 registro.save()
             self.assertEqual(callbacks, [])
             self.assertEqual(sincronizar_carpeta_registro(registro.pk), carpeta)
-            self.assertEqual(len(self.archivos), 3)
+            self.assertEqual(len(self.archivos), 5)
 
     def test_registro_fallo_drive_guarda_y_reintento_desde_ficha(self):
         import uuid
@@ -236,9 +238,9 @@ class DriveEquipoTests(TestCase):
             response = views.registro_reintentar(self.request_registro("registro_reintentar", registro=registro), self.antiguo.pk, registro.pk)
             self.assertEqual(response.status_code, 302)
         registro.refresh_from_db()
-        self.assertEqual(registro.drive_folder_id, "folder-3")
+        self.assertEqual(registro.drive_folder_id, "folder-5")
         self.assertFalse(registro.drive_error)
-        self.assertEqual(len(self.archivos), 3)
+        self.assertEqual(len(self.archivos), 5)
 
     def test_registro_cola_caida_y_equipo_sin_drive(self):
         from .models import RegistroEquipo
@@ -258,7 +260,7 @@ class DriveEquipoTests(TestCase):
         sincronizar_carpeta_registro(registro.pk)
         registro.refresh_from_db()
         self.assertTrue(registro.drive_folder_id)
-        self.assertEqual(len(self.archivos), 3)
+        self.assertEqual(len(self.archivos), 5)
 
     def test_registro_valida_datos_y_empresa_y_rol(self):
         import uuid
@@ -345,41 +347,62 @@ class DriveEquipoTests(TestCase):
         self.antiguo.save()
         self.assertNotContains(views.equipo_publico(request, self.antiguo.token_publico), 'id="historial-registros"')
 
-    def test_registros_estructura_exacta_reutiliza_y_no_toca_carpetas_antiguas(self):
+    def test_registros_separados_y_reutiliza_id_antiguo_sin_mover(self):
         from copy import deepcopy
         from datetime import date
         from .models import RegistroEquipo
         from .services import sincronizar_carpeta_registro
-        equipo = self.nuevo()
-        primero = RegistroEquipo.objects.create(equipo=equipo, tipo="NUEVO", fecha=date(2026, 9, 16))
-        carpeta = sincronizar_carpeta_registro(primero.pk)
-        self.assertEqual([f["name"] for f in self.archivos.values()], [self.cliente.razon_social, "REDUCTORES", "2026-09-16 - Nuevo"])
-        self.assertEqual([f["parents"] for f in self.archivos.values()], [["root-masiscam"], ["folder-1"], ["folder-2"]])
-        otro_equipo = self.nuevo(nombre="OTRO")
-        segundo = RegistroEquipo.objects.create(equipo=otro_equipo, tipo="ASISTENCIA", fecha=date(2026, 9, 17))
-        sincronizar_carpeta_registro(segundo.pk)
-        self.assertEqual(len(self.archivos), 4)
-        self.assertEqual(self.archivos["folder-4"]["parents"], ["folder-2"])
-        repetido = RegistroEquipo.objects.create(equipo=otro_equipo, tipo="NUEVO", fecha=date(2026, 9, 16))
-        self.assertEqual(sincronizar_carpeta_registro(repetido.pk), carpeta)
-        self.assertEqual(len(self.archivos), 4)
-        self.api.files().update.assert_not_called()
-        self.api.files().delete.assert_not_called()
-        # Reutilizar carpetas creadas manualmente, sin etiquetas de la aplicacion.
-        for archivo in self.archivos.values():
-            archivo.pop("appProperties", None)
-        self.assertEqual(self.servicio.crear_estructura_equipo(equipo)["id"], "folder-2")
-        self.assertEqual(len(self.archivos), 4)
-        # El ID previo del equipo no debe introducir niveles viejos en registros nuevos.
-        Equipo.objects.filter(pk=equipo.pk).update(drive_folder_id="antigua", drive_folder_url="https://drive.google.com/drive/folders/antigua")
-        self.archivos["antigua"] = {"id": "antigua", "name": "EQUIPO ANTIGUO", "parents": ["padre-antiguo"]}
+        equipos = [self.nuevo(numero_serie=serie) for serie in ("SERIE1", "SERIE2")]
+        carpetas = []
+        for equipo in equipos:
+            registro = RegistroEquipo.objects.create(equipo=equipo, tipo="NUEVO", fecha=date(2026, 9, 16))
+            carpetas.append(sincronizar_carpeta_registro(registro.pk))
+            equipo.refresh_from_db()
+            self.assertEqual(self.archivos[carpetas[-1]]["parents"], [equipo.drive_folder_id])
+        self.assertNotEqual(*carpetas)
+        equipo = equipos[0]
+        Equipo.objects.filter(pk=equipo.pk).update(drive_folder_id="antigua")
         anteriores = deepcopy(self.archivos)
         nuevo = RegistroEquipo.objects.create(equipo=equipo, tipo="REPARACION", fecha=date(2026, 9, 18))
         nueva = sincronizar_carpeta_registro(nuevo.pk)
-        self.assertEqual(self.archivos[nueva]["parents"], ["folder-2"])
+        self.assertEqual(self.archivos[nueva]["parents"], ["antigua"])
         for pk, archivo in anteriores.items():
             self.assertEqual(self.archivos[pk], archivo)
         equipo.refresh_from_db()
-        self.assertEqual(equipo.drive_folder_id, "antigua")
+        self.assertEqual(self.servicio.crear_estructura_equipo(equipo)["id"], "antigua")
         self.api.files().update.assert_not_called()
         self.api.files().delete.assert_not_called()
+
+    def test_documentos_se_guardan_bajo_su_serie(self):
+        from types import SimpleNamespace
+        from googleapiclient.errors import HttpError
+        from httplib2 import Response
+        padres = []
+        self.api.files().get.return_value.execute.side_effect = HttpError(Response({"status": "404"}), b"missing")
+        for serie in ("DOC-SER1", "DOC-SER2"):
+            equipo = self.nuevo(numero_serie=serie)
+            documento = SimpleNamespace(
+                equipo_id=equipo.pk, drive_file_id="", drive_upload_id="upload-" + serie,
+                categoria="INFORMES", archivo=SimpleNamespace(path="unused"),
+                tipo_mime="application/pdf", nombre_original="informe.pdf",
+            )
+            with patch("googleapiclient.http.MediaFileUpload"):
+                self.servicio.subir_documento(documento)
+            archivo = self.api.files().create.call_args.kwargs["body"]
+            categoria = self.archivos[archivo["parents"][0]]
+            carpeta_serie = self.archivos[categoria["parents"][0]]
+            self.assertEqual(carpeta_serie["name"], serie)
+            padres.append(carpeta_serie["id"])
+        self.assertNotEqual(*padres)
+
+    def test_empresas_homonimas_no_comparten_carpeta(self):
+        self.otra.nombre = self.empresa.nombre
+        self.otra.save()
+        proyecto = Proyecto.objects.create(
+            empresa=self.otra, codigo="OTRO", nombre="Otro", responsable="R",
+            fecha_inicio=self.proyecto.fecha_inicio, creado_por=self.usuario,
+        )
+        equipos = [self.nuevo(numero_serie="IGUAL"),
+                   self.nuevo(proyecto=proyecto, cliente=self.ajeno, numero_serie="IGUAL")]
+        ids = [sincronizar_carpeta_equipo(equipo.pk) for equipo in equipos]
+        self.assertNotEqual(*ids)

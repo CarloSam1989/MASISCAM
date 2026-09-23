@@ -65,11 +65,12 @@ class GoogleDriveService:
         empresa = equipo.proyecto.empresa
         if equipo.cliente_id and equipo.cliente.empresa_id != empresa.pk:
             raise ValueError("El cliente del equipo no pertenece a su empresa.")
-        # La raiz configurada ya es MASISCAM. El producto actual es REDUCTORES.
-        razon_social = equipo.razon_social_cliente.strip()
-        if not razon_social:
-            raise ValueError("El equipo no tiene razon social para su carpeta Drive.")
-        niveles = [razon_social, "REDUCTORES"]
+        if equipo.drive_folder_id:
+            return {"id": equipo.drive_folder_id, "webViewLink": equipo.drive_folder_url}
+        cliente = equipo.cliente.nombre_comercial if equipo.cliente_id else equipo.razon_social_cliente.strip()
+        identificador = equipo.ruc_cliente.strip() or f"CLIENTE-{equipo.cliente_id or equipo.proyecto_id}"
+        niveles = [f"{empresa.nombre} - {empresa.pk}", f"{cliente}-{identificador}",
+                   equipo.get_tipo_producto_display(), equipo.numero_serie.strip() or f"EQUIPO-{equipo.pk}"]
         padre = settings.GOOGLE_DRIVE_ROOT_FOLDER_ID
         for nombre in niveles:
             carpeta = self.obtener_carpeta_equipo(nombre, padre)
@@ -108,7 +109,11 @@ class GoogleDriveService:
             if exc.resp.status != 404:
                 raise
         carpeta = CATEGORIA_CARPETA.get(documento.categoria, "08_Otros")
-        padre = self.buscar_subcarpeta(documento.proyecto, carpeta)
+        if documento.equipo_id:
+            equipo_folder_id = sincronizar_carpeta_equipo(documento.equipo_id)
+            padre = self.obtener_carpeta_equipo(carpeta, equipo_folder_id)["id"]
+        else:
+            padre = self.buscar_subcarpeta(documento.proyecto, carpeta)
         media = MediaFileUpload(documento.archivo.path, mimetype=documento.tipo_mime, resumable=True)
         try:
             return self.drive.files().create(body={"id": remote_id, "name": nombre_seguro(documento.nombre_original), "parents": [padre]}, media_body=media, fields=fields, supportsAllDrives=True).execute()
@@ -191,8 +196,6 @@ def sincronizar_carpeta_registro(registro_id):
             if registro.drive_folder_id:
                 return registro.drive_folder_id
             servicio = GoogleDriveService()
-            # Un ID guardado puede pertenecer a la estructura anterior. No moverla ni borrarla.
-            equipo_folder_id = servicio.crear_estructura_equipo(registro.equipo)["id"]
             carpeta = servicio.crear_estructura_registro(registro, equipo_folder_id)
             RegistroEquipo.objects.filter(pk=registro_id).update(
                 drive_folder_id=carpeta["id"], drive_folder_url=carpeta.get("webViewLink", ""), drive_error="",

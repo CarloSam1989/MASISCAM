@@ -117,6 +117,7 @@ class Cliente(models.Model):
 class Equipo(models.Model):
     class TipoProducto(models.TextChoices):
         REDUCTOR = "REDUCTOR", "Reductores"
+        BOMBA = "BOMBA", "Bombas"
 
     class Estado(models.TextChoices):
         ACTIVO = "ACTIVO", "Activo"
@@ -160,6 +161,15 @@ class Equipo(models.Model):
         return self.nombre
 
     @property
+    def producto_singular(self):
+        return {self.TipoProducto.REDUCTOR: "Reductor", self.TipoProducto.BOMBA: "Bomba"}[self.tipo_producto]
+
+    @property
+    def titulo_informacion(self):
+        articulo = "DE LA" if self.tipo_producto == self.TipoProducto.BOMBA else "DEL"
+        return f"INFORMACIÓN {articulo} {self.producto_singular.upper()}"
+
+    @property
     def razon_social_cliente(self):
         return self.cliente.razon_social if self.cliente_id else self.proyecto.razon_social
 
@@ -193,7 +203,8 @@ class Equipo(models.Model):
             if not self.cliente_id and not (self.proyecto.razon_social or "").strip():
                 errores["proyecto"] = "La razón social es obligatoria."
             numero_qs = Equipo.objects.filter(
-                proyecto_id=self.proyecto_id,
+                proyecto__empresa_id=self.proyecto.empresa_id,
+                ubicacion__iexact=(self.ubicacion or "").strip(),
                 nombre__iexact=(self.nombre or "").strip(),
             ).exclude(pk=self.pk)
             serie_qs = Equipo.objects.filter(
@@ -201,7 +212,7 @@ class Equipo(models.Model):
                 numero_serie__iexact=(self.numero_serie or "").strip(),
             ).exclude(pk=self.pk)
             if self.nombre and numero_qs.exists():
-                errores["nombre"] = "Ya existe este número de equipo en la camaronera."
+                errores["nombre"] = "Ya existe este número de equipo en esta estación de la empresa."
             if self.numero_serie and serie_qs.exists():
                 errores["numero_serie"] = "Ya existe esta serie en la empresa."
         if errores:

@@ -73,7 +73,7 @@ def sincronizar_documento(documento_id):
                 return ""
             if documento.drive_file_id and documento.estado_sincronizacion == Documento.Sincronizacion.SINCRONIZADO:
                 return documento.drive_file_id
-            if not documento.proyecto.drive_folder_id:
+            if not documento.equipo_id and not documento.proyecto.drive_folder_id:
                 crear_carpeta_proyecto(documento.proyecto_id)
                 documento.proyecto.refresh_from_db()
             resultado = servicio.subir_documento(documento)

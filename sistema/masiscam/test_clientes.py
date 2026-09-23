@@ -130,26 +130,22 @@ class ClientesReductoresTests(TestCase):
         self.assertContains(views.producto_listado(request, "reductor"), "ANT-1")
 
     def test_productos_por_cliente_y_tipo(self):
-        from unittest.mock import patch
-        from types import SimpleNamespace
         asociado = Equipo.objects.create(proyecto=self.proyecto, cliente=self.cliente, nombre="ASOCIADO", numero_serie="ASOC")
         Equipo.objects.create(proyecto=self.proyecto, cliente=self.cliente, tipo_producto="BOMBA", nombre="BOMBA-1", numero_serie="B1")
-        tipos = SimpleNamespace(choices=[("REDUCTOR", "Reductores"), ("BOMBA", "Bombas")])
-        with patch.object(Equipo, "TipoProducto", tipos):
-            categorias = views._productos(self.cliente.equipos.all(), self.cliente)
-            self.assertEqual([(p["nombre"], p["total"]) for p in categorias], [("Reductores", 1), ("Bombas", 1)])
-            response = views.cliente_detalle(self.request("cliente_detalle", pk=self.cliente.pk), self.cliente.pk)
-            self.assertContains(response, categorias[0]["url"])
-            self.assertContains(response, "Bombas")
-            for tipo, esperado, excluido in [("reductor", "ASOCIADO", "BOMBA-1"), ("bomba", "BOMBA-1", "ASOCIADO")]:
-                request = RequestFactory().get(reverse("masiscam:producto_listado", args=[tipo]), {"cliente": self.cliente.pk})
-                request.user, request.empresa_activa, request.session = self.usuario, self.empresa, {}
-                request.resolver_match = resolve(request.path)
-                response = views.producto_listado(request, tipo)
-                self.assertContains(response, esperado)
-                self.assertNotContains(response, excluido)
-                self.assertNotContains(response, "ANT-1")
-                self.assertNotContains(response, self.ajeno.nombre_comercial)
+        categorias = views._productos(self.cliente.equipos.all(), self.cliente)
+        self.assertEqual([(p["nombre"], p["total"]) for p in categorias], [("Reductores", 1), ("Bombas", 1)])
+        response = views.cliente_detalle(self.request("cliente_detalle", pk=self.cliente.pk), self.cliente.pk)
+        self.assertContains(response, categorias[0]["url"])
+        self.assertContains(response, "Bombas")
+        for tipo, esperado, excluido in [("reductor", "ASOCIADO", "BOMBA-1"), ("bomba", "BOMBA-1", "ASOCIADO")]:
+            request = RequestFactory().get(reverse("masiscam:producto_listado", args=[tipo]), {"cliente": self.cliente.pk})
+            request.user, request.empresa_activa, request.session = self.usuario, self.empresa, {}
+            request.resolver_match = resolve(request.path)
+            response = views.producto_listado(request, tipo)
+            self.assertContains(response, esperado)
+            self.assertNotContains(response, excluido)
+            self.assertNotContains(response, "ANT-1")
+            self.assertNotContains(response, self.ajeno.nombre_comercial)
         self.assertContains(views.dashboard(self.request("dashboard")), "&#9881;")
         for valor in [str(self.ajeno.pk), "invalido", "9" * 30]:
             request = RequestFactory().get("/masiscam/productos/reductor/", {"cliente": valor})

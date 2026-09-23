@@ -6,7 +6,7 @@
     <button type="button" class="btn-close" data-registro-cerrar aria-label="Cerrar"></button>
   </div>
   <form method="post" action="{% url 'masiscam:registro_crear' equipo.pk %}" id="registro-form">
-    {% csrf_token %}{{ registro_form.clave_creacion }}
+    {% csrf_token %}{% include "masiscam/_breadcrumbs.html" %}{{ registro_form.clave_creacion }}
     {% if registro_form.non_field_errors or registro_form.clave_creacion.errors %}<div role="alert" class="alert alert-danger">{{ registro_form.non_field_errors }}{{ registro_form.clave_creacion.errors }}</div>{% endif %}
     <div class="row g-3">
       <div class="col-12 col-sm-6"><label class="form-label" for="{{ registro_form.tipo.id_for_label }}">{{ registro_form.tipo.label }}</label>{{ registro_form.tipo }}{{ registro_form.tipo.errors }}</div>

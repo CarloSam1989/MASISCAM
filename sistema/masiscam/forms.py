@@ -95,7 +95,8 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
     observaciones = forms.CharField(label="Observaciones", required=False, widget=forms.Textarea(attrs={"rows": 4}))
     consulta_publica_activa = forms.BooleanField(label="Consulta pública activa", required=False)
 
-    def __init__(self, *args, empresa, equipo=None, **kwargs):
+    def __init__(self, *args, empresa, equipo=None, tipo_producto=Equipo.TipoProducto.REDUCTOR, **kwargs):
+        self.tipo_producto = equipo.tipo_producto if equipo else tipo_producto
         self.empresa = empresa
         self.equipo = equipo
         if equipo and "initial" not in kwargs:
@@ -141,18 +142,18 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
         datos = super().clean()
         if not datos.get("cliente") and not datos.get("razon_social"):
             self.add_error("razon_social", "Seleccione un cliente o ingrese la raz\u00f3n social.")
-        camaronera = (datos.get("camaronera") or "").strip()
         numero = (datos.get("numero_equipo") or "").strip()
         serie = (datos.get("numero_serie") or "").strip()
-        proyecto_qs = Proyecto.objects.filter(empresa=self.empresa, nombre__iexact=camaronera)
-        proyecto = proyecto_qs.first() or (self.equipo.proyecto if self.equipo else None)
-        duplicados_numero = Equipo.objects.filter(proyecto=proyecto, nombre__iexact=numero) if proyecto else Equipo.objects.none()
+        duplicados_numero = Equipo.objects.filter(
+            proyecto__empresa=self.empresa, ubicacion__iexact=(datos.get("estacion") or "").strip(),
+            nombre__iexact=numero,
+        )
         duplicados_serie = Equipo.objects.filter(proyecto__empresa=self.empresa, numero_serie__iexact=serie)
         if self.equipo:
             duplicados_numero = duplicados_numero.exclude(pk=self.equipo.pk)
             duplicados_serie = duplicados_serie.exclude(pk=self.equipo.pk)
         if numero and duplicados_numero.exists():
-            self.add_error("numero_equipo", "Ya existe este número de equipo en la camaronera.")
+            self.add_error("numero_equipo", "Ya existe este número de equipo en esta estación de la empresa.")
         if serie and duplicados_serie.exists():
             self.add_error("numero_serie", "Ya existe esta serie en la empresa.")
         return datos
@@ -194,7 +195,7 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
                     fecha_inicio=date.today(),
                     creado_por=usuario,
                 )
-            equipo = Equipo(proyecto=proyecto)
+            equipo = Equipo(proyecto=proyecto, tipo_producto=self.tipo_producto)
         # Los datos del cliente se consultan por relacion, sin copiarlos al proyecto.
         if not cliente:
             campos = []

@@ -117,7 +117,7 @@ def producto_listado(request, tipo):
             | Q(sector__icontains=q) | Q(nombre__icontains=q) | Q(marca__icontains=q)
             | Q(modelo__icontains=q) | Q(numero_serie__icontains=q)
         )
-    contexto = {"equipos": equipos[:200], "q": q, "producto_nombre": nombre, "producto_codigo": codigo, "cliente_seleccionado": cliente, "clientes": clientes,
+    contexto = {"equipos": equipos[:200], "q": q, "producto_nombre": nombre, "producto_codigo": codigo, "producto_singular": Equipo(tipo_producto=codigo).producto_singular, "cliente_seleccionado": cliente, "clientes": clientes,
                 "total": base.count(), "publicos": base.filter(consulta_publica_activa=True).count(),
                 "inactivos": base.filter(estado=Equipo.Estado.INACTIVO).count()}
     contexto.update(_contexto_permisos(request))
@@ -230,8 +230,12 @@ def _equipo(request, pk):
     return get_object_or_404(_equipos_autorizados(request), pk=pk)
 
 
-def _contexto_formulario_reductor(request, form, equipo=None):
-    contexto = {"form": form, "equipo": equipo, "titulo": "Editar reductor" if equipo else "Crear reductor",
+def _contexto_formulario_producto(request, form, equipo=None):
+    producto = Equipo(tipo_producto=form.tipo_producto)
+    contexto = {"form": form, "equipo": equipo, "producto_codigo": form.tipo_producto,
+                "producto_singular": producto.producto_singular, "titulo_informacion": producto.titulo_informacion,
+                "cliente_seleccionado": form.fields["cliente"].queryset.filter(pk=form.cliente_inicial["id"]).first() if form.cliente_inicial else None,
+                "titulo": ("Editar " if equipo else "Crear ") + producto.producto_singular.lower(),
                 "cliente_form": ClienteForm(empresa=request.empresa_activa, prefix="nuevo")}
     contexto.update(_contexto_permisos(request))
     return contexto
@@ -239,10 +243,19 @@ def _contexto_formulario_reductor(request, form, equipo=None):
 
 @permiso_masiscam_required("crear")
 def ficha_crear(request):
+    tipo = request.GET.get("tipo", "REDUCTOR").upper()
+    if tipo not in Equipo.TipoProducto.values:
+        raise Http404
+    cliente_id = request.GET.get("cliente")
+    inicial = {}
+    if cliente_id:
+        if not cliente_id.isdecimal() or len(cliente_id) > 18:
+            raise Http404
+        inicial["cliente"] = get_object_or_404(Cliente, pk=cliente_id, empresa=request.empresa_activa).pk
     form = FichaEquipoForm(
         request.POST if request.method == "POST" else None,
         request.FILES if request.method == "POST" else None,
-        empresa=request.empresa_activa,
+        empresa=request.empresa_activa, tipo_producto=tipo, initial=inicial,
     )
     if request.method == "POST" and form.is_valid():
         try:
@@ -256,7 +269,7 @@ def ficha_crear(request):
                 return JsonResponse({"success": True, "id": equipo.pk})
             messages.success(request, "Ficha del equipo creada correctamente.")
             return redirect("masiscam:ficha_detalle", pk=equipo.pk)
-    contexto = _contexto_formulario_reductor(request, form)
+    contexto = _contexto_formulario_producto(request, form)
     if _es_modal(request) and request.method == "POST":
         return _respuesta_formulario_modal(request, "masiscam/ficha_form.html", contexto, form, status=400)
     return render(request, "masiscam/ficha_form.html", contexto)
@@ -356,7 +369,7 @@ def ficha_editar(request, pk):
             auditar(empresa=request.empresa_activa, usuario=request.user, accion="FICHA_EQUIPO_EDITADA", objeto=equipo)
             messages.success(request, "Ficha del equipo actualizada.")
             return redirect("masiscam:ficha_detalle", pk=equipo.pk)
-    return render(request, "masiscam/ficha_form.html", _contexto_formulario_reductor(request, form, equipo))
+    return render(request, "masiscam/ficha_form.html", _contexto_formulario_producto(request, form, equipo))
 
 
 @require_POST
@@ -368,7 +381,7 @@ def ficha_archivar(request, pk):
     equipo.save(update_fields=["estado", "consulta_publica_activa", "actualizado_en"])
     auditar(empresa=request.empresa_activa, usuario=request.user, accion="FICHA_EQUIPO_ARCHIVADA", objeto=equipo)
     messages.success(request, "Ficha archivada y consulta pública desactivada.")
-    return redirect("masiscam:producto_listado", tipo="reductor")
+    return redirect("masiscam:producto_listado", tipo=equipo.tipo_producto.lower())
 
 
 @require_POST
@@ -551,7 +564,7 @@ def equipo_crear(request, pk):
     proyecto = _proyecto(request, pk)
     if request.method == "GET":
         return render(request, "masiscam/_equipo_form.html", {"form": EquipoForm(empresa=request.empresa_activa), "proyecto": proyecto})
-    form = EquipoForm(request.POST, request.FILES, empresa=request.empresa_activa)
+    form = EquipoForm(request.POST, request.FILES, instance=Equipo(proyecto=proyecto), empresa=request.empresa_activa)
     if form.is_valid():
         equipo = form.save(commit=False)
         equipo.proyecto = proyecto
@@ -578,7 +591,7 @@ def equipo_editar(request, pk, equipo_pk):
         form.save()
         auditar(empresa=request.empresa_activa, usuario=request.user, accion="EQUIPO_EDITADO", objeto=equipo, detalle={"campos": form.changed_data})
         return redirect("masiscam:proyecto_detalle", pk=pk)
-    return render(request, "masiscam/form.html", {"form": form, "titulo": "Editar equipo", "proyecto": proyecto})
+    return render(request, "masiscam/form.html", {"form": form, "titulo": "Editar equipo", "proyecto": proyecto, "equipo": equipo})
 
 
 @permiso_masiscam_required("documentos")
