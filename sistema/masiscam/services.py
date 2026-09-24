@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 
@@ -13,6 +14,17 @@ CATEGORIA_CARPETA = {"FOTOGRAFIAS": "01_Fotografias", "PLACAS": "02_Equipos", "P
 
 def nombre_seguro(texto):
     return re.sub(r"[^\w. -]+", "_", texto, flags=re.UNICODE).strip()[:180]
+
+
+def nombre_carpeta_drive(texto):
+    original = texto.strip()
+    seguro = nombre_seguro(original).strip() or "SIN-NOMBRE"
+    if seguro in {".", ".."}:
+        seguro = "SIN-NOMBRE"
+    # Distinct series must not collapse into the same name after sanitization.
+    if seguro != original:
+        seguro = seguro[:169] + "-" + hashlib.sha256(original.encode("utf-8")).hexdigest()[:10]
+    return seguro
 
 
 class GoogleDriveService:
@@ -65,14 +77,16 @@ class GoogleDriveService:
         empresa = equipo.proyecto.empresa
         if equipo.cliente_id and equipo.cliente.empresa_id != empresa.pk:
             raise ValueError("El cliente del equipo no pertenece a su empresa.")
-        # La raiz configurada ya es MASISCAM. El producto actual es REDUCTORES.
-        razon_social = equipo.razon_social_cliente.strip()
-        if not razon_social:
-            raise ValueError("El equipo no tiene razon social para su carpeta Drive.")
-        niveles = [razon_social, "REDUCTORES"]
+        if equipo.drive_folder_id:
+            return {"id": equipo.drive_folder_id, "webViewLink": equipo.drive_folder_url}
+        cliente = equipo.razon_social_cliente.strip()
+        if not cliente or equipo.tipo_producto not in {"REDUCTOR", "BOMBA"}:
+            raise ValueError("El equipo requiere razon social y un tipo de producto valido.")
+        niveles = [cliente, equipo.tipo_producto,
+                   equipo.numero_serie.strip() or f"EQUIPO-{equipo.pk}"]
         padre = settings.GOOGLE_DRIVE_ROOT_FOLDER_ID
         for nombre in niveles:
-            carpeta = self.obtener_carpeta_equipo(nombre, padre)
+            carpeta = self.obtener_carpeta_equipo(nombre_carpeta_drive(nombre), padre)
             padre = carpeta["id"]
         return carpeta
 
@@ -80,8 +94,16 @@ class GoogleDriveService:
         return self.obtener_carpeta_equipo(nombre, proyecto.drive_folder_id)["id"]
 
     def crear_estructura_registro(self, registro, equipo_folder_id):
-        nombre = f"{registro.fecha:%Y-%m-%d} - {registro.get_tipo_display()}"
-        return self.obtener_carpeta_equipo(nombre, equipo_folder_id)
+        from .models import Equipo, RegistroEquipo
+        if Equipo.objects.exclude(pk=registro.equipo_id).filter(drive_folder_id=equipo_folder_id).exists():
+            raise ValueError("La carpeta del equipo esta compartida; requiere revision manual.")
+        nombre = nombre_carpeta_drive(registro.tipo)
+        carpeta = self.obtener_carpeta_equipo(nombre, equipo_folder_id)
+        if RegistroEquipo.objects.exclude(pk=registro.pk).filter(drive_folder_id=carpeta["id"]).exists():
+            carpeta = self.obtener_carpeta_equipo(f"{nombre} - REGISTRO-{registro.pk}", equipo_folder_id)
+        if RegistroEquipo.objects.exclude(pk=registro.pk).filter(drive_folder_id=carpeta["id"]).exists():
+            raise ValueError("La carpeta del registro esta compartida; requiere revision manual.")
+        return carpeta
 
     def reservar_documento(self, documento_id):
         """Commit the remote ID before any upload, independently of final DB save."""
@@ -108,7 +130,11 @@ class GoogleDriveService:
             if exc.resp.status != 404:
                 raise
         carpeta = CATEGORIA_CARPETA.get(documento.categoria, "08_Otros")
-        padre = self.buscar_subcarpeta(documento.proyecto, carpeta)
+        if documento.equipo_id:
+            equipo_folder_id = sincronizar_carpeta_equipo(documento.equipo_id)
+            padre = self.obtener_carpeta_equipo(carpeta, equipo_folder_id)["id"]
+        else:
+            padre = self.buscar_subcarpeta(documento.proyecto, carpeta)
         media = MediaFileUpload(documento.archivo.path, mimetype=documento.tipo_mime, resumable=True)
         try:
             return self.drive.files().create(body={"id": remote_id, "name": nombre_seguro(documento.nombre_original), "parents": [padre]}, media_body=media, fields=fields, supportsAllDrives=True).execute()
@@ -169,10 +195,10 @@ def encolar_carpeta_registro(registro_id):
         return
     RegistroEquipo.objects.filter(pk=registro_id, drive_folder_id="").update(drive_error="")
     try:
-        from .tasks import crear_carpeta_registro
-        crear_carpeta_registro.apply_async(args=[registro_id], retry=False)
+        # Called after commit: persist the folder before returning to the user.
+        sincronizar_carpeta_registro(registro_id)
     except Exception as exc:
-        logger.error("No se pudo encolar Drive del registro %s", registro_id)
+        logger.error("No se pudo sincronizar Drive del registro %s", registro_id)
         RegistroEquipo.objects.filter(pk=registro_id, drive_folder_id="").update(drive_error="No se pudo sincronizar con Drive. Reintente o contacte al administrador.")
 
 
@@ -191,8 +217,6 @@ def sincronizar_carpeta_registro(registro_id):
             if registro.drive_folder_id:
                 return registro.drive_folder_id
             servicio = GoogleDriveService()
-            # Un ID guardado puede pertenecer a la estructura anterior. No moverla ni borrarla.
-            equipo_folder_id = servicio.crear_estructura_equipo(registro.equipo)["id"]
             carpeta = servicio.crear_estructura_registro(registro, equipo_folder_id)
             RegistroEquipo.objects.filter(pk=registro_id).update(
                 drive_folder_id=carpeta["id"], drive_folder_url=carpeta.get("webViewLink", ""), drive_error="",

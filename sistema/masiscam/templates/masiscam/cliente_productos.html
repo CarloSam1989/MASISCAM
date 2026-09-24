@@ -10,12 +10,22 @@
   {% if equipos %}
   <div class="table-responsive card masiscam-card">
     <table class="table align-middle mb-0">
+<<<<<<< HEAD
       <thead><tr><th>Producto / N° equipo</th><th>Serie</th><th>Ratio (Relación motriz)</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody>{% for equipo in equipos %}
         <tr>
           <td>{{ equipo.get_tipo_producto_display }} / {{ equipo.nombre }}</td><td>{{ equipo.numero_serie|default:"—" }}</td><td>{{ equipo.ratio|default:"—" }}</td><td>{{ equipo.get_estado_display }}</td>
           <td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a> <a class="btn btn-sm btn-outline-secondary" href="{% url 'masiscam:equipo_informe' equipo.pk %}" target="_blank" rel="noopener">Ver informe</a></td>
         </tr>
+=======
+      <thead><tr><th>Producto</th><th>Proyecto</th><th>Serie</th><th>Estado</th><th>Documentos</th><th>Acciones</th></tr></thead>
+      <tbody>{% for equipo in equipos %}
+        <tr>{% if equipo.estado == "INACTIVO" %}<td colspan="6">Equipo inactivo</td>{% else %}
+          <td>{{ equipo.nombre }}</td><td>{{ equipo.proyecto.nombre }}</td><td>{{ equipo.numero_serie|default:"—" }}</td><td>{{ equipo.get_estado_display }}</td>
+          <td>{% if equipo.documentos_contexto.puede_ver_documentos %}{% include "masiscam/_documentos_archivos.html" with documentos_drive=equipo.documentos_contexto.documentos_drive error_documentos=equipo.documentos_contexto.error_documentos privado=True %}{% endif %}</td>
+      <td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a> <a class="btn btn-sm btn-outline-secondary" href="{% url 'masiscam:equipo_informe' equipo.pk %}" target="_blank" rel="noopener">Ver informe</a></td>
+        {% endif %}</tr>
+>>>>>>> b6fe9991e08b88f7bcbb0b5e58d1060be3730b2e
       {% endfor %}</tbody>
     </table>
   </div>

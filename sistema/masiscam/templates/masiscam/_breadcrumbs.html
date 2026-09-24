@@ -1,6 +1,8 @@
-{% with vista=request.resolver_match.url_name %}
+{% load masiscam_navigation %}
+{% breadcrumbs as items %}
 <nav class="masiscam-breadcrumbs no-print" aria-label="Migas de pan">
   <ol class="breadcrumb mb-0 small">
+<<<<<<< HEAD
     {% if request.cliente_usuario %}
       <li class="breadcrumb-item"><a href="{% url 'masiscam:cliente_productos' %}">Mis productos</a></li>
       {% if equipo %}
@@ -30,6 +32,8 @@
       <li class="breadcrumb-item active" aria-current="page">{% if vista == 'ficha_detalle' %}Ficha{% elif vista == 'equipo_etiqueta' %}Etiqueta QR{% elif vista == 'ficha_crear' %}Crear{% elif vista == 'ficha_editar' %}Editar{% else %}{{ titulo }}{% endif %}</li>
     {% endif %}
     {% endif %}
+=======
+    {% for item in items %}<li class="breadcrumb-item{% if forloop.last %} active{% endif %}"{% if forloop.last %} aria-current="page"{% endif %}>{% if item.url %}<a href="{{ item.url }}">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}</li>{% endfor %}
+>>>>>>> b6fe9991e08b88f7bcbb0b5e58d1060be3730b2e
   </ol>
 </nav>
-{% endwith %}

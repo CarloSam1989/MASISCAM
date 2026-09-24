@@ -1,0 +1,9 @@
+{% if error_documentos %}<span class="text-muted" role="status">Los documentos no están disponibles temporalmente. Intente más tarde.</span>
+{% else %}
+{% for documento in documentos_drive %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-1">
+  <span class="text-break">{{ documento.name }}</span>
+  <a class="btn btn-outline-primary" href="{% if privado %}{% url 'masiscam:equipo_documento_privado' equipo.pk documento.id %}{% else %}{% url 'masiscam:equipo_documento_drive' equipo.token_publico documento.id %}{% endif %}" target="_blank" rel="noopener noreferrer" aria-label="Ver {{ documento.name }}">Ver</a>
+</div>
+{% empty %}<span class="text-muted">Sin documentos</span>{% endfor %}
+{% endif %}

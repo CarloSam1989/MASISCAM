@@ -34,8 +34,13 @@ def acceso_cliente_usuario(usuario):
 
 
 VISTAS_CLIENTE = {
+<<<<<<< HEAD
     "dashboard", "producto_listado", "cliente_productos", "ficha_detalle", "equipo_informe", "equipo_publico",
     "equipo_foto_privada", "equipo_foto_publica", "documento_privado",
+=======
+    "cliente_productos", "ficha_detalle", "equipo_informe", "equipo_publico",
+    "equipo_foto_privada", "equipo_foto_publica", "documento_privado", "equipo_documento_privado",
+>>>>>>> b6fe9991e08b88f7bcbb0b5e58d1060be3730b2e
     "documento_publico", "imagen_proyecto_publica",
 }
 

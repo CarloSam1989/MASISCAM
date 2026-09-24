@@ -4,6 +4,8 @@ from . import views
 app_name = "masiscam"
 
 urlpatterns = [
+    path("equipos/<int:pk>/documentos/<slug:archivo_id>/ver/", views.equipo_documento_privado, name="equipo_documento_privado"),
+    path("equipos/<int:pk>/consulta/desactivar/", views.equipo_publico_desactivar, name="equipo_publico_desactivar"),
     path("proyectos/", views.proyectos, name="proyectos"),
     path("proyectos/<int:pk>/imagen/", views.proyecto_imagen_privada, name="proyecto_imagen_privada"),
     path("proyectos/<int:pk>/documentos/<int:documento_pk>/descargar/", views.documento_privado, name="documento_privado"),
