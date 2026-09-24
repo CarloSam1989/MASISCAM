@@ -1,0 +1,26 @@
+{% extends "masiscam/base.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-4">
+    <h1 class="h3 mb-0">Usuarios</h1>
+    <a class="btn btn-primary" href="{% url 'masiscam:usuario_crear' %}">Crear administrador</a>
+  </div>
+  <div class="card masiscam-card table-responsive">
+    <table class="table align-middle mb-0">
+      <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></thead>
+      <tbody>{% for rol in roles %}<tr>
+        <td>{{ rol.perfil.user.username }}</td><td>{{ rol.perfil.user.get_full_name|default:"—" }}</td>
+        <td>{{ rol.get_rol_display }}</td><td>{% if rol.acceso_activo %}Activo{% else %}Inactivo{% endif %}</td>
+        <td>{% if rol.gestionable %}
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:usuario_editar' rol.pk %}">Editar</a>
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:usuario_clave' rol.pk %}">Cambiar clave</a>
+          {% if rol.perfil.user_id != user.pk %}<form method="post" class="d-inline" action="{% url 'masiscam:usuario_estado' rol.pk %}">
+            {% csrf_token %}<input type="hidden" name="activo" value="{% if rol.acceso_activo %}0{% else %}1{% endif %}">
+            <button class="btn btn-sm btn-outline-secondary">{% if rol.acceso_activo %}Desactivar{% else %}Activar{% endif %}</button>
+          </form>{% endif %}
+        {% else %}<span class="text-muted">Cuenta protegida</span>{% endif %}</td>
+      </tr>{% empty %}<tr><td colspan="5">No hay usuarios MASISCAM.</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,9 +1,14 @@
 from django.urls import path
-from . import views
+from . import usuario_views, views
 
 app_name = "masiscam"
 
 urlpatterns = [
+    path("usuarios/", usuario_views.usuarios, name="usuarios"),
+    path("usuarios/crear/", usuario_views.usuario_crear, name="usuario_crear"),
+    path("usuarios/<int:pk>/editar/", usuario_views.usuario_editar, name="usuario_editar"),
+    path("usuarios/<int:pk>/clave/", usuario_views.usuario_clave, name="usuario_clave"),
+    path("usuarios/<int:pk>/estado/", usuario_views.usuario_estado, name="usuario_estado"),
     path("equipos/<int:pk>/documentos/<slug:archivo_id>/ver/", views.equipo_documento_privado, name="equipo_documento_privado"),
     path("equipos/<int:pk>/consulta/desactivar/", views.equipo_publico_desactivar, name="equipo_publico_desactivar"),
     path("proyectos/", views.proyectos, name="proyectos"),
