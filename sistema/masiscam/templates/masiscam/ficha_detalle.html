@@ -9,12 +9,8 @@
   <header class="ficha-cabecera mb-3">
     <div><div class="text-muted small">Ficha del equipo</div><h1 class="h3 mb-1">{{ equipo.nombre }}</h1><p class="text-muted mb-0">{{ equipo.proyecto.nombre }}</p></div>
     <div class="ficha-acciones">
-<<<<<<< HEAD
       {% if puede_ver_carpeta_producto and equipo.drive_folder_url %}<a class="btn btn-outline-primary" href="{{ equipo.drive_folder_url }}" target="_blank" rel="noopener">Abrir carpeta</a>{% endif %}
-      {% if puede_editar %}<button type="button" class="btn btn-primary ficha-agregar" id="registro-abrir" aria-haspopup="dialog" aria-controls="registro-modal">Agregar registro</button>{% endif %}
-=======
       {% if puede_editar and equipo.estado != "INACTIVO" %}<button type="button" class="btn btn-primary ficha-agregar" id="registro-abrir" aria-haspopup="dialog" aria-controls="registro-modal">Agregar registro</button>{% endif %}
->>>>>>> b6fe9991e08b88f7bcbb0b5e58d1060be3730b2e
       {% if puede_editar %}<a class="btn btn-outline-primary" href="{% url 'masiscam:ficha_editar' equipo.pk %}">Editar ficha</a>{% endif %}
       <a class="btn btn-outline-dark" target="_blank" rel="noopener" href="{% url 'masiscam:equipo_informe' equipo.pk %}">Ver informe</a>
       {% if puede_qr %}<a class="btn btn-outline-dark" href="{% url 'masiscam:equipo_qr' equipo.pk %}?download=1">Descargar QR</a><a class="btn btn-outline-dark" href="{% url 'masiscam:equipo_etiqueta' equipo.pk %}" target="_blank" rel="noopener">Imprimir etiqueta</a>{% endif %}

@@ -2,38 +2,6 @@
 {% breadcrumbs as items %}
 <nav class="masiscam-breadcrumbs no-print" aria-label="Migas de pan">
   <ol class="breadcrumb mb-0 small">
-<<<<<<< HEAD
-    {% if request.cliente_usuario %}
-      <li class="breadcrumb-item"><a href="{% url 'masiscam:cliente_productos' %}">Mis productos</a></li>
-      {% if equipo %}
-      <li class="breadcrumb-item"><a href="{% url 'masiscam:producto_listado' equipo.tipo_producto|lower %}">{{ equipo.get_tipo_producto_display }}</a></li>
-      <li class="breadcrumb-item active" aria-current="page">{{ equipo.numero_serie|default:equipo.nombre }}</li>
-      {% elif producto_nombre %}<li class="breadcrumb-item active" aria-current="page">{{ producto_nombre }}</li>{% endif %}
-    {% else %}
-    {% if vista == "dashboard" %}<li class="breadcrumb-item active" aria-current="page">Dashboard</li>{% else %}<li class="breadcrumb-item"><a href="{% url 'masiscam:dashboard' %}">Dashboard</a></li>{% endif %}
-    {% if vista == 'dashboard' %}
-    {% elif vista == 'producto_listado' %}
-      <li class="breadcrumb-item active" aria-current="page">{{ producto_nombre }}</li>
-    {% elif vista == 'clientes' %}
-      <li class="breadcrumb-item active" aria-current="page">Clientes</li>
-    {% elif vista == 'cliente_crear' or vista == 'cliente_editar' or vista == 'cliente_detalle' %}
-      <li class="breadcrumb-item"><a href="{% url 'masiscam:clientes' %}">Clientes</a></li>
-      <li class="breadcrumb-item active" aria-current="page">{% if vista == 'cliente_crear' %}Crear{% elif vista == 'cliente_editar' %}Editar{% else %}{{ cliente.nombre_comercial }}{% endif %}</li>
-    {% elif proyecto %}
-      <li class="breadcrumb-item">Proyectos</li>
-      {% if vista != 'proyecto_detalle' %}<li class="breadcrumb-item"><a href="{% url 'masiscam:proyecto_detalle' proyecto.pk %}">{{ proyecto.nombre }}</a></li>{% endif %}
-      <li class="breadcrumb-item active" aria-current="page">{% if vista == 'proyecto_detalle' %}{{ proyecto.nombre }}{% elif vista == 'historial' %}Historial{% elif vista == 'etiqueta_qr' %}Etiqueta QR{% else %}{{ titulo }}{% endif %}</li>
-    {% elif vista == 'proyecto_crear' %}
-      <li class="breadcrumb-item">Proyectos</li>
-      <li class="breadcrumb-item active" aria-current="page">Crear</li>
-    {% else %}
-      <li class="breadcrumb-item"><a href="{% url 'masiscam:producto_listado' 'reductor' %}">Reductores</a></li>
-      {% if equipo and vista != 'ficha_detalle' %}<li class="breadcrumb-item"><a href="{% url 'masiscam:ficha_detalle' equipo.pk %}">{{ equipo.nombre }}</a></li>{% endif %}
-      <li class="breadcrumb-item active" aria-current="page">{% if vista == 'ficha_detalle' %}Ficha{% elif vista == 'equipo_etiqueta' %}Etiqueta QR{% elif vista == 'ficha_crear' %}Crear{% elif vista == 'ficha_editar' %}Editar{% else %}{{ titulo }}{% endif %}</li>
-    {% endif %}
-    {% endif %}
-=======
     {% for item in items %}<li class="breadcrumb-item{% if forloop.last %} active{% endif %}"{% if forloop.last %} aria-current="page"{% endif %}>{% if item.url %}<a href="{{ item.url }}">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}</li>{% endfor %}
->>>>>>> b6fe9991e08b88f7bcbb0b5e58d1060be3730b2e
   </ol>
 </nav>

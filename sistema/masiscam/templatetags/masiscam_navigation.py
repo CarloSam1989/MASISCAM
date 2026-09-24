@@ -20,6 +20,18 @@ def breadcrumbs(context):
     if equipo:
         cliente = equipo.cliente
         producto = equipo.tipo_producto
+    if getattr(request, "cliente_usuario", None):
+        items = [("Mis productos", reverse("masiscam:cliente_productos"))]
+        if producto:
+            items.append((Equipo(tipo_producto=producto).producto_singular,
+                          reverse("masiscam:producto_listado", args=[producto.lower()])))
+        if equipo:
+            items.append((equipo.numero_serie or equipo.nombre,
+                          reverse("masiscam:ficha_detalle", args=[equipo.pk])))
+        if vista in {"equipo_informe", "equipo_publico"}:
+            items.append(("Informe", None))
+        return [{"label": label, "url": url if i < len(items) - 1 else None}
+                for i, (label, url) in enumerate(items)]
     if equipo or producto or vista.startswith("cliente") or vista == "ficha_crear":
         items.append(("Clientes", reverse("masiscam:clientes")))
         if cliente:

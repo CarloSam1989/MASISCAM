@@ -186,13 +186,8 @@ class DriveEquipoTests(TestCase):
         self.assertNotIn("Historial / Registros", html)
         self.assertNotIn("Observación", tabla)
         for tipo in RegistroEquipo.Tipo.labels:
-<<<<<<< HEAD
             self.assertIn("<td>" + tipo + "</td>", tabla)
-        self.assertEqual(tabla.count("Abrir carpeta</a>"), 5)
-=======
-            self.assertIn('class="h5 mb-3">' + tipo + '</h2>', tabla)
         self.assertEqual(tabla.count("Sin documentos"), 5)
->>>>>>> b6fe9991e08b88f7bcbb0b5e58d1060be3730b2e
         RegistroEquipo.objects.create(equipo=self.antiguo, tipo="ASISTENCIA", fecha="2026-09-16")
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         tabla = response.content.decode().split('id="historial-registros"', 1)[1].split('<dialog', 1)[0]
@@ -332,13 +327,8 @@ class DriveEquipoTests(TestCase):
         self.assertEqual([[celda.replace(" Reintentar Drive", "") for celda in fila] for fila in interna.filas], externa.filas)
         self.assertEqual(len(externa.filas), 4)
         for tipo in ["Nuevo", "Asistencia", "Garantía", "REVISION"]:
-<<<<<<< HEAD
             self.assertContains(informe, "<td>" + tipo + "</td>")
-        self.assertContains(informe, 'href="https://drive.google.com/drive/folders/folder-test"')
-=======
-            self.assertContains(informe, 'class="h5 mb-3">' + tipo + '</h2>')
         self.assertNotContains(informe, "https://drive.google.com/")
->>>>>>> b6fe9991e08b88f7bcbb0b5e58d1060be3730b2e
         self.assertNotContains(informe, "NO MOSTRAR OBSERVACION")
         self.assertNotContains(informe, "Reintentar Drive")
         self.assertNotContains(informe, "registro-modal")

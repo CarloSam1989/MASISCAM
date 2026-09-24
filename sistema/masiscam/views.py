@@ -61,7 +61,6 @@ def _documentos_cliente(request):
 def cliente_productos(request):
     if not request.cliente_usuario:
         return redirect("masiscam:dashboard")
-<<<<<<< HEAD
     return _listado_cliente(request)
 
 
@@ -74,14 +73,9 @@ def _listado_cliente(request, codigo=None):
     return render(request, "masiscam/cliente_productos.html", {
         "equipos": equipos, "q": q,
         "productos": _productos(propios),
+        "producto_codigo": codigo,
         "producto_nombre": dict(Equipo.TipoProducto.choices).get(codigo, ""),
     })
-=======
-    equipos = _equipos_autorizados(request)
-    if equipos.count() == 1:
-        return redirect("masiscam:ficha_detalle", pk=equipos.first().pk)
-    return render(request, "masiscam/cliente_productos.html", {"equipos": _documentos_listado(request, equipos)})
->>>>>>> b6fe9991e08b88f7bcbb0b5e58d1060be3730b2e
 
 
 def _es_modal(request):
