@@ -19,13 +19,13 @@ class UsuariosTests(TestCase):
         self.client.force_login(self.admin)
 
     def crear(self, **changes):
-        datos = {"username": "nuevo-admin", "first_name": "Nuevo Administrador", "email": "",
+        datos = {"username": "nuevo-admin", "first_name": "Nuevo Administrador", "email": "", "rol": "ADMIN",
                  "password1": "Inicial-Segura-847!", "password2": "Inicial-Segura-847!"}
         datos.update(changes)
         return self.client.post(reverse("masiscam:usuario_crear"), datos)
 
     def test_crear_admin_login_y_sin_privilegios_django(self):
-        response = self.crear(is_staff="1", is_superuser="1", rol="CLIENTE", empresa="999")
+        response = self.crear(is_staff="1", is_superuser="1", empresa="999")
         self.assertRedirects(response, reverse("masiscam:usuarios"))
         usuario = get_user_model().objects.get(username="nuevo-admin")
         self.assertTrue(usuario.check_password("Inicial-Segura-847!"))
@@ -51,6 +51,20 @@ class UsuariosTests(TestCase):
                 response = self.crear(**cambios)
                 self.assertTrue(response.context["form"].errors)
                 self.assertEqual(get_user_model().objects.count(), total)
+
+    def test_creacion_roles_autorizados(self):
+        for codigo in ("ADMIN", "TECNICO", "CONSULTA"):
+            response = self.crear(username="usuario-" + codigo, rol=codigo)
+            self.assertRedirects(response, reverse("masiscam:usuarios"))
+            usuario = get_user_model().objects.get(username="usuario-" + codigo)
+            self.assertEqual(usuario.perfiles.get().rol_masiscam.rol, codigo)
+            self.assertFalse(usuario.is_staff)
+            self.assertFalse(usuario.is_superuser)
+        total = get_user_model().objects.count()
+        for codigo in ("CLIENTE", "SUPERUSER", "", "INVALIDO"):
+            response = self.crear(rol=codigo)
+            self.assertIn("rol", response.context["form"].errors)
+            self.assertEqual(get_user_model().objects.count(), total)
 
     def test_cambio_clave_invalida_anterior_y_sesion_sin_filtrar_secretos(self):
         otro = Client()

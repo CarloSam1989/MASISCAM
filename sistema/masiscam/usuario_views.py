@@ -52,15 +52,15 @@ def usuario_crear(request):
             with transaction.atomic():
                 usuario = form.save()  # UserCreationForm hashes via set_password().
                 perfil = Perfil.objects.create(user=usuario, empresa=request.empresa_activa)
-                rol = RolMasiscam.objects.create(perfil=perfil, rol=RolMasiscam.Rol.ADMINISTRADOR)
+                rol = RolMasiscam.objects.create(perfil=perfil, rol=form.cleaned_data["rol"])
                 auditar(empresa=request.empresa_activa, usuario=request.user,
-                        accion="ADMINISTRADOR_CREADO", objeto=rol)
+                        accion="ADMINISTRADOR_CREADO" if rol.rol == RolMasiscam.Rol.ADMINISTRADOR else "USUARIO_CREADO", objeto=rol)
         except IntegrityError:
             form.add_error("username", "Ya existe un usuario con ese nombre.")
         else:
-            messages.success(request, "Administrador creado correctamente.")
+            messages.success(request, "Usuario creado correctamente.")
             return redirect("masiscam:usuarios")
-    return render(request, "masiscam/usuario_form.html", {"form": form, "titulo": "Crear administrador"})
+    return render(request, "masiscam/usuario_form.html", {"form": form, "titulo": "Agregar usuario"})
 
 
 @require_http_methods(["GET", "POST"])

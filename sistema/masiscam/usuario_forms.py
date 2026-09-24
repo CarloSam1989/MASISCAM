@@ -1,6 +1,7 @@
 from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import SetPasswordForm, UserCreationForm
+from .models import RolMasiscam
 
 
 class UsuarioCamposMixin:
@@ -21,6 +22,13 @@ class UsuarioCamposMixin:
 
 
 class AdministradorCrearForm(UsuarioCamposMixin, UserCreationForm):
+    rol = forms.ChoiceField(
+        label="Rol", initial=RolMasiscam.Rol.ADMINISTRADOR,
+        choices=[(codigo, nombre) for codigo, nombre in RolMasiscam.Rol.choices
+                 if codigo != RolMasiscam.Rol.CLIENTE],
+        help_text="Los usuarios CLIENTE se crean desde su ficha de cliente.",
+    )
+
     class Meta(UserCreationForm.Meta):
         model = get_user_model()
         fields = ("username", "first_name", "email")

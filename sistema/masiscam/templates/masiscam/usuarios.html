@@ -1,12 +1,17 @@
 {% extends "masiscam/base.html" %}
+{% load static %}
 {% block content %}
 <div class="container py-4">
   <div class="d-flex justify-content-between align-items-center gap-3 mb-4">
     <h1 class="h3 mb-0">Usuarios</h1>
-    <a class="btn btn-primary" href="{% url 'masiscam:usuario_crear' %}">Crear administrador</a>
+    <a class="btn btn-primary" href="{% url 'masiscam:usuario_crear' %}">+ Agregar usuario</a>
+  </div>
+  <div id="usuarios-controles" class="mb-3" hidden>
+    <label class="form-label" for="usuarios-buscar">Buscar usuarios</label>
+    <input type="search" id="usuarios-buscar" class="form-control" placeholder="Usuario, nombre, rol o estado" aria-controls="usuarios-tabla">
   </div>
   <div class="card masiscam-card table-responsive">
-    <table class="table align-middle mb-0">
+    <table id="usuarios-tabla" class="table table-hover align-middle mb-0 masiscam-table">
       <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody>{% for rol in roles %}<tr>
         <td>{{ rol.perfil.user.username }}</td><td>{{ rol.perfil.user.get_full_name|default:"—" }}</td>
@@ -19,8 +24,15 @@
             <button class="btn btn-sm btn-outline-secondary">{% if rol.acceso_activo %}Desactivar{% else %}Activar{% endif %}</button>
           </form>{% endif %}
         {% else %}<span class="text-muted">Cuenta protegida</span>{% endif %}</td>
-      </tr>{% empty %}<tr><td colspan="5">No hay usuarios MASISCAM.</td></tr>{% endfor %}</tbody>
+      </tr>{% endfor %}</tbody>
     </table>
   </div>
+  <p id="usuarios-vacio" class="text-muted my-3"{% if roles %} hidden{% endif %}>No hay usuarios con estos filtros.</p>
+  <nav id="usuarios-paginacion" class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3" aria-label="Paginación de usuarios" hidden>
+    <span id="usuarios-info" role="status" aria-live="polite"></span>
+    <div><button id="usuarios-anterior" type="button" class="btn btn-outline-secondary">Anterior</button>
+    <button id="usuarios-siguiente" type="button" class="btn btn-outline-secondary">Siguiente</button></div>
+  </nav>
 </div>
 {% endblock %}
+{% block javascript %}<script src="{% static 'masiscam/js/usuarios.js' %}" defer></script>{% endblock %}
