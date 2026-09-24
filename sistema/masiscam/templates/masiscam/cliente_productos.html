@@ -1,14 +1,19 @@
 {% extends "masiscam/base.html" %}
 {% block content %}
 <div class="container py-4">
-  <h1 class="h3 mb-4">Mis productos</h1>
+  <h1 class="h3 mb-4">Mis productos{% if producto_nombre %} · {{ producto_nombre }}{% endif %}</h1>
+  {% include "masiscam/_productos_cards.html" %}
+  <form method="get" class="my-4">
+    <label for="q" class="form-label">Buscar por N° equipo, serie o ratio (Relación motriz)</label>
+    <div class="input-group"><input id="q" name="q" value="{{ q }}" class="form-control"><button class="btn btn-primary">Buscar</button></div>
+  </form>
   {% if equipos %}
   <div class="table-responsive card masiscam-card">
     <table class="table align-middle mb-0">
-      <thead><tr><th>Producto</th><th>Proyecto</th><th>Serie</th><th>Estado</th><th>Acciones</th></tr></thead>
+      <thead><tr><th>Producto / N° equipo</th><th>Serie</th><th>Ratio (Relación motriz)</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody>{% for equipo in equipos %}
         <tr>
-          <td>{{ equipo.nombre }}</td><td>{{ equipo.proyecto.nombre }}</td><td>{{ equipo.numero_serie|default:"—" }}</td><td>{{ equipo.get_estado_display }}</td>
+          <td>{{ equipo.get_tipo_producto_display }} / {{ equipo.nombre }}</td><td>{{ equipo.numero_serie|default:"—" }}</td><td>{{ equipo.ratio|default:"—" }}</td><td>{{ equipo.get_estado_display }}</td>
           <td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a> <a class="btn btn-sm btn-outline-secondary" href="{% url 'masiscam:equipo_informe' equipo.pk %}" target="_blank" rel="noopener">Ver informe</a></td>
         </tr>
       {% endfor %}</tbody>

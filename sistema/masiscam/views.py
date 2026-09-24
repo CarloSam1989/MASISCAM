@@ -29,7 +29,7 @@ def _proyecto(request, pk):
 
 
 def _contexto_permisos(request):
-    return {f"puede_{p}": tiene_permiso(request, p) for p in ("crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios")}
+    return {"puede_ver_carpeta_producto": not request.cliente_usuario and (request.user.is_superuser or request.rol_masiscam.rol == RolMasiscam.Rol.ADMINISTRADOR), **{f"puede_{p}": tiene_permiso(request, p) for p in ("crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios")}}
 
 
 def _equipos_autorizados(request):
@@ -60,10 +60,20 @@ def _documentos_cliente(request):
 def cliente_productos(request):
     if not request.cliente_usuario:
         return redirect("masiscam:dashboard")
-    equipos = _equipos_autorizados(request)
-    if equipos.count() == 1:
-        return redirect("masiscam:ficha_detalle", pk=equipos.first().pk)
-    return render(request, "masiscam/cliente_productos.html", {"equipos": equipos})
+    return _listado_cliente(request)
+
+
+def _listado_cliente(request, codigo=None):
+    propios = _equipos_autorizados(request)
+    equipos = propios.filter(tipo_producto=codigo) if codigo else propios
+    q = request.GET.get("q", "").strip()
+    if q:
+        equipos = equipos.filter(Q(nombre__icontains=q) | Q(numero_serie__icontains=q) | Q(ratio__icontains=q))
+    return render(request, "masiscam/cliente_productos.html", {
+        "equipos": equipos, "q": q,
+        "productos": _productos(propios),
+        "producto_nombre": dict(Equipo.TipoProducto.choices).get(codigo, ""),
+    })
 
 
 def _es_modal(request):
@@ -89,6 +99,8 @@ def _productos(equipos, cliente=None):
 
 @masiscam_access_required
 def dashboard(request):
+    if request.cliente_usuario:
+        return _listado_cliente(request)
     productos = _productos(Equipo.objects.filter(proyecto__empresa=request.empresa_activa))
     return render(request, "masiscam/dashboard.html", {"productos": productos})
 
@@ -98,6 +110,8 @@ def producto_listado(request, tipo):
     nombre = dict(Equipo.TipoProducto.choices).get(codigo)
     if nombre is None:
         raise Http404
+    if request.cliente_usuario:
+        return _listado_cliente(request, codigo)
     base = Equipo.objects.filter(proyecto__empresa=request.empresa_activa, tipo_producto=codigo)
     cliente = None
     cliente_id = request.GET.get("cliente", "").strip()

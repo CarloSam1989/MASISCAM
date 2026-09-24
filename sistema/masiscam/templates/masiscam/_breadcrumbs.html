@@ -1,6 +1,13 @@
 {% with vista=request.resolver_match.url_name %}
 <nav class="masiscam-breadcrumbs no-print" aria-label="Migas de pan">
   <ol class="breadcrumb mb-0 small">
+    {% if request.cliente_usuario %}
+      <li class="breadcrumb-item"><a href="{% url 'masiscam:cliente_productos' %}">Mis productos</a></li>
+      {% if equipo %}
+      <li class="breadcrumb-item"><a href="{% url 'masiscam:producto_listado' equipo.tipo_producto|lower %}">{{ equipo.get_tipo_producto_display }}</a></li>
+      <li class="breadcrumb-item active" aria-current="page">{{ equipo.numero_serie|default:equipo.nombre }}</li>
+      {% elif producto_nombre %}<li class="breadcrumb-item active" aria-current="page">{{ producto_nombre }}</li>{% endif %}
+    {% else %}
     {% if vista == "dashboard" %}<li class="breadcrumb-item active" aria-current="page">Dashboard</li>{% else %}<li class="breadcrumb-item"><a href="{% url 'masiscam:dashboard' %}">Dashboard</a></li>{% endif %}
     {% if vista == 'dashboard' %}
     {% elif vista == 'producto_listado' %}
@@ -21,6 +28,7 @@
       <li class="breadcrumb-item"><a href="{% url 'masiscam:producto_listado' 'reductor' %}">Reductores</a></li>
       {% if equipo and vista != 'ficha_detalle' %}<li class="breadcrumb-item"><a href="{% url 'masiscam:ficha_detalle' equipo.pk %}">{{ equipo.nombre }}</a></li>{% endif %}
       <li class="breadcrumb-item active" aria-current="page">{% if vista == 'ficha_detalle' %}Ficha{% elif vista == 'equipo_etiqueta' %}Etiqueta QR{% elif vista == 'ficha_crear' %}Crear{% elif vista == 'ficha_editar' %}Editar{% else %}{{ titulo }}{% endif %}</li>
+    {% endif %}
     {% endif %}
   </ol>
 </nav>

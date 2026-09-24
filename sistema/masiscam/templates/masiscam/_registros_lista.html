@@ -1,14 +1,12 @@
 {% if registros or not informe %}
 <div id="historial-registros">
-  {% regroup registros|dictsort:"tipo" by get_tipo_display as grupos %}
-  {% for grupo in grupos %}
-  <section class="card masiscam-card mt-4" aria-labelledby="registro-tipo-{{ forloop.counter }}">
+  <section class="card masiscam-card mt-4" aria-labelledby="titulo-registros">
     <div class="card-body p-3 p-lg-4">
-      <h2 id="registro-tipo-{{ forloop.counter }}" class="h5 mb-3">{{ grupo.grouper }}</h2>
+      <h2 id="titulo-registros" class="h5 mb-3">Registros</h2>
       <div class="table-responsive">
         <table class="table align-middle ficha-registros mb-0">
-          <thead><tr><th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Estado Drive</th><th scope="col">Carpeta Drive</th>{% if not informe %}<th scope="col">Acciones</th>{% endif %}</tr></thead>
-          <tbody>{% for registro in grupo.list %}
+          <thead><tr><th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Estado Drive</th><th scope="col">Documentos / acción permitida</th></tr></thead>
+          <tbody>{% for registro in registros %}
             <tr>
               <td class="text-nowrap">{{ registro.fecha|date:"d/m/Y" }}</td>
               <td>{{ registro.get_tipo_display }}</td>
@@ -16,14 +14,12 @@
               <td>
                 {% if registro.drive_folder_url %}<a class="btn btn-outline-primary text-nowrap" target="_blank" rel="noopener" href="{{ registro.drive_folder_url }}">Abrir carpeta</a>
                 {% else %}<span class="text-muted">{% if registro.drive_error %}No disponible{% else %}Pendiente{% endif %}</span>{% endif %}
-              </td>
-              {% if not informe %}<td>{% if not registro.drive_folder_id and registro.drive_error and puede_editar %}<form method="post" action="{% url 'masiscam:registro_reintentar' equipo.pk registro.pk %}">{% csrf_token %}<button class="btn btn-outline-primary text-nowrap">Reintentar Drive</button></form>{% else %}<span class="text-muted">—</span>{% endif %}</td>{% endif %}
+              {% if not informe %}{% if not registro.drive_folder_id and registro.drive_error and puede_editar %}<form method="post" action="{% url 'masiscam:registro_reintentar' equipo.pk registro.pk %}">{% csrf_token %}<button class="btn btn-outline-primary text-nowrap">Reintentar Drive</button></form>{% endif %}{% endif %}</td>
             </tr>
-          {% endfor %}</tbody>
+          {% empty %}<tr><td colspan="4" class="text-muted text-center py-4">Este equipo aún no tiene registros.</td></tr>{% endfor %}</tbody>
         </table>
       </div>
     </div>
   </section>
-  {% empty %}<p class="text-muted text-center py-4 mb-0">Este equipo aún no tiene registros.</p>{% endfor %}
 </div>
 {% endif %}

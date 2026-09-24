@@ -34,7 +34,7 @@ def acceso_cliente_usuario(usuario):
 
 
 VISTAS_CLIENTE = {
-    "cliente_productos", "ficha_detalle", "equipo_informe", "equipo_publico",
+    "dashboard", "producto_listado", "cliente_productos", "ficha_detalle", "equipo_informe", "equipo_publico",
     "equipo_foto_privada", "equipo_foto_publica", "documento_privado",
     "documento_publico", "imagen_proyecto_publica",
 }

@@ -117,6 +117,7 @@ class Cliente(models.Model):
 class Equipo(models.Model):
     class TipoProducto(models.TextChoices):
         REDUCTOR = "REDUCTOR", "Reductores"
+        BOMBA = "BOMBA", "Bombas"
 
     class Estado(models.TextChoices):
         ACTIVO = "ACTIVO", "Activo"

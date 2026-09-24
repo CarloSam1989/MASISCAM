@@ -27,7 +27,7 @@
     <tbody>{% for equipo in equipos %}<tr>
       <td class="fw-bold">{{ equipo.nombre }}</td><td>{{ equipo.proyecto.nombre }}</td><td>{{ equipo.ubicacion }}</td><td>{{ equipo.sector }}</td><td>{{ equipo.marca }}</td><td>{{ equipo.modelo }}</td><td>{{ equipo.numero_serie }}</td><td>{{ equipo.potencia_hp }}</td>
       <td>{% if equipo.consulta_publica_activa and equipo.estado != 'INACTIVO' %}<span class="badge bg-success">Activo</span>{% else %}<span class="badge bg-secondary">Inactivo</span>{% endif %}</td>
-      <td class="masiscam-actions-cell"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a></td>
+      <td class="masiscam-actions-cell"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a> {% if puede_ver_carpeta_producto and equipo.drive_folder_url %}<a class="btn btn-outline-primary" href="{{ equipo.drive_folder_url }}" target="_blank" rel="noopener">Abrir carpeta</a>{% endif %}</td>
     </tr>{% empty %}<tr><td colspan="10" class="text-center py-5 text-muted">No existen {{ producto_nombre|lower }} registrados con estos filtros.</td></tr>{% endfor %}</tbody>
   </table></div></div>
 </div>
