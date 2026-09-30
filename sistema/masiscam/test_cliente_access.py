@@ -83,6 +83,39 @@ class ClienteAccessTests(TestCase):
         session["empresa_activa_id"] = self.empresa.pk
         session.save()
 
+    @override_settings(GOOGLE_DRIVE_ENABLED=False)
+    def test_solo_activos_en_dashboard_contadores_busquedas_y_urls_cliente(self):
+        ocultos = [Equipo.objects.create(
+            proyecto=self.proyecto, cliente=self.cliente, nombre="OCULTO-" + estado,
+            numero_serie="SER-" + estado, ratio="99:1", estado=estado,
+        ) for estado in (Equipo.Estado.INACTIVO, Equipo.Estado.MANTENIMIENTO)]
+        Equipo.objects.create(proyecto=self.proyecto, cliente=self.cliente, nombre="BOMBA-INACTIVA",
+                              tipo_producto="BOMBA", estado="INACTIVO")
+        self.login_as(self.cliente_user)
+        rutas = [reverse("masiscam:dashboard"), reverse("masiscam:cliente_productos"),
+                 reverse("masiscam:producto_listado", args=["reductor"])]
+        for ruta in rutas:
+            response = self.client.get(ruta)
+            self.assertEqual(list(response.context["equipos"]), [self.equipo])
+            self.assertEqual({p["codigo"]: p["total"] for p in response.context["productos"]}, {"REDUCTOR": 1, "BOMBA": 0})
+            self.assertEqual(re.findall(r"<th>(.*?)</th>", response.content.decode()), [
+                "N.º equipo", "Camaronera", "Estación", "Sector", "Marca", "Modelo", "Serie", "Potencia", "Acciones",
+            ])
+            for query in ("OCULTO", "SER-INACTIVO", "99:1", self.equipo_ajeno.numero_serie):
+                response = self.client.get(ruta, {"q": query})
+                self.assertEqual(list(response.context["equipos"]), [])
+            self.assertEqual(list(self.client.get(ruta, {"q": self.equipo.numero_serie}).context["equipos"]), [self.equipo])
+        for equipo in ocultos + [self.equipo_ajeno]:
+            for vista in ("ficha_detalle", "equipo_informe"):
+                self.assertEqual(self.client.get(reverse("masiscam:" + vista, args=[equipo.pk])).status_code, 403)
+        self.login_as(self.admin)
+        response = self.client.get(reverse("masiscam:producto_listado", args=["reductor"]))
+        for equipo in ocultos:
+            self.assertContains(response, equipo.nombre)
+            for vista in ("ficha_detalle", "equipo_informe"):
+                self.assertEqual(self.client.get(reverse("masiscam:" + vista, args=[equipo.pk])).status_code, 200)
+        self.assertEqual(response.context["inactivos"], 1)
+
     def test_tabla_reductores_columnas_acciones_y_busqueda(self):
         Equipo.objects.create(proyecto=self.proyecto, cliente=self.cliente, nombre="BOMBA-EXCLUIDA", tipo_producto="BOMBA")
         self.login_as(self.cliente_user)
@@ -206,8 +239,6 @@ class ClienteAccessTests(TestCase):
             for q in ["EQ-CLIENTE", "SER-CLIENTE", "37:1"]:
                 response = self.client.get(ruta, {"q": q})
                 self.assertEqual(list(response.context["equipos"]), [self.equipo])
-                if ruta == reverse("masiscam:cliente_productos"):
-                    self.assertContains(response, "37:1")
                 self.assertContains(response, "SER-CLIENTE")
                 self.assertNotContains(response, "Documentos")
                 self.assertContains(response, "Ver ficha")

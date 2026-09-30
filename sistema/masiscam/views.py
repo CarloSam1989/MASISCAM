@@ -36,7 +36,8 @@ def _contexto_permisos(request):
 def _equipos_autorizados(request):
     equipos = Equipo.objects.filter(proyecto__empresa=request.empresa_activa)
     if request.cliente_usuario:
-        equipos = equipos.filter(cliente=request.cliente_usuario, cliente__empresa=request.empresa_activa)
+        equipos = equipos.filter(cliente=request.cliente_usuario, cliente__empresa=request.empresa_activa,
+                                 estado=Equipo.Estado.ACTIVO)
     return equipos.select_related("cliente", "proyecto")
 
 
@@ -247,12 +248,12 @@ def cliente_editar(request, pk):
     return _cliente_formulario(request, cliente)
 
 
-def _equipo(request, pk, permitir_inactivo_cliente=False):
+def _equipo(request, pk):
     if request.cliente_usuario:
         equipo = get_object_or_404(Equipo.objects.select_related("proyecto", "cliente"), pk=pk)
         _comprobar_equipo_cliente(request, equipo)
-        if equipo.estado == Equipo.Estado.INACTIVO and not permitir_inactivo_cliente:
-            raise PermissionDenied("Equipo inactivo")
+        if equipo.estado != Equipo.Estado.ACTIVO:
+            raise PermissionDenied("El equipo no está activo.")
         return equipo
     return get_object_or_404(_equipos_autorizados(request), pk=pk)
 
@@ -304,9 +305,7 @@ def ficha_crear(request):
 
 @masiscam_access_required
 def ficha_detalle(request, pk):
-    equipo = _equipo(request, pk, permitir_inactivo_cliente=True)
-    if request.cliente_usuario and equipo.estado == Equipo.Estado.INACTIVO:
-        return render(request, "masiscam/equipo_inactivo.html", {"equipo_inactivo": True})
+    equipo = _equipo(request, pk)
     placa = equipo.fotografia_placa
     placa_disponible = bool(placa and placa.storage.exists(placa.name))
     if request.GET.get("foto") == "placa":
