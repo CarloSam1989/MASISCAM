@@ -91,10 +91,10 @@ class ClienteAccessTests(TestCase):
         self.client.post(reverse("masiscam:cliente_usuario_crear", args=[self.otro_cliente.pk]))
         self.assertEqual(get_user_model().objects.filter(username=self.otro_cliente.ruc).count(), 1)
 
-    def test_cliente_con_un_producto_va_directo_a_ficha(self):
+    def test_cliente_con_un_producto_mantiene_listado(self):
         self.login_as(self.cliente_user)
         response = self.client.get(reverse("masiscam:cliente_productos"))
-        self.assertRedirects(response, reverse("masiscam:ficha_detalle", args=[self.equipo.pk]))
+        self.assertContains(response, self.equipo.nombre)
 
     def test_cliente_con_varios_productos_ve_solo_los_suyos(self):
         segundo = Equipo.objects.create(proyecto=self.proyecto, cliente=self.cliente, nombre="EQ-CLIENTE-2")
@@ -137,3 +137,71 @@ class ClienteAccessTests(TestCase):
         response = self.client.get(reverse("masiscam:dashboard"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Reductores")
+
+    def test_dashboard_cards_y_filtro_tipo_solo_propios(self):
+        bomba = Equipo.objects.create(proyecto=self.proyecto, cliente=self.cliente, nombre="BOMBA-PROPIA", tipo_producto="BOMBA")
+        self.login_as(self.cliente_user)
+        response = self.client.get(reverse("masiscam:dashboard"))
+        self.assertEqual({p["codigo"]: p["total"] for p in response.context["productos"]}, {"REDUCTOR": 1, "BOMBA": 1})
+        self.assertContains(response, "masiscam-producto h-100")
+        for tipo, esperado in [("bomba", bomba), ("reductor", self.equipo)]:
+            response = self.client.get(reverse("masiscam:producto_listado", args=[tipo]), {"cliente": self.otro_cliente.pk})
+            self.assertEqual(list(response.context["equipos"]), [esperado])
+            self.assertNotContains(response, self.equipo_ajeno.nombre)
+
+    def test_busqueda_numero_serie_ratio_sin_documentos(self):
+        self.equipo.ratio = "37:1"
+        self.equipo.save()
+        self.login_as(self.cliente_user)
+        for ruta in [reverse("masiscam:cliente_productos"), reverse("masiscam:producto_listado", args=["reductor"])]:
+            for q in ["EQ-CLIENTE", "SER-CLIENTE", "37:1"]:
+                response = self.client.get(ruta, {"q": q})
+                self.assertEqual(list(response.context["equipos"]), [self.equipo])
+                self.assertContains(response, "37:1")
+                self.assertContains(response, "SER-CLIENTE")
+                self.assertNotContains(response, "Documentos")
+                self.assertContains(response, "Ver ficha")
+                self.assertContains(response, "Ver informe")
+            response = self.client.get(ruta, {"q": "EQ-AJENO"})
+            self.assertEqual(list(response.context["equipos"]), [])
+
+    def test_cliente_navegacion_sin_administracion(self):
+        self.login_as(self.cliente_user)
+        prohibidas = [reverse("masiscam:dashboard"), reverse("masiscam:clientes"), reverse("masiscam:proyectos"), reverse("masiscam:cliente_detalle", args=[self.cliente.pk])]
+        for ruta in [reverse("masiscam:cliente_productos"), reverse("masiscam:dashboard"), reverse("masiscam:producto_listado", args=["reductor"]), reverse("masiscam:ficha_detalle", args=[self.equipo.pk])]:
+            response = self.client.get(ruta)
+            self.assertContains(response, "Mis productos")
+            for prohibida in prohibidas:
+                self.assertNotContains(response, 'href="' + prohibida + '"')
+        for ruta in prohibidas[1:]:
+            self.assertEqual(self.client.get(ruta).status_code, 403)
+        self.assertEqual(self.client.post(reverse("masiscam:producto_listado", args=["reductor"])).status_code, 403)
+
+    def test_carpeta_principal_solo_administrador(self):
+        url = "https://drive.google.com/drive/folders/carpeta-principal"
+        self.equipo.drive_folder_url = url
+        self.equipo.save()
+        for user, visible in [(self.admin, True), (self.cliente_user, False)]:
+            self.login_as(user)
+            for ruta in [reverse("masiscam:producto_listado", args=["reductor"]), reverse("masiscam:ficha_detalle", args=[self.equipo.pk])]:
+                response = self.client.get(ruta)
+                if visible:
+                    self.assertContains(response, 'href="' + url + '"')
+                else:
+                    self.assertNotContains(response, url)
+
+    def test_registros_cliente_tabla_unica_ordenada(self):
+        from .models import RegistroEquipo
+        for indice, tipo in enumerate([*RegistroEquipo.Tipo.values, "REVISION"]):
+            RegistroEquipo.objects.create(equipo=self.equipo, tipo=tipo, fecha=date(2026, 9, indice + 1))
+        self.login_as(self.cliente_user)
+        for vista in ["ficha_detalle", "equipo_informe"]:
+            response = self.client.get(reverse("masiscam:" + vista, args=[self.equipo.pk]))
+            html = response.content.decode()
+            self.assertEqual(html.count('class="table align-middle ficha-registros mb-0"'), 1)
+            self.assertContains(response, '>Registros</h2>')
+            for tipo in [*RegistroEquipo.Tipo.labels, "REVISION"]:
+                self.assertContains(response, "<td>" + tipo + "</td>")
+            for dia in range(6, 1, -1):
+                self.assertLess(html.index(f"{dia:02}/09/2026"), html.index(f"{dia-1:02}/09/2026"))
+            self.assertNotContains(response, "Reintentar Drive")

@@ -1,0 +1,38 @@
+{% extends "masiscam/base.html" %}
+{% load static %}
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-4">
+    <h1 class="h3 mb-0">Usuarios</h1>
+    <a class="btn btn-primary" href="{% url 'masiscam:usuario_crear' %}">+ Agregar usuario</a>
+  </div>
+  <div id="usuarios-controles" class="mb-3" hidden>
+    <label class="form-label" for="usuarios-buscar">Buscar usuarios</label>
+    <input type="search" id="usuarios-buscar" class="form-control" placeholder="Usuario, nombre, rol o estado" aria-controls="usuarios-tabla">
+  </div>
+  <div class="card masiscam-card table-responsive">
+    <table id="usuarios-tabla" class="table table-hover align-middle mb-0 masiscam-table">
+      <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></thead>
+      <tbody>{% for rol in roles %}<tr>
+        <td>{{ rol.perfil.user.username }}</td><td>{{ rol.perfil.user.get_full_name|default:"—" }}</td>
+        <td>{{ rol.get_rol_display }}</td><td>{% if rol.acceso_activo %}Activo{% else %}Inactivo{% endif %}</td>
+        <td>{% if rol.gestionable %}
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:usuario_editar' rol.pk %}">Editar</a>
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:usuario_clave' rol.pk %}">Cambiar clave</a>
+          {% if rol.perfil.user_id != user.pk %}<form method="post" class="d-inline" action="{% url 'masiscam:usuario_estado' rol.pk %}">
+            {% csrf_token %}<input type="hidden" name="activo" value="{% if rol.acceso_activo %}0{% else %}1{% endif %}">
+            <button class="btn btn-sm btn-outline-secondary">{% if rol.acceso_activo %}Desactivar{% else %}Activar{% endif %}</button>
+          </form>{% endif %}
+        {% else %}<span class="text-muted">Cuenta protegida</span>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  <p id="usuarios-vacio" class="text-muted my-3"{% if roles %} hidden{% endif %}>No hay usuarios con estos filtros.</p>
+  <nav id="usuarios-paginacion" class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3" aria-label="Paginación de usuarios" hidden>
+    <span id="usuarios-info" role="status" aria-live="polite"></span>
+    <div><button id="usuarios-anterior" type="button" class="btn btn-outline-secondary">Anterior</button>
+    <button id="usuarios-siguiente" type="button" class="btn btn-outline-secondary">Siguiente</button></div>
+  </nav>
+</div>
+{% endblock %}
+{% block javascript %}<script src="{% static 'masiscam/js/usuarios.js' %}" defer></script>{% endblock %}

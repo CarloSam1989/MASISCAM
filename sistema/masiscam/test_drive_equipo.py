@@ -186,12 +186,12 @@ class DriveEquipoTests(TestCase):
         self.assertNotIn("Historial / Registros", html)
         self.assertNotIn("Observación", tabla)
         for tipo in RegistroEquipo.Tipo.labels:
-            self.assertIn('class="h5 mb-3">' + tipo + '</h2>', tabla)
+            self.assertIn("<td>" + tipo + "</td>", tabla)
         self.assertEqual(tabla.count("Sin documentos"), 5)
         RegistroEquipo.objects.create(equipo=self.antiguo, tipo="ASISTENCIA", fecha="2026-09-16")
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         tabla = response.content.decode().split('id="historial-registros"', 1)[1].split('<dialog', 1)[0]
-        self.assertEqual(tabla.count('class="h5 mb-3">Asistencia</h2>'), 1)
+        self.assertEqual(tabla.count("<table "), 1)
         self.assertLess(tabla.index("16/09/2026"), tabla.index("15/09/2026"))
         self.assertIn("Sin documentos", tabla)
 
@@ -324,10 +324,10 @@ class DriveEquipoTests(TestCase):
         interna, externa = Tablas(), Tablas()
         interna.feed(ficha.content.decode())
         externa.feed(informe.content.decode())
-        self.assertEqual(interna.filas, externa.filas)
+        self.assertEqual([[celda.replace(" Reintentar Drive", "") for celda in fila] for fila in interna.filas], externa.filas)
         self.assertEqual(len(externa.filas), 4)
         for tipo in ["Nuevo", "Asistencia", "Garantía", "REVISION"]:
-            self.assertContains(informe, 'class="h5 mb-3">' + tipo + '</h2>')
+            self.assertContains(informe, "<td>" + tipo + "</td>")
         self.assertNotContains(informe, "https://drive.google.com/")
         self.assertNotContains(informe, "NO MOSTRAR OBSERVACION")
         self.assertNotContains(informe, "Reintentar Drive")

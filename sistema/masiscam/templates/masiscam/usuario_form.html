@@ -1,0 +1,18 @@
+{% extends "masiscam/base.html" %}
+{% block content %}
+<div class="container py-4">
+  <h1 class="h3 mb-3">{{ titulo }}</h1>
+  {% if usuario_destino %}<p>Usuario: {{ usuario_destino.username }}</p>{% endif %}
+  <form method="post" class="card masiscam-card card-body">
+    {% csrf_token %}
+    {% if form.errors %}<div class="alert alert-danger" role="alert">Revise los campos indicados.</div>{% endif %}
+    {{ form.non_field_errors }}
+    {% for field in form %}<div class="mb-3">
+      {{ field.label_tag }}{{ field }}
+      {% if field.help_text %}<div class="form-text">{{ field.help_text|safe }}</div>{% endif %}
+      {{ field.errors }}
+    </div>{% endfor %}
+    <div><button class="btn btn-primary">Guardar</button> <a class="btn btn-outline-secondary" href="{% url 'masiscam:usuarios' %}">Cancelar</a></div>
+  </form>
+</div>
+{% endblock %}
