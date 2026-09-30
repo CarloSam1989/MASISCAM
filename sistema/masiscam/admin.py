@@ -18,8 +18,8 @@ class MasiscamUserCreationForm(AdminUserCreationForm):
     )
     cliente = forms.ModelChoiceField(
         label="Cliente existente", required=False,
-        queryset=Cliente.objects.filter(empresa__activa=True, acceso_usuario__isnull=True),
-        help_text="Obligatorio para Cliente. Solo aparecen clientes sin usuario vinculado.",
+        queryset=Cliente.objects.filter(empresa__activa=True),
+        help_text="Obligatorio para Cliente. Un cliente puede tener varios usuarios.",
     )
 
     def clean(self):

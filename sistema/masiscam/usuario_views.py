@@ -39,7 +39,8 @@ def usuarios(request):
     for rol in roles:
         rol.gestionable = _gestionable(request, rol)
         rol.acceso_activo = rol.activo and rol.perfil.activo and rol.perfil.user.is_active
-    return render(request, "masiscam/usuarios.html", {"roles": roles})
+    pendientes = len({rol.perfil.user_id for rol in roles if rol.rol == RolMasiscam.Rol.CONSULTA})
+    return render(request, "masiscam/usuarios.html", {"roles": roles, "consulta_pendientes": pendientes})
 
 
 @sensitive_post_parameters("password1", "password2")
@@ -56,7 +57,7 @@ def usuario_crear(request):
                 auditar(empresa=request.empresa_activa, usuario=request.user,
                         accion="ADMINISTRADOR_CREADO" if rol.rol == RolMasiscam.Rol.ADMINISTRADOR else "USUARIO_CREADO", objeto=rol)
         except IntegrityError:
-            form.add_error(None, "El usuario o cliente ya está asociado a otra cuenta. Revise los datos.")
+            form.add_error(None, "No se pudo guardar el usuario. Compruebe que el nombre de usuario sea único.")
         else:
             messages.success(request, "Usuario creado correctamente.")
             return redirect("masiscam:usuarios")
@@ -79,7 +80,7 @@ def usuario_editar(request, pk):
                 auditar(empresa=request.empresa_activa, usuario=request.user,
                         accion="USUARIO_EDITADO", objeto=rol)
         except IntegrityError:
-            form.add_error(None, "El usuario o cliente ya está asociado a otra cuenta. Revise los datos.")
+            form.add_error(None, "No se pudo guardar el usuario. Compruebe que el nombre de usuario sea único.")
         else:
             messages.success(request, "Usuario actualizado correctamente.")
             if rol.perfil.user_id == request.user.pk and rol.rol != RolMasiscam.Rol.ADMINISTRADOR:

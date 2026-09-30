@@ -23,7 +23,7 @@ class RolMasiscam(models.Model):
     perfil = models.OneToOneField(Perfil, on_delete=models.CASCADE, related_name="rol_masiscam")
     rol = models.CharField(max_length=12, choices=Rol.choices, default=Rol.CONSULTA)
     activo = models.BooleanField(default=True)
-    cliente = models.OneToOneField("Cliente", on_delete=models.PROTECT, null=True, blank=True, related_name="acceso_usuario")
+    cliente = models.ForeignKey("Cliente", on_delete=models.PROTECT, null=True, blank=True, related_name="acceso_usuario")
 
     class Meta:
         verbose_name = "rol MASISCAM"

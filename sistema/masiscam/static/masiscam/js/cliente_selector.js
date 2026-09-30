@@ -1,4 +1,59 @@
 window.masiscamInitClienteSelector = (root = document) => {
+  // Selector de Usuarios: reutiliza la lista de resultados del componente,
+  // con opciones filtradas por empresa y validadas por el formulario Django.
+  root.querySelectorAll('select[data-usuario-cliente]').forEach(select => {
+    if (select.dataset.initialized) return;
+    select.dataset.initialized = 'true';
+    const combo = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.className = 'form-select';
+    summary.id = `${select.id}-selector`;
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'form-control my-2';
+    search.placeholder = 'Nombre, razón social o RUC/cédula';
+    search.setAttribute('aria-label', 'Buscar cliente');
+    const results = document.createElement('div');
+    results.className = 'list-group';
+    results.style.maxHeight = '16rem';
+    results.style.overflowY = 'auto';
+    const normalize = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const render = () => {
+      results.replaceChildren();
+      const query = normalize(search.value.trim());
+      Array.from(select.options).filter(option => !query || normalize(option.text).includes(query)).forEach(option => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'list-group-item list-group-item-action';
+        button.textContent = option.value ? option.text : 'Sin cliente seleccionado';
+        button.addEventListener('click', () => {
+          select.value = option.value;
+          summary.textContent = button.textContent;
+          combo.open = false;
+          select.dispatchEvent(new Event('change', {bubbles: true}));
+          summary.focus();
+        });
+        results.append(button);
+      });
+      if (!results.children.length) results.textContent = 'No hay clientes que coincidan.';
+    };
+    summary.textContent = select.value ? select.selectedOptions[0].text : 'Seleccione un cliente';
+    combo.append(summary, search, results);
+    select.after(combo);
+    select.hidden = true;
+    const label = root.querySelector(`label[for="${select.id}"]`);
+    if (label) label.addEventListener('click', () => summary.focus());
+    search.addEventListener('input', render);
+    combo.addEventListener('toggle', () => {
+      if (combo.open) { search.value = ''; render(); search.focus(); }
+    });
+    combo.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { combo.open = false; summary.focus(); }
+      if (event.key === 'ArrowDown' && event.target === search) {
+        event.preventDefault(); results.querySelector('button')?.focus();
+      }
+    });
+  });
   const block = root.querySelector('#cliente-bloque');
   if (!block || block.dataset.initialized) return;
   block.dataset.initialized = 'true';

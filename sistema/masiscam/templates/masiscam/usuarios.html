@@ -10,6 +10,7 @@
     <label class="form-label" for="usuarios-buscar">Buscar usuarios</label>
     <input type="search" id="usuarios-buscar" class="form-control" placeholder="Usuario, nombre, rol o estado" aria-controls="usuarios-tabla">
   </div>
+  {% if consulta_pendientes %}<p class="alert alert-warning" role="status">Usuarios con rol Consulta en esta empresa: {{ consulta_pendientes }}. Conservan su acceso actual; la conversión está pendiente de revisión y no se realizará automáticamente.</p>{% endif %}
   <div class="card masiscam-card table-responsive">
     <table id="usuarios-tabla" class="table table-hover align-middle mb-0 masiscam-table">
       <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></thead>

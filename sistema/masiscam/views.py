@@ -186,9 +186,6 @@ def cliente_usuario_crear(request, pk):
     try:
         with transaction.atomic():
             cliente = Cliente.objects.select_for_update().get(pk=cliente.pk, empresa=request.empresa_activa)
-            if RolMasiscam.objects.filter(cliente=cliente).exists():
-                messages.info(request, "El cliente ya tiene un usuario vinculado. No se modificó su clave.")
-                return redirect("masiscam:cliente_detalle", pk=cliente.pk)
             User = get_user_model()
             if User.objects.filter(username=identificacion).exists():
                 messages.error(request, "La identificación ya está registrada como usuario. No se reasignó la cuenta.")
@@ -198,7 +195,7 @@ def cliente_usuario_crear(request, pk):
             RolMasiscam.objects.create(perfil=perfil, rol=RolMasiscam.Rol.CLIENTE, cliente=cliente)
             auditar(empresa=request.empresa_activa, usuario=request.user, accion="USUARIO_CLIENTE_CREADO", objeto=cliente)
     except IntegrityError:
-        messages.error(request, "Ya existe un usuario con esa identificación o un acceso para este cliente.")
+        messages.error(request, "Ya existe un usuario con esa identificación.")
     else:
         messages.success(request, "Usuario creado. El usuario y la clave inicial son la identificación del cliente.")
     return redirect("masiscam:cliente_detalle", pk=cliente.pk)

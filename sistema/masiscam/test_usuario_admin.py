@@ -49,7 +49,7 @@ class UsuarioAdminTests(TestCase):
         for vista in ("ficha_detalle", "equipo_informe"):
             self.assertEqual(self.client.get(reverse("masiscam:" + vista, args=[self.equipo_ajeno.pk])).status_code, 200)
             self.assertEqual(self.client.get(reverse("masiscam:" + vista, args=[self.equipo.pk])).status_code, 403)
-        self.assertEqual(self.client.get(reverse("masiscam:dashboard")).status_code, 403)
+        self.assertNotContains(self.client.get(reverse("masiscam:dashboard")), self.equipo.nombre)
         self.assertEqual(self.client.post(reverse("masiscam:cliente_editar", args=[self.otro_cliente.pk]), {}).status_code, 403)
         self.assertEqual(self.client.get(self.url).status_code, 403)
 
@@ -59,7 +59,6 @@ class UsuarioAdminTests(TestCase):
         cliente_inactivo = Cliente.objects.create(empresa=inactiva, nombre_comercial="Inactivo", ruc="1")
         for extra in (
             dict(tipo="CLIENTE"),
-            dict(tipo="CLIENTE", cliente=self.cliente.pk),
             dict(tipo="CLIENTE", cliente=self.otro_cliente.pk, empresa=otra_empresa.pk),
             dict(tipo="CLIENTE", cliente=cliente_inactivo.pk),
             dict(tipo="ADMIN"),

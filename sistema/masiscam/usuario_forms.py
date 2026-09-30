@@ -1,30 +1,37 @@
 from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import SetPasswordForm, UserCreationForm
-from django.db.models import Q
 from .models import Cliente, RolMasiscam
+
+
+class ClienteUsuarioField(forms.ModelChoiceField):
+    def label_from_instance(self, cliente):
+        return f"{cliente.nombre_comercial} — {cliente.razon_social} — {cliente.ruc}"
 
 
 class UsuarioCamposMixin:
     def __init__(self, *args, empresa, asignacion=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.asignacion = asignacion
+        roles = [(codigo, nombre) for codigo, nombre in RolMasiscam.Rol.choices
+                 if codigo != RolMasiscam.Rol.CONSULTA]
+        inicial = asignacion.rol if asignacion else RolMasiscam.Rol.ADMINISTRADOR
+        retirado = inicial not in dict(roles)
         self.fields["rol"] = forms.ChoiceField(
-            label="Rol", choices=RolMasiscam.Rol.choices,
-            initial=asignacion.rol if asignacion else RolMasiscam.Rol.ADMINISTRADOR,
-            help_text="Consulta: lectura de los datos de la empresa, sin crear, editar, archivar ni administrar usuarios.",
+            label="Rol", choices=[("", "Seleccione un rol")] + roles,
+            initial="" if retirado else inicial,
+            help_text=("Esta cuenta conserva un rol retirado. No se cambia automáticamente; seleccione expresamente un rol vigente para guardar."
+                       if retirado else ""),
         )
-        disponibles = Q(acceso_usuario__isnull=True)
-        if asignacion:
-            disponibles |= Q(acceso_usuario=asignacion)
-        self.fields["cliente"] = forms.ModelChoiceField(
+        self.fields["cliente"] = ClienteUsuarioField(
             label="Cliente asociado", required=False,
-            queryset=Cliente.objects.filter(disponibles, empresa=empresa),
+            queryset=Cliente.objects.filter(empresa=empresa),
             initial=asignacion.cliente_id if asignacion else None,
-            help_text="Obligatorio para CLIENTE. Para los demás roles se elimina la asociación.",
+            help_text="Busque por nombre, razón social o RUC/cédula. Obligatorio para CLIENTE; admite varios usuarios por cliente.",
+            widget=forms.Select(attrs={"data-usuario-cliente": "true"}),
         )
         if self.is_bound and self.data.get(self.add_prefix("rol")) in {
-            RolMasiscam.Rol.ADMINISTRADOR, RolMasiscam.Rol.TECNICO, RolMasiscam.Rol.CONSULTA,
+            RolMasiscam.Rol.ADMINISTRADOR, RolMasiscam.Rol.TECNICO,
         }:
             self.data = self.data.copy()
             self.data[self.add_prefix("cliente")] = ""
@@ -39,7 +46,7 @@ class UsuarioCamposMixin:
         data = super().clean()
         if data.get("rol") == RolMasiscam.Rol.CLIENTE:
             if not data.get("cliente"):
-                self.add_error("cliente", "Seleccione un cliente de esta empresa sin otro usuario asociado.")
+                self.add_error("cliente", "Seleccione un cliente de esta empresa.")
         else:
             data["cliente"] = None
         if (self.instance.is_superuser and data.get("rol")
