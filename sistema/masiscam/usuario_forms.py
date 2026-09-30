@@ -1,18 +1,51 @@
 from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import SetPasswordForm, UserCreationForm
-from .models import RolMasiscam
+from django.db.models import Q
+from .models import Cliente, RolMasiscam
 
 
 class UsuarioCamposMixin:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, empresa, asignacion=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.asignacion = asignacion
+        self.fields["rol"] = forms.ChoiceField(
+            label="Rol", choices=RolMasiscam.Rol.choices,
+            initial=asignacion.rol if asignacion else RolMasiscam.Rol.ADMINISTRADOR,
+            help_text="Consulta: lectura de los datos de la empresa, sin crear, editar, archivar ni administrar usuarios.",
+        )
+        disponibles = Q(acceso_usuario__isnull=True)
+        if asignacion:
+            disponibles |= Q(acceso_usuario=asignacion)
+        self.fields["cliente"] = forms.ModelChoiceField(
+            label="Cliente asociado", required=False,
+            queryset=Cliente.objects.filter(disponibles, empresa=empresa),
+            initial=asignacion.cliente_id if asignacion else None,
+            help_text="Obligatorio para CLIENTE. Para los demás roles se elimina la asociación.",
+        )
+        if self.is_bound and self.data.get(self.add_prefix("rol")) in {
+            RolMasiscam.Rol.ADMINISTRADOR, RolMasiscam.Rol.TECNICO, RolMasiscam.Rol.CONSULTA,
+        }:
+            self.data = self.data.copy()
+            self.data[self.add_prefix("cliente")] = ""
         for field in self.fields.values():
-            field.widget.attrs["class"] = "form-control"
+            field.widget.attrs["class"] = "form-select" if isinstance(field.widget, forms.Select) else "form-control"
         self.fields["first_name"].required = True
         self.fields["first_name"].label = "Nombre"
         self.fields["username"].label = "Usuario"
         self.fields["email"].label = "Correo (opcional)"
+
+    def clean(self):
+        data = super().clean()
+        if data.get("rol") == RolMasiscam.Rol.CLIENTE:
+            if not data.get("cliente"):
+                self.add_error("cliente", "Seleccione un cliente de esta empresa sin otro usuario asociado.")
+        else:
+            data["cliente"] = None
+        if (self.instance.is_superuser and data.get("rol")
+                and data["rol"] != RolMasiscam.Rol.ADMINISTRADOR):
+            self.add_error("rol", "Esta cuenta tiene privilegios de superusuario. Retírelos desde la administración técnica antes de asignar un rol restringido.")
+        return data
 
     def clean_username(self):
         username = self.cleaned_data["username"]
@@ -22,12 +55,6 @@ class UsuarioCamposMixin:
 
 
 class AdministradorCrearForm(UsuarioCamposMixin, UserCreationForm):
-    rol = forms.ChoiceField(
-        label="Rol", initial=RolMasiscam.Rol.ADMINISTRADOR,
-        choices=[(codigo, nombre) for codigo, nombre in RolMasiscam.Rol.choices
-                 if codigo != RolMasiscam.Rol.CLIENTE],
-        help_text="Los usuarios CLIENTE se crean desde su ficha de cliente.",
-    )
 
     class Meta(UserCreationForm.Meta):
         model = get_user_model()

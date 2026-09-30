@@ -3,7 +3,7 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from accounts.models import Empresa, Perfil
-from .models import Auditoria, RolMasiscam
+from .models import Auditoria, Cliente, Equipo, Proyecto, RolMasiscam
 
 
 class UsuariosTests(TestCase):
@@ -61,7 +61,7 @@ class UsuariosTests(TestCase):
             self.assertFalse(usuario.is_staff)
             self.assertFalse(usuario.is_superuser)
         total = get_user_model().objects.count()
-        for codigo in ("CLIENTE", "SUPERUSER", "", "INVALIDO"):
+        for codigo in ("SUPERUSER", "", "INVALIDO"):
             response = self.crear(rol=codigo)
             self.assertIn("rol", response.context["form"].errors)
             self.assertEqual(get_user_model().objects.count(), total)
@@ -130,7 +130,7 @@ class UsuariosTests(TestCase):
         self.assertEqual(self.tecnico.first_name, "Nombre editado")
         self.assertEqual(self.tecnico.email, "correo@example.com")
         self.assertEqual(self.tecnico.username, "tecnico-editado")
-        self.assertEqual(self.rol_tecnico.rol, RolMasiscam.Rol.TECNICO)
+        self.assertEqual(self.rol_tecnico.rol, RolMasiscam.Rol.ADMINISTRADOR)
         self.assertFalse(self.tecnico.is_superuser)
         self.assertFalse(self.tecnico.is_staff)
         self.assertTrue(self.tecnico.check_password("Tecnico-789!"))
@@ -169,3 +169,120 @@ class UsuariosTests(TestCase):
         for vista, args in [("usuario_crear", []), ("usuario_editar", [self.rol_tecnico.pk]),
                             ("usuario_clave", [self.rol_tecnico.pk]), ("usuario_estado", [self.rol_tecnico.pk])]:
             self.assertEqual(cliente.post(reverse("masiscam:" + vista, args=args)).status_code, 403)
+
+    def editar(self, asignacion, **changes):
+        datos = {"username": asignacion.perfil.user.username, "first_name": "Nombre",
+                 "email": "", "rol": asignacion.rol, "cliente": asignacion.cliente_id or ""}
+        datos.update(changes)
+        return self.client.post(reverse("masiscam:usuario_editar", args=[asignacion.pk]), datos)
+
+    def test_crear_cliente_y_precargar_edicion(self):
+        response = self.crear(rol="CLIENTE", cliente=self.otro_cliente.pk)
+        self.assertRedirects(response, reverse("masiscam:usuarios"))
+        usuario = get_user_model().objects.get(username="nuevo-admin")
+        asignacion = usuario.perfiles.get().rol_masiscam
+        self.assertEqual(asignacion.cliente, self.otro_cliente)
+        response = self.client.get(reverse("masiscam:usuario_editar", args=[asignacion.pk]))
+        self.assertEqual(response.context["form"]["rol"].value(), "CLIENTE")
+        self.assertEqual(response.context["form"]["cliente"].value(), self.otro_cliente.pk)
+        self.assertIn(self.otro_cliente, response.context["form"].fields["cliente"].queryset)
+        self.assertRedirects(self.editar(asignacion), reverse("masiscam:usuarios"))
+        sesion = Client()
+        self.assertTrue(sesion.login(username=usuario.username, password="Inicial-Segura-847!"))
+        self.assertContains(sesion.get(reverse("masiscam:dashboard")), self.equipo_ajeno.nombre)
+        self.assertNotContains(sesion.get(reverse("masiscam:dashboard")), self.equipo.nombre)
+
+    def test_cliente_obligatorio_unico_y_de_la_empresa(self):
+        otra = Empresa.objects.create(nombre="Otra")
+        externo = Cliente.objects.create(empresa=otra, nombre_comercial="Externo", ruc="123")
+        for cliente in ("", self.cliente.pk, externo.pk, 999999):
+            with self.subTest(cliente=cliente):
+                response = self.crear(rol="CLIENTE", cliente=cliente)
+                self.assertIn("cliente", response.context["form"].errors)
+                self.assertFalse(get_user_model().objects.filter(username="nuevo-admin").exists())
+                response = self.editar(self.rol_tecnico, rol="CLIENTE", cliente=cliente)
+                self.assertIn("cliente", response.context["form"].errors)
+                self.rol_tecnico.refresh_from_db()
+                self.assertEqual(self.rol_tecnico.rol, "TECNICO")
+
+    def test_transiciones_y_cambio_cliente_en_sesion_abierta(self):
+        asignacion = self.cliente_user.perfiles.get().rol_masiscam
+        sesion = Client()
+        sesion.force_login(self.cliente_user)
+        self.assertEqual(sesion.get(reverse("masiscam:ficha_detalle", args=[self.equipo.pk])).status_code, 200)
+        self.assertRedirects(self.editar(asignacion, cliente=self.otro_cliente.pk), reverse("masiscam:usuarios"))
+        for vista in ("ficha_detalle", "equipo_informe"):
+            self.assertEqual(sesion.get(reverse("masiscam:" + vista, args=[self.equipo.pk])).status_code, 403)
+            self.assertEqual(sesion.get(reverse("masiscam:" + vista, args=[self.equipo_ajeno.pk])).status_code, 200)
+        asignacion.refresh_from_db()
+        self.assertRedirects(self.editar(asignacion, rol="ADMIN"), reverse("masiscam:usuarios"))
+        asignacion.refresh_from_db()
+        self.assertIsNone(asignacion.cliente_id)
+        self.assertEqual(sesion.get(reverse("masiscam:usuarios")).status_code, 200)
+        self.assertEqual(sesion.get(reverse("masiscam:cliente_editar", args=[self.cliente.pk])).status_code, 200)
+        self.assertRedirects(self.editar(asignacion, rol="CLIENTE", cliente=self.cliente.pk), reverse("masiscam:usuarios"))
+        self.assertEqual(sesion.get(reverse("masiscam:usuarios")).status_code, 403)
+        self.assertEqual(sesion.post(reverse("masiscam:cliente_editar", args=[self.cliente.pk]), {}).status_code, 403)
+        self.assertEqual(sesion.get(reverse("masiscam:ficha_detalle", args=[self.equipo_ajeno.pk])).status_code, 403)
+
+    def test_consulta_lee_empresa_sin_poder_modificar(self):
+        self.assertRedirects(self.crear(rol="CONSULTA", cliente=self.otro_cliente.pk), reverse("masiscam:usuarios"))
+        usuario = get_user_model().objects.get(username="nuevo-admin")
+        self.assertIsNone(usuario.perfiles.get().rol_masiscam.cliente_id)
+        sesion = Client()
+        sesion.force_login(usuario)
+        for vista, args in (("dashboard", []), ("clientes", []), ("proyectos", []),
+                            ("producto_listado", ["reductor"]),
+                            ("ficha_detalle", [self.equipo.pk]), ("ficha_detalle", [self.equipo_ajeno.pk]),
+                            ("equipo_informe", [self.equipo.pk])):
+            self.assertEqual(sesion.get(reverse("masiscam:" + vista, args=args)).status_code, 200)
+        for vista, args in (("usuario_crear", []), ("usuarios", []), ("ficha_crear", []),
+                            ("ficha_editar", [self.equipo.pk]), ("historial", [self.proyecto.pk])):
+            self.assertEqual(sesion.get(reverse("masiscam:" + vista, args=args)).status_code, 403)
+        for vista, args in (("cliente_crear", []), ("cliente_editar", [self.cliente.pk]),
+                            ("ficha_archivar", [self.equipo.pk]), ("registro_crear", [self.equipo.pk]),
+                            ("producto_listado", ["reductor"]), ("usuario_crear", [])):
+            self.assertEqual(sesion.post(reverse("masiscam:" + vista, args=args), {}).status_code, 403)
+        otra = Empresa.objects.create(nombre="Empresa externa")
+        proyecto = Proyecto.objects.create(empresa=otra, codigo="EXT", nombre="Externo",
+                                           fecha_inicio=self.proyecto.fecha_inicio, creado_por=self.admin)
+        equipo = Equipo.objects.create(proyecto=proyecto, nombre="Equipo externo")
+        self.assertEqual(sesion.get(reverse("masiscam:ficha_detalle", args=[equipo.pk])).status_code, 404)
+
+    def test_editar_admin_a_consulta_revoca_permisos_sin_cerrar_sesion(self):
+        sesion = Client()
+        sesion.force_login(self.tecnico)
+        self.assertRedirects(self.editar(self.rol_tecnico, rol="ADMIN"), reverse("masiscam:usuarios"))
+        self.assertEqual(sesion.get(reverse("masiscam:usuarios")).status_code, 200)
+        self.assertRedirects(self.editar(self.rol_tecnico, rol="CONSULTA"), reverse("masiscam:usuarios"))
+        self.assertEqual(sesion.get(reverse("masiscam:usuarios")).status_code, 403)
+        self.assertEqual(sesion.get(reverse("masiscam:ficha_editar", args=[self.equipo.pk])).status_code, 403)
+        self.assertEqual(sesion.get(reverse("masiscam:ficha_detalle", args=[self.equipo.pk])).status_code, 200)
+
+    def test_roles_internos_limpian_cliente_y_edicion_rechaza_rol_invalido(self):
+        asignacion = self.cliente_user.perfiles.get().rol_masiscam
+        for codigo in ("ADMIN", "TECNICO", "CONSULTA"):
+            self.assertRedirects(self.editar(asignacion, rol=codigo, cliente="no-valido"), reverse("masiscam:usuarios"))
+            asignacion.refresh_from_db()
+            self.assertEqual(asignacion.rol, codigo)
+            self.assertIsNone(asignacion.cliente_id)
+        response = self.editar(asignacion, rol="SUPERUSER")
+        self.assertIn("rol", response.context["form"].errors)
+        asignacion.refresh_from_db()
+        self.assertEqual(asignacion.rol, "CONSULTA")
+
+    def test_superusuario_no_puede_guardarse_con_rol_restringido(self):
+        root = get_user_model().objects.create_superuser(username="root", password="Root-847!", email="")
+        perfil = Perfil.objects.create(user=root, empresa=self.empresa)
+        asignacion = RolMasiscam.objects.create(perfil=perfil, rol="ADMIN")
+        self.client.force_login(root)
+        for codigo in ("CLIENTE", "CONSULTA", "TECNICO"):
+            response = self.editar(asignacion, rol=codigo, cliente=self.otro_cliente.pk)
+            self.assertIn("rol", response.context["form"].errors)
+            asignacion.refresh_from_db()
+            self.assertEqual(asignacion.rol, "ADMIN")
+
+    def test_cambio_propio_a_cliente_redirige_y_restringe(self):
+        asignacion = self.admin.perfiles.get().rol_masiscam
+        self.assertRedirects(self.editar(asignacion, rol="CLIENTE", cliente=self.otro_cliente.pk), reverse("masiscam:dashboard"))
+        self.assertEqual(self.client.get(reverse("masiscam:usuarios")).status_code, 403)

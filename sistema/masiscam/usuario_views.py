@@ -46,17 +46,17 @@ def usuarios(request):
 @require_http_methods(["GET", "POST"])
 @permiso_masiscam_required("usuarios")
 def usuario_crear(request):
-    form = AdministradorCrearForm(request.POST if request.method == "POST" else None)
+    form = AdministradorCrearForm(request.POST if request.method == "POST" else None, empresa=request.empresa_activa)
     if request.method == "POST" and form.is_valid():
         try:
             with transaction.atomic():
                 usuario = form.save()  # UserCreationForm hashes via set_password().
                 perfil = Perfil.objects.create(user=usuario, empresa=request.empresa_activa)
-                rol = RolMasiscam.objects.create(perfil=perfil, rol=form.cleaned_data["rol"])
+                rol = RolMasiscam.objects.create(perfil=perfil, rol=form.cleaned_data["rol"], cliente=form.cleaned_data["cliente"])
                 auditar(empresa=request.empresa_activa, usuario=request.user,
                         accion="ADMINISTRADOR_CREADO" if rol.rol == RolMasiscam.Rol.ADMINISTRADOR else "USUARIO_CREADO", objeto=rol)
         except IntegrityError:
-            form.add_error("username", "Ya existe un usuario con ese nombre.")
+            form.add_error(None, "El usuario o cliente ya está asociado a otra cuenta. Revise los datos.")
         else:
             messages.success(request, "Usuario creado correctamente.")
             return redirect("masiscam:usuarios")
@@ -67,17 +67,23 @@ def usuario_crear(request):
 @permiso_masiscam_required("usuarios")
 def usuario_editar(request, pk):
     rol = _rol(request, pk)
-    form = UsuarioEditarForm(request.POST if request.method == "POST" else None, instance=rol.perfil.user)
+    form = UsuarioEditarForm(request.POST if request.method == "POST" else None,
+                             instance=rol.perfil.user, empresa=request.empresa_activa, asignacion=rol)
     if request.method == "POST" and form.is_valid():
         try:
             with transaction.atomic():
                 form.save()
+                rol.rol = form.cleaned_data["rol"]
+                rol.cliente = form.cleaned_data["cliente"]
+                rol.save(update_fields=["rol", "cliente"])
                 auditar(empresa=request.empresa_activa, usuario=request.user,
                         accion="USUARIO_EDITADO", objeto=rol)
         except IntegrityError:
-            form.add_error("username", "Ya existe un usuario con ese nombre.")
+            form.add_error(None, "El usuario o cliente ya está asociado a otra cuenta. Revise los datos.")
         else:
             messages.success(request, "Usuario actualizado correctamente.")
+            if rol.perfil.user_id == request.user.pk and rol.rol != RolMasiscam.Rol.ADMINISTRADOR:
+                return redirect("masiscam:dashboard")
             return redirect("masiscam:usuarios")
     return render(request, "masiscam/usuario_form.html", {"form": form, "titulo": "Editar usuario"})
 
