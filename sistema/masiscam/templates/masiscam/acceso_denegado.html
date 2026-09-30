@@ -1,0 +1,11 @@
+{% extends "masiscam/base.html" %}
+{% block title %}Acceso denegado | MASISCAM{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <section class="card masiscam-card card-body" role="alert">
+    <h1 class="h3">Acceso denegado</h1>
+    <p>{{ mensaje|default:"No tiene permiso para acceder a este recurso." }}</p>
+    <a href="{% url 'masiscam:dashboard' %}" class="btn btn-outline-primary">Volver a mis productos</a>
+  </section>
+</div>
+{% endblock %}

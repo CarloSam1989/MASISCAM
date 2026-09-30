@@ -3,9 +3,15 @@ from functools import wraps
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
+from django.shortcuts import render
 
 from accounts.models import Perfil
 from .models import RolMasiscam
+
+
+class EquipoNoAsignado(PermissionDenied):
+    """Denegación de equipo con un mensaje visible, sin exponer sus datos."""
+
 
 PERMISOS_ROL = {
     RolMasiscam.Rol.ADMINISTRADOR: {"ver", "crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios"},
@@ -83,7 +89,10 @@ def masiscam_access_required(view_func):
         request.rol_masiscam = rol_masiscam_usuario(usuario=request.user, empresa=empresa)
         if not request.user.is_superuser and request.rol_masiscam is None:
             raise PermissionDenied("El perfil no tiene un rol MASISCAM activo.")
-        response = view_func(request, *args, **kwargs)
+        try:
+            response = view_func(request, *args, **kwargs)
+        except EquipoNoAsignado as error:
+            response = render(request, "masiscam/acceso_denegado.html", {"mensaje": str(error)}, status=403)
         response["Cache-Control"] = "private, no-store"
         return response
     return wrapped

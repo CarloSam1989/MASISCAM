@@ -1,4 +1,6 @@
 from datetime import date
+import re
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -81,6 +83,53 @@ class ClienteAccessTests(TestCase):
         session["empresa_activa_id"] = self.empresa.pk
         session.save()
 
+    def test_tabla_reductores_columnas_acciones_y_busqueda(self):
+        Equipo.objects.create(proyecto=self.proyecto, cliente=self.cliente, nombre="BOMBA-EXCLUIDA", tipo_producto="BOMBA")
+        self.login_as(self.cliente_user)
+        url = reverse("masiscam:producto_listado", args=["reductor"])
+        response = self.client.get(url, {"cliente": self.otro_cliente.pk})
+        self.assertEqual(re.findall(r"<th>(.*?)</th>", response.content.decode()), [
+            "N.º equipo", "Camaronera", "Estación", "Sector", "Marca", "Modelo", "Serie", "Potencia", "Acciones",
+        ])
+        self.assertContains(response, self.equipo.nombre)
+        self.assertNotContains(response, self.equipo_ajeno.nombre)
+        self.assertNotContains(response, "BOMBA-EXCLUIDA")
+        self.assertContains(response, "table-responsive")
+        for vista in ("ficha_detalle", "equipo_informe"):
+            self.assertContains(response, reverse("masiscam:" + vista, args=[self.equipo.pk]))
+        for texto in ("Editar", "Documentos", "Drive", "Descargar QR", "Imprimir etiqueta", "Administración"):
+            self.assertNotContains(response, texto)
+        self.assertContains(self.client.get(url, {"q": self.equipo.numero_serie}), self.equipo.nombre)
+        self.assertNotContains(self.client.get(url, {"q": self.equipo_ajeno.numero_serie}), self.equipo_ajeno.nombre)
+        self.assertNotContains(self.client.get(url, {"q": "no-coincide"}), self.equipo.nombre)
+
+    @override_settings(GOOGLE_DRIVE_ENABLED=False)
+    def test_id_real_visible_admin_cliente_y_qr_existente_univoco(self):
+        import qrcode
+        originales = {equipo.pk: equipo.token_publico for equipo in (self.equipo, self.equipo_ajeno)}
+        for usuario in (self.admin, self.cliente_user):
+            self.login_as(usuario)
+            for vista in ("ficha_detalle", "equipo_informe"):
+                response = self.client.get(reverse("masiscam:" + vista, args=[self.equipo.pk]))
+                self.assertContains(response, f"<dt>ID del equipo</dt><dd>{self.equipo.pk}</dd>", html=True)
+        self.login_as(self.admin)
+        for equipo in (self.equipo, self.equipo_ajeno):
+            with patch("qrcode.make", wraps=qrcode.make) as make:
+                response = self.client.get(reverse("masiscam:equipo_qr", args=[equipo.pk]))
+                self.assertEqual(response.status_code, 200)
+                make.assert_called_once_with(views._url_publica_equipo(equipo))
+            Equipo.objects.filter(pk=equipo.pk).update(consulta_publica_activa=True)
+            response = self.client.get(reverse("masiscam:equipo_publico", args=[equipo.token_publico]))
+            self.assertEqual(response.context["equipo"].pk, equipo.pk)
+            self.assertContains(response, f"<dt>ID del equipo</dt><dd>{equipo.pk}</dd>", html=True)
+            self.login_as(self.admin)
+        self.assertNotEqual(self.equipo.token_publico, self.equipo_ajeno.token_publico)
+        self.assertTrue(Equipo._meta.get_field("token_publico").unique)
+        self.assertEqual(dict(Equipo.objects.filter(pk__in=originales).values_list("pk", "token_publico")), originales)
+        self.login_as(self.cliente_user)
+        self.assertEqual(self.client.get(reverse("masiscam:equipo_publico", args=[self.equipo.token_publico])).status_code, 200)
+        self.assertEqual(self.client.get(reverse("masiscam:equipo_publico", args=[self.equipo_ajeno.token_publico])).status_code, 403)
+
     def test_crear_usuario_cliente_desde_cliente(self):
         self.login_as(self.admin)
         response = self.client.post(reverse("masiscam:cliente_usuario_crear", args=[self.otro_cliente.pk]))
@@ -157,7 +206,8 @@ class ClienteAccessTests(TestCase):
             for q in ["EQ-CLIENTE", "SER-CLIENTE", "37:1"]:
                 response = self.client.get(ruta, {"q": q})
                 self.assertEqual(list(response.context["equipos"]), [self.equipo])
-                self.assertContains(response, "37:1")
+                if ruta == reverse("masiscam:cliente_productos"):
+                    self.assertContains(response, "37:1")
                 self.assertContains(response, "SER-CLIENTE")
                 self.assertNotContains(response, "Documentos")
                 self.assertContains(response, "Ver ficha")

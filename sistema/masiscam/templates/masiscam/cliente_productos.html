@@ -9,11 +9,19 @@
   </form>
   {% if equipos %}
   <div class="table-responsive card masiscam-card">
-    <table class="table align-middle mb-0">
+    <table class="table table-hover align-middle mb-0 masiscam-table">
+      {% if producto_codigo == 'REDUCTOR' %}
+      <thead><tr><th>N.º equipo</th><th>Camaronera</th><th>Estación</th><th>Sector</th><th>Marca</th><th>Modelo</th><th>Serie</th><th>Potencia</th><th>Acciones</th></tr></thead>
+      {% else %}
       <thead><tr><th>Producto / N° equipo</th><th>Serie</th><th>Ratio (Relación motriz)</th><th>Estado</th><th>Acciones</th></tr></thead>
+      {% endif %}
       <tbody>{% for equipo in equipos %}
         <tr>
+          {% if producto_codigo == 'REDUCTOR' %}
+          <td class="fw-bold">{{ equipo.nombre }}</td><td>{{ equipo.proyecto.nombre }}</td><td>{{ equipo.ubicacion|default:"—" }}</td><td>{{ equipo.sector|default:"—" }}</td><td>{{ equipo.marca|default:"—" }}</td><td>{{ equipo.modelo|default:"—" }}</td><td>{{ equipo.numero_serie|default:"—" }}</td><td>{{ equipo.potencia_hp|default:"—" }}</td>
+          {% else %}
           <td>{{ equipo.get_tipo_producto_display }} / {{ equipo.nombre }}</td><td>{{ equipo.numero_serie|default:"—" }}</td><td>{{ equipo.ratio|default:"—" }}</td><td>{{ equipo.get_estado_display }}</td>
+          {% endif %}
           <td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a> <a class="btn btn-sm btn-outline-secondary" href="{% url 'masiscam:equipo_informe' equipo.pk %}" target="_blank" rel="noopener">Ver informe</a></td>
         </tr>
       {% endfor %}</tbody>

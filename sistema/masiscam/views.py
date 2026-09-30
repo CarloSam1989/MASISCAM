@@ -17,7 +17,7 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 
 
 from .drive_documents import EquipoDriveDocuments, DocumentUnavailable
-from .access import masiscam_access_required, permiso_masiscam_required, tiene_permiso
+from .access import EquipoNoAsignado, masiscam_access_required, permiso_masiscam_required, tiene_permiso
 from .forms import ClienteForm, DocumentoForm, EquipoForm, FichaEquipoForm, ProyectoForm, VisibilidadProyectoForm, RegistroEquipoForm, datos_cliente
 from .models import Cliente, Auditoria, Documento, Equipo, Proyecto, RegistroEquipo, RolMasiscam
 from accounts.models import Perfil
@@ -44,7 +44,7 @@ def _comprobar_equipo_cliente(request, equipo):
     if request.cliente_usuario and (equipo.cliente_id != request.cliente_usuario.pk
             or equipo.proyecto.empresa_id != request.cliente_usuario.empresa_id
             or equipo.cliente.empresa_id != request.empresa_activa.pk):
-        raise PermissionDenied("Este producto no pertenece a su cliente.")
+        raise EquipoNoAsignado("Este equipo no está asignado a su cliente.")
     return equipo
 
 
@@ -468,28 +468,15 @@ def equipo_etiqueta(request, pk):
 
 
 @require_GET
+@masiscam_access_required
 def equipo_publico(request, token):
-    equipo = get_object_or_404(Equipo.objects.select_related("proyecto__empresa"), token_publico=token)
-    empresa_ruc = None  # El logo propio se sirve desde static; pertenece al producto MASISCAM.
-    activo = (
-        equipo.proyecto.empresa.activa
-        and equipo.consulta_publica_activa
-        and equipo.estado != Equipo.Estado.INACTIVO
-        and equipo.proyecto.estado != Proyecto.Estado.ARCHIVADO
-    )
-    response = render(
-        request,
-        "masiscam/equipo_publico.html",
-        {
-            "equipo": equipo,
-            "activo": activo,
-            "empresa_ruc": empresa_ruc,
-            "documentos_publicos": True,
-            **(_contexto_documentos_drive(equipo) if activo else {}),
-        },
-    )
-
-    return _cabeceras_documentos(response)
+    # Conserva los QR impresos: el token único resuelve al ID real, y el
+    # informe privado aplica los mismos permisos que el acceso por ID.
+    equipo = get_object_or_404(Equipo, token_publico=token)
+    equipo = _equipo(request, equipo.pk)
+    if not equipo.cliente_id:
+        raise EquipoNoAsignado("Este equipo no tiene un cliente asignado.")
+    return equipo_informe(request, equipo.pk)
 
 
 def _puede_ver_documentos(request, equipo):
