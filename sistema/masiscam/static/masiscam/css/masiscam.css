@@ -5,6 +5,35 @@
     --masiscam-black:#151515;
 }
 
+/* Ancho del sistema privado; conserva los contenedores de informes y modales. */
+.sistema-masiscam > .app-header > .container,
+.sistema-masiscam > .app-context > .container,
+.sistema-masiscam > .container,
+.sistema-masiscam > main > .container,
+.sistema-masiscam > .app-footer > .container{
+    max-width:none;
+    padding-left:clamp(16px, 2vw, 40px);
+    padding-right:clamp(16px, 2vw, 40px);
+}
+
+.sistema-masiscam .app-brand img{
+    width:260px;
+    max-width:100%;
+    height:auto;
+}
+
+.sistema-masiscam main .table-responsive > .table{
+    min-width:720px;
+}
+
+@media(max-width:991px){
+    .sistema-masiscam .app-brand img{width:200px;}
+}
+
+@media(max-width:359px){
+    .sistema-masiscam .app-brand img{width:180px;}
+}
+
 .sistema-masiscam main{
     background:#f4f7fa;
     min-height:calc(100vh - 56px);
