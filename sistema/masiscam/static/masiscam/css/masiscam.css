@@ -418,7 +418,7 @@
 .ficha-registros th{font-size:.75rem;text-transform:uppercase;letter-spacing:.035em;color:#5e7083;background:#f4f7fa;}
 .ficha-registros th,.ficha-registros td{padding:.65rem .6rem;vertical-align:top;overflow-wrap:anywhere;}
 .ficha-registros th:nth-child(1){width:7.25rem;}
-.ficha-registros th:nth-child(2){width:7rem;}
+.ficha-registros th:nth-child(2){width:9rem;}
 .ficha-registros th:nth-child(3){width:7.5rem;}
 .ficha-registros th:nth-child(5){width:12rem;}
 .registro-fecha{white-space:nowrap;font-variant-numeric:tabular-nums;}
