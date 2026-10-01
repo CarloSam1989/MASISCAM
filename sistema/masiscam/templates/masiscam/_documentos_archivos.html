@@ -1,8 +1,4 @@
 {% if error_documentos %}<span class="text-muted" role="status">Los documentos no están disponibles temporalmente. Intente más tarde.</span>
-{% else %}
-{% for documento in documentos_drive %}
-<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-1">
-  <a class="text-break" href="{% url 'masiscam:equipo_documento_privado' equipo.pk documento.id %}" download>{{ documento.name }}</a>
-</div>
-{% empty %}<span class="text-muted">Sin documentos</span>{% endfor %}
-{% endif %}
+{% elif documentos_drive %}<ul class="registro-documentos">
+{% for documento in documentos_drive %}<li><a class="text-break" href="{% url 'masiscam:equipo_documento_privado' equipo.pk documento.id %}" download>{{ documento.name }}</a></li>{% endfor %}
+</ul>{% else %}<span class="text-muted">Sin documentos</span>{% endif %}

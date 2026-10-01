@@ -18,8 +18,9 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 
 from .drive_documents import EquipoDriveDocuments, DocumentUnavailable
 from .access import EquipoNoAsignado, masiscam_access_required, permiso_masiscam_required, tiene_permiso
-from .forms import ClienteForm, DocumentoForm, EquipoForm, FichaEquipoForm, ProyectoForm, VisibilidadProyectoForm, RegistroEquipoForm, datos_cliente
-from .models import Cliente, Auditoria, Documento, Equipo, Proyecto, RegistroEquipo, RolMasiscam
+from .forms import ClienteForm, DocumentoForm, EquipoForm, FichaEquipoForm, ProyectoForm, VisibilidadProyectoForm, RegistroEquipoForm, RegistroArchivosForm, datos_cliente
+from .models import ArchivoRegistro, Cliente, Auditoria, Documento, Equipo, Proyecto, RegistroEquipo, RolMasiscam
+from .registro_archivos import registrar_archivos, subir_archivos, encolar_revision, sincronizar_archivo
 from accounts.models import Perfil
 from .services import GoogleDriveService, auditar, encolar_carpeta_registro, encolar_drive
 from .tasks import crear_carpeta_proyecto, sincronizar_documento
@@ -354,7 +355,7 @@ def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, st
 @permiso_masiscam_required("editar")
 def registro_crear(request, pk):
     equipo = _equipo(request, pk)
-    form = RegistroEquipoForm(request.POST)
+    form = RegistroEquipoForm(request.POST, request.FILES)
     if not form.is_valid():
         return _render_ficha(request, equipo, registro_form=form, status=400)
     with transaction.atomic():
@@ -365,22 +366,44 @@ def registro_crear(request, pk):
         if creado:
             auditar(empresa=request.empresa_activa, usuario=request.user, accion="REGISTRO_EQUIPO_CREADO",
                     objeto=registro, proyecto=equipo.proyecto)
-    messages.success(request, "Registro guardado. Puede consultar el estado de Drive en el historial.")
+        registrar_archivos(registro, form.cleaned_data["archivos"])
+    if subir_archivos(registro, form.cleaned_data["archivos"]):
+        messages.success(request, "Registro guardado. Puede consultar el estado de Drive en el historial.")
+    else:
+        encolar_revision(registro.pk)
+        messages.error(request, "Registro guardado con archivos sin confirmar. Use Reintentar carga para volver a adjuntar los archivos pendientes.")
     return redirect(reverse("masiscam:ficha_detalle", args=[pk]) + "#historial-registros")
 
 
-@require_POST
+@require_http_methods(["GET", "POST"])
 @permiso_masiscam_required("editar")
 def registro_reintentar(request, pk, registro_pk):
     equipo = _equipo(request, pk)
     registro = get_object_or_404(RegistroEquipo, pk=registro_pk, equipo=equipo)
+    form = RegistroArchivosForm(request.POST if request.method == "POST" else None,
+                                request.FILES if request.method == "POST" else None)
+    if request.method == "GET" or not form.is_valid():
+        return render(request, "masiscam/registro_archivos.html", {
+            "equipo": equipo, "registro": registro, "form": form,
+            "pendientes": registro.archivos.exclude(estado=ArchivoRegistro.Estado.DISPONIBLE),
+        }, status=400 if request.method == "POST" else 200)
+    with transaction.atomic():
+        registro = RegistroEquipo.objects.select_for_update().get(pk=registro_pk, equipo=equipo)
+        registrar_archivos(registro, form.cleaned_data["archivos"])
     if not registro.drive_folder_id:
         encolar_carpeta_registro(registro.pk)
         registro.refresh_from_db()
-        if registro.drive_error:
-            messages.error(request, "No se pudo enviar a Drive. El registro sigue guardado; intente nuevamente.")
-        else:
-            messages.success(request, "Reintento de Drive enviado.")
+    subir_archivos(registro, form.cleaned_data["archivos"])
+    for archivo in registro.archivos.exclude(estado=ArchivoRegistro.Estado.DISPONIBLE):
+        try:
+            sincronizar_archivo(archivo.pk)
+        except Exception:
+            pass
+    if registro.drive_error or registro.archivos.exclude(estado=ArchivoRegistro.Estado.DISPONIBLE).exists():
+        encolar_revision(registro.pk)
+        messages.error(request, "Quedan archivos pendientes o un error de Drive. Vuelva a adjuntar los archivos indicados en Reintentar carga.")
+    else:
+        messages.success(request, "Registro sincronizado con Drive.")
     return redirect(reverse("masiscam:ficha_detalle", args=[pk]) + "#historial-registros")
 
 
@@ -529,12 +552,13 @@ def _documentos_listado(request, equipos):
 
 
 def _contexto_documentos_drive(equipo, request=None, registros=True):
+    es_cliente = bool(request and getattr(request, "cliente_usuario", None))
     permitido = equipo.estado != Equipo.Estado.INACTIVO and (request is None or _puede_ver_documentos(request, equipo))
     contexto = {"documentos_drive": [], "error_documentos": False,
-                "puede_ver_documentos": permitido}
+                "puede_ver_documentos": permitido, "es_cliente": es_cliente}
     if registros:
-        contexto["registros"] = list(equipo.registros.order_by("-fecha", "-pk")) if equipo.estado != Equipo.Estado.INACTIVO else []
-        if permitido and settings.GOOGLE_DRIVE_ENABLED:
+        contexto["registros"] = list(equipo.registros.prefetch_related("archivos").order_by("-fecha", "-pk")) if equipo.estado != Equipo.Estado.INACTIVO else []
+        if permitido and not es_cliente and settings.GOOGLE_DRIVE_ENABLED:
             for registro in contexto["registros"]:
                 if not registro.drive_folder_id:
                     encolar_carpeta_registro(registro.pk)
@@ -558,6 +582,13 @@ def _contexto_documentos_drive(equipo, request=None, registros=True):
                 por_carpeta[folder].append(doc)
         for registro in contexto["registros"]:
             registro.documentos_drive = por_carpeta.get(registro.drive_folder_id, [])
+            registro.archivos_pendientes = [a for a in registro.archivos.all() if a.estado != ArchivoRegistro.Estado.DISPONIBLE]
+            registro.error_carga = bool(contexto["error_documentos"] or registro.drive_error or any(a.estado == ArchivoRegistro.Estado.ERROR for a in registro.archivos_pendientes))
+            registro.carga_pendiente = not registro.drive_folder_id or bool(registro.archivos_pendientes)
+        if es_cliente:
+            contexto["registros"] = [r for r in contexto["registros"] if r.documentos_drive
+                                      and not r.error_carga and not r.carga_pendiente and not contexto["error_documentos"]]
+            contexto["documentos_drive"] = [doc for r in contexto["registros"] for doc in r.documentos_drive]
     return contexto
 
 

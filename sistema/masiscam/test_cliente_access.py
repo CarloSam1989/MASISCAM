@@ -300,18 +300,24 @@ class ClienteAccessTests(TestCase):
                 else:
                     self.assertNotContains(response, url)
 
-    def test_registros_cliente_tabla_unica_ordenada(self):
+    @patch("masiscam.views.EquipoDriveDocuments")
+    def test_registros_cliente_tabla_unica_ordenada(self, documentos):
         from .models import RegistroEquipo
+        self.equipo.drive_folder_id = "equipo-root"
+        self.equipo.save()
+        documentos.return_value.list.return_value = []
         for indice, tipo in enumerate([*RegistroEquipo.Tipo.values, "REVISION"]):
-            RegistroEquipo.objects.create(equipo=self.equipo, tipo=tipo, fecha=date(2026, 9, indice + 1))
+            folder = f"registro-{indice}"
+            RegistroEquipo.objects.create(equipo=self.equipo, tipo=tipo, fecha=date(2026, 9, indice + 1), drive_folder_id=folder)
+            documentos.return_value.list.return_value.append({"id": f"file-{indice}", "name": f"archivo-{indice}.pdf", "folders": [folder]})
         self.login_as(self.cliente_user)
         for vista in ["ficha_detalle", "equipo_informe"]:
             response = self.client.get(reverse("masiscam:" + vista, args=[self.equipo.pk]))
             html = response.content.decode()
-            self.assertEqual(html.count('class="table align-middle ficha-registros mb-0"'), 1)
+            self.assertEqual(html.count('class="table table-sm align-middle ficha-registros mb-0"'), 1)
             self.assertContains(response, '>Registros</h2>')
             for tipo in [*RegistroEquipo.Tipo.labels, "REVISION"]:
-                self.assertContains(response, "<td>" + tipo + "</td>")
+                self.assertContains(response, '<td class="registro-tipo" data-label="Tipo">' + tipo + "</td>")
             for dia in range(6, 1, -1):
                 self.assertLess(html.index(f"{dia:02}/09/2026"), html.index(f"{dia-1:02}/09/2026"))
             self.assertNotContains(response, "Reintentar Drive")

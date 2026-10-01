@@ -31,8 +31,49 @@ class MasiscamImageFormMixin:
                 field.validators.append(validar_fotografia)
 
 
+class ArchivosMultiplesInput(forms.ClearableFileInput):
+    allow_multiple_selected = True
+
+
+class ArchivosRegistroField(forms.FileField):
+    def __init__(self, **kwargs):
+        super().__init__(required=False, label="Archivos (opcional)",
+                         widget=ArchivosMultiplesInput(attrs={"class": "form-control", "accept": ".pdf,.jpg,.jpeg,.png,.webp"}), **kwargs)
+
+    def clean(self, data, initial=None):
+        from pathlib import Path
+        from .drive_documents import TYPES, MAX_BYTES
+        archivos = data if isinstance(data, (list, tuple)) else [data] if data else []
+        limite = min(settings.MASISCAM_MAX_UPLOAD_MB * 1024 * 1024, MAX_BYTES)
+        if len(archivos) > 10 or sum(a.size for a in archivos) > limite:
+            raise ValidationError(f"Seleccione hasta 10 archivos y un máximo de {limite // (1024 * 1024)} MB en total.")
+        for archivo in archivos:
+            super().clean(archivo, initial)
+            mime = (archivo.content_type or "").lower()
+            if Path(archivo.name).suffix.lower() not in TYPES.get(mime, set()):
+                raise ValidationError("Use archivos PDF o imágenes JPG, PNG y WebP.")
+            head = archivo.read(12)
+            firmas = {"application/pdf": head.startswith(b"%PDF-"), "image/jpeg": head.startswith(b"\xff\xd8\xff"),
+                      "image/png": head.startswith(b"\x89PNG\r\n\x1a\n"),
+                      "image/webp": head[:4] == b"RIFF" and head[8:12] == b"WEBP"}
+            archivo.seek(0)
+            if not firmas[mime]:
+                raise ValidationError("El contenido no coincide con el tipo de archivo.")
+            digest = hashlib.sha256()
+            for chunk in archivo.chunks():
+                digest.update(chunk)
+            archivo.seek(0)
+            archivo.hash_sha256 = digest.hexdigest()
+        return archivos
+
+
+class RegistroArchivosForm(forms.Form):
+    archivos = ArchivosRegistroField()
+
+
 class RegistroEquipoForm(forms.ModelForm):
     clave_creacion = forms.UUIDField(initial=uuid.uuid4, widget=forms.HiddenInput)
+    archivos = ArchivosRegistroField()
 
     class Meta:
         model = RegistroEquipo

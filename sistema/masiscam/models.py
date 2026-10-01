@@ -233,6 +233,7 @@ class RegistroEquipo(models.Model):
     fecha = models.DateField()
     observacion = models.TextField(blank=True)
     clave_creacion = models.UUIDField(default=uuid.uuid4, editable=False)
+    secuencia = models.PositiveIntegerField(null=True, blank=True, editable=False)
     drive_folder_id = models.CharField(max_length=255, blank=True, editable=False)
     drive_folder_url = models.URLField(blank=True, editable=False)
     drive_error = models.TextField(blank=True, editable=False)
@@ -240,7 +241,32 @@ class RegistroEquipo(models.Model):
 
     class Meta:
         ordering = ["-fecha", "-creado_en", "-pk"]
-        constraints = [models.UniqueConstraint(fields=["equipo", "clave_creacion"], name="masiscam_registro_envio_uniq")]
+        constraints = [
+            models.UniqueConstraint(fields=["equipo", "clave_creacion"], name="masiscam_registro_envio_uniq"),
+            models.UniqueConstraint(fields=["equipo", "tipo", "secuencia"], name="masiscam_registro_secuencia_uniq"),
+        ]
+
+
+class ArchivoRegistro(models.Model):
+    class Estado(models.TextChoices):
+        PENDIENTE = "PENDIENTE", "Pendiente"
+        DISPONIBLE = "DISPONIBLE", "Disponible"
+        ERROR = "ERROR", "Error de carga"
+
+    registro = models.ForeignKey(RegistroEquipo, on_delete=models.CASCADE, related_name="archivos")
+    nombre = models.CharField(max_length=255)
+    tipo_mime = models.CharField(max_length=100)
+    tamano = models.PositiveBigIntegerField()
+    hash_sha256 = models.CharField(max_length=64)
+    # Reserved before transmitting bytes; the same ID is used on every retry.
+    drive_file_id = models.CharField(max_length=255, null=True, blank=True, unique=True, editable=False)
+    estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.PENDIENTE)
+    error = models.CharField(max_length=255, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["pk"]
+        constraints = [models.UniqueConstraint(fields=["registro", "hash_sha256"], name="masiscam_archivo_registro_hash_uniq")]
 
 
 class Documento(models.Model):

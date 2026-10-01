@@ -12,6 +12,28 @@ TASK_OPTIONS = dict(autoretry_for=(DriveSyncError,), retry_backoff=True,
 
 
 @shared_task(**TASK_OPTIONS)
+def revisar_archivos_registro(registro_id):
+    from .models import ArchivoRegistro, RegistroEquipo
+    from .registro_archivos import sincronizar_archivo
+    from .services import sincronizar_carpeta_registro
+    if not settings.GOOGLE_DRIVE_ENABLED or not RegistroEquipo.objects.filter(pk=registro_id).exists():
+        return
+    try:
+        sincronizar_carpeta_registro(registro_id)
+        fallos = False
+        for archivo_id in ArchivoRegistro.objects.filter(registro_id=registro_id).exclude(
+                estado=ArchivoRegistro.Estado.DISPONIBLE).values_list("pk", flat=True):
+            try:
+                sincronizar_archivo(archivo_id)
+            except Exception:
+                fallos = True
+        if fallos:
+            raise DriveSyncError("No se pudo verificar la carga en Drive.")
+    except Exception:
+        raise DriveSyncError("No se pudo verificar la carga en Drive.") from None
+
+
+@shared_task(**TASK_OPTIONS)
 def crear_carpeta_registro(registro_id):
     if not settings.GOOGLE_DRIVE_ENABLED:
         return ""

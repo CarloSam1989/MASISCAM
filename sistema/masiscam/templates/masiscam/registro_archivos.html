@@ -1,0 +1,15 @@
+{% extends "masiscam/base.html" %}
+{% block content %}
+<div class="container py-4"><section class="card masiscam-card"><div class="card-body p-3 p-md-4">
+  <h1 class="h4">{% if pendientes %}Reintentar carga{% else %}Adjuntar archivos{% endif %}</h1>
+  <p class="text-muted">{{ equipo.nombre }} · {{ registro.get_tipo_display }} · {{ registro.fecha|date:"d/m/Y" }}</p>
+  {% if pendientes %}<p>Vuelva a seleccionar los archivos pendientes. Los archivos ya cargados se conservarán sin duplicarse.</p><ul class="registro-cargas">{% for archivo in pendientes %}<li><span>{{ archivo.nombre }}</span><small class="text-muted">{{ archivo.get_estado_display }}</small></li>{% endfor %}</ul>{% endif %}
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}{{ form.non_field_errors }}
+    <label class="form-label" for="{{ form.archivos.id_for_label }}">{{ form.archivos.label }}</label>
+    {{ form.archivos }}{{ form.archivos.errors }}
+    <p class="form-text">Hasta 10 archivos PDF o imágenes JPG, PNG y WebP. Puede reintentar sin seleccionar archivos para comprobar las cargas ya enviadas.</p>
+    <div class="d-flex flex-wrap gap-2 mt-3"><button class="btn btn-primary" type="submit">Guardar y comprobar</button><a class="btn btn-outline-secondary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}#historial-registros">Volver</a></div>
+  </form>
+</div></section></div>
+{% endblock %}

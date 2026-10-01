@@ -412,6 +412,37 @@
 
 .sistema-masiscam .masiscam-producto-icono{display:inline-flex;align-items:center;justify-content:center;flex:0 0 3rem;width:3rem;height:3rem;border-radius:.75rem;background:#edf2f7;color:var(--masiscam-steel);font-family:"Segoe UI Symbol",sans-serif;font-size:2.65rem;line-height:1;}
 
+/* Registros: documentos y acciones separados, filas compactas en móviles. */
+.registros-tabla-contenedor{max-width:100%;overflow-x:auto;}
+.ficha-registros{width:100%;font-size:.875rem;table-layout:fixed;}
+.ficha-registros th{font-size:.75rem;text-transform:uppercase;letter-spacing:.035em;color:#5e7083;background:#f4f7fa;}
+.ficha-registros th,.ficha-registros td{padding:.65rem .6rem;vertical-align:top;overflow-wrap:anywhere;}
+.ficha-registros th:nth-child(1){width:7rem;}
+.ficha-registros th:nth-child(2){width:8rem;}
+.ficha-registros th:nth-child(3){width:8rem;}
+.ficha-registros th:nth-child(5){width:13rem;}
+.registro-fecha{white-space:nowrap;font-variant-numeric:tabular-nums;}
+.registro-documentos,.registro-cargas{list-style:none;padding:0;margin:0;display:grid;gap:.35rem;}
+.registro-documentos a{display:inline-block;max-width:100%;overflow-wrap:anywhere;text-underline-offset:.15em;}
+.registro-cargas{margin-top:.5rem;}
+.registro-cargas li{display:flex;flex-wrap:wrap;gap:.25rem .5rem;overflow-wrap:anywhere;}
+.registro-botones{display:flex;flex-wrap:wrap;gap:.4rem;padding-left:.65rem;border-left:1px solid #e4e9ee;}
+.ficha-registros .registro-botones .btn{display:inline-flex;align-items:center;gap:.3rem;min-height:30px;padding:.3rem .5rem;font-size:.75rem;line-height:1.3;text-align:left;white-space:normal;}
+.registro-botones .btn-close{width:.6rem;height:.6rem;padding:0;flex-shrink:0;}
+.ficha-registros .badge{font-size:.7rem;white-space:normal;line-height:1.3;}
+.ficha-registros .registro-vacio{padding:1rem .6rem;text-align:center;}
+@media(max-width:767px){
+  .ficha-registros,.ficha-registros tbody{display:block;}
+  .ficha-registros thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}
+  .ficha-registros tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:.5rem .75rem;padding:.8rem 0;border-bottom:1px solid #e4e9ee;}
+  .ficha-registros tr:last-child{border-bottom:0;}
+  .ficha-registros td{display:block;min-width:0;padding:0;border:0;background:transparent;box-shadow:none;}
+  .ficha-registros td[data-label]::before{content:attr(data-label);display:block;margin-bottom:.2rem;font-size:.7rem;color:#5e7083;}
+  .ficha-registros .registro-estado,.ficha-registros .registro-archivos,.ficha-registros .registro-acciones,.ficha-registros .registro-vacio{grid-column:1/-1;}
+  .registro-botones{padding:.5rem 0 0;border-left:0;border-top:1px solid #edf1f5;}
+}
+@media print{.registro-acciones{display:none!important;}.registro-documentos a{color:inherit;}}
+
 /* Product forms share the existing modal, with space for their full field set. */
 .masiscam-form-modal.masiscam-form-modal--wide[open]{width:min(1180px,96vw);max-width:1180px;max-height:92vh;max-height:92dvh}
 .masiscam-form-modal--wide .masiscam-form-modal__body{overflow-x:hidden}

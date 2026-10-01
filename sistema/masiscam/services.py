@@ -109,11 +109,10 @@ class GoogleDriveService:
             carpeta = propias[0]  # Recover a successful create whose response was lost.
         else:
             nombre = registro.get_tipo_display()
-            patron = re.compile(re.escape(nombre) + r" (\d+)$", re.IGNORECASE)
-            numeros = [int(m.group(1)) for f in carpetas if (m := patron.fullmatch(f["name"]))]
-            secuencia = max(numeros, default=0) + 1
+            if registro.secuencia is None:
+                raise ValueError("Reserve la secuencia antes de crear la carpeta.")
             carpeta = self.drive.files().create(
-                body={"name": f"{nombre} {secuencia:03d}",
+                body={"name": f"{registro.fecha} - {nombre} {registro.secuencia:03d}",
                       "mimeType": "application/vnd.google-apps.folder", "parents": [equipo_folder_id],
                       "appProperties": {"masiscam_registro": clave}},
                 fields="id,webViewLink", supportsAllDrives=True,
@@ -277,6 +276,21 @@ def sincronizar_carpeta_registro(registro_id):
         return registro.drive_folder_id
     try:
         equipo_folder_id = sincronizar_carpeta_equipo(registro.equipo_id)
+        # Commit the sequence before the remote write, including on lost responses.
+        with transaction.atomic():
+            Empresa.objects.select_for_update().order_by("pk").first()
+            registro = RegistroEquipo.objects.select_for_update().get(pk=registro_id)
+            if registro.drive_folder_id:
+                return registro.drive_folder_id
+            if registro.secuencia is None:
+                from django.db.models import Max
+                carpetas = GoogleDriveService().listar_carpetas(equipo_folder_id)
+                patron = re.compile(r"(?:\d{4}-\d{2}-\d{2} - )?" + re.escape(registro.get_tipo_display()) + r" (\d+)$", re.IGNORECASE)
+                numeros = [int(m.group(1)) for f in carpetas if (m := patron.fullmatch(f["name"]))]
+                maximo = RegistroEquipo.objects.filter(equipo_id=registro.equipo_id, tipo=registro.tipo).aggregate(
+                    valor=Max("secuencia"))["valor"] or 0
+                registro.secuencia = max([maximo, *numeros]) + 1
+                registro.save(update_fields=["secuencia"])
         with transaction.atomic():
             Empresa.objects.select_for_update().order_by("pk").first()
             registro = RegistroEquipo.objects.select_for_update().get(pk=registro_id)

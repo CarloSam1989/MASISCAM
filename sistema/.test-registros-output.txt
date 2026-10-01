@@ -1,0 +1,27 @@
+﻿.\.venv312\Scripts\python.exe : Creating test database for alias 'default'...
+En línea: 2 Carácter: 1
++ .\.venv312\Scripts\python.exe manage.py test masiscam.test_registros  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Creating test d...as 'default'...:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+.....................................................Error creando carpeta Drive del registro 3
+No se pudo sincronizar Drive del registro 3
+Error creando carpeta Drive del registro 3
+No se pudo sincronizar Drive del registro 3
+Error creando carpeta Drive del registro 3
+No se pudo sincronizar Drive del registro 3
+...........Error creando carpeta Drive del registro 2
+No se pudo sincronizar Drive del registro 2
+Error creando carpeta Drive del registro 2
+No se pudo sincronizar Drive del registro 2
+...................................s
+----------------------------------------------------------------------
+Ran 100 tests in 24.092s
+
+OK (skipped=1)
+Destroying test database for alias 'default'...
+
+Found 100 test(s).
+System check identified no issues (0 silenced).

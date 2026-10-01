@@ -176,9 +176,9 @@ class DriveEquipoTests(TestCase):
         self.assertEqual(padre["id"], self.antiguo.drive_folder_id)
         for registro in RegistroEquipo.objects.all():
             self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [padre["id"]])
-            self.assertEqual(registro.get_tipo_display() + " 001", self.archivos[registro.drive_folder_id]["name"])
+            self.assertEqual(f"{registro.fecha} - {registro.get_tipo_display()} 001", self.archivos[registro.drive_folder_id]["name"])
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
-        for texto in ["Nuevo", "Asistencia", "Garantía", "Sin documentos", "Disponible", "registro-modal", "Editar ficha", "Ver informe", "Descargar QR", "Imprimir etiqueta"]:
+        for texto in ["Nuevo", "Asistencia", "Garantía", "Sin documentos", "Adjuntar archivos", "registro-modal", "Editar ficha", "Ver informe", "Descargar QR", "Imprimir etiqueta"]:
             self.assertContains(response, texto)
         self.assertNotContains(response, "https://drive.google.com/")
         html = response.content.decode()
@@ -186,8 +186,8 @@ class DriveEquipoTests(TestCase):
         self.assertNotIn("Historial / Registros", html)
         self.assertNotIn("Observación", tabla)
         for tipo in RegistroEquipo.Tipo.labels:
-            self.assertIn("<td>" + tipo + "</td>", tabla)
-        self.assertEqual(tabla.count("Sin documentos"), 5)
+            self.assertIn('<td class="registro-tipo" data-label="Tipo">' + tipo + "</td>", tabla)
+        self.assertEqual(tabla.count('<span class="text-muted">Sin documentos</span>'), 5)
         RegistroEquipo.objects.create(equipo=self.antiguo, tipo="ASISTENCIA", fecha="2026-09-16")
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         tabla = response.content.decode().split('id="historial-registros"', 1)[1].split('<dialog', 1)[0]
@@ -328,7 +328,7 @@ class DriveEquipoTests(TestCase):
         self.assertEqual([[celda.replace(" Reintentar Drive", "") for celda in fila] for fila in interna.filas], externa.filas)
         self.assertEqual(len(externa.filas), 4)
         for tipo in ["Nuevo", "Asistencia", "Garantía", "REVISION"]:
-            self.assertContains(informe, "<td>" + tipo + "</td>")
+            self.assertContains(informe, '<td class="registro-tipo" data-label="Tipo">' + tipo + "</td>")
         self.assertNotContains(informe, "https://drive.google.com/")
         self.assertNotContains(informe, "NO MOSTRAR OBSERVACION")
         self.assertNotContains(informe, "Reintentar Drive")
@@ -464,7 +464,7 @@ class DriveEquipoTests(TestCase):
             registro.refresh_from_db()
             equipo.refresh_from_db()
             self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [equipo.drive_folder_id])
-            self.assertEqual(self.archivos[registro.drive_folder_id]["name"], "Mantenimiento 001")
+            self.assertEqual(self.archivos[registro.drive_folder_id]["name"], f"{registro.fecha} - Mantenimiento 001")
             registros.append(registro)
         self.assertEqual(len({r.drive_folder_id for r in registros}), 5)
         segundo = RegistroEquipo.objects.create(equipo=registros[0].equipo, tipo="MANTENIMIENTO", fecha="2026-09-23")
@@ -484,7 +484,7 @@ class DriveEquipoTests(TestCase):
         registro.refresh_from_db()
         self.antiguo.refresh_from_db()
         self.assertTrue(registro.drive_folder_id)
-        self.assertEqual(self.archivos[registro.drive_folder_id]["name"], "Mantenimiento 001")
+        self.assertEqual(self.archivos[registro.drive_folder_id]["name"], f"{registro.fecha} - Mantenimiento 001")
         self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [self.antiguo.drive_folder_id])
 
     @override_settings(GOOGLE_DRIVE_ENABLED=True)
@@ -497,7 +497,7 @@ class DriveEquipoTests(TestCase):
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         registro.refresh_from_db()
         self.assertTrue(registro.drive_folder_id)
-        self.assertEqual(self.archivos[registro.drive_folder_id]["name"], "Mantenimiento 001")
+        self.assertEqual(self.archivos[registro.drive_folder_id]["name"], f"{registro.fecha} - Mantenimiento 001")
         self.assertContains(response, "Sin documentos")
         total = len(self.archivos)
         views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
@@ -514,7 +514,7 @@ class DriveEquipoTests(TestCase):
             for secuencia in range(1, 4):
                 registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo=tipo, fecha="2026-01-01")
                 folder = sincronizar_carpeta_registro(registro.pk)
-                self.assertEqual(self.archivos[folder]["name"], f"{nombre} {secuencia:03d}")
+                self.assertEqual(self.archivos[folder]["name"], f"{registro.fecha} - {nombre} {secuencia:03d}")
                 self.assertNotEqual(folder, anterior["id"])
                 registro.refresh_from_db()
                 self.assertEqual(str(registro.fecha), "2026-01-01")
@@ -533,7 +533,7 @@ class DriveEquipoTests(TestCase):
         total = len(self.archivos)
         folder = sincronizar_carpeta_registro(registro.pk)
         self.assertEqual(len(self.archivos), total)
-        self.assertEqual(self.archivos[folder]["name"], "Mantenimiento 001")
+        self.assertEqual(self.archivos[folder]["name"], f"{registro.fecha} - Mantenimiento 001")
 
     def test_secuencia_considera_papelera_y_todas_las_paginas(self):
         from .models import RegistroEquipo
@@ -546,5 +546,5 @@ class DriveEquipoTests(TestCase):
                 "files": [{"id": "first", "name": "Nuevo 001"}], "nextPageToken": "page2"})
         self.api.files().list.side_effect = listar
         folder = sincronizar_carpeta_registro(registro.pk)
-        self.assertEqual(self.archivos[folder]["name"], "Nuevo 003")
+        self.assertEqual(self.archivos[folder]["name"], f"{registro.fecha} - Nuevo 003")
         self.assertEqual(self.archivos[folder]["parents"], [root])

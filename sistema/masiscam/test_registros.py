@@ -162,7 +162,7 @@ class RegistroActionsTests(TestCase):
             for view in ("ficha_detalle", "equipo_informe"):
                 response = self.client.get(reverse("masiscam:" + view, args=[self.equipo.pk]))
                 self.assertEqual([r.pk for r in response.context["registros"]],
-                                 [nuevo.pk, self.registro.pk, self.otro.pk, antiguo.pk])
+                                 [nuevo.pk, self.registro.pk, self.otro.pk, antiguo.pk] if user == self.admin else [self.registro.pk])
 
     def test_nombre_descarga_protegida_admin_cliente_y_equipo_ajeno(self):
         private = reverse("masiscam:equipo_documento_privado", args=[self.equipo.pk, "pdf"])
@@ -217,7 +217,7 @@ class ConcurrentRecordFoldersTests(TransactionTestCase):
             results = list(pool.map(lambda _: create(), range(2)))
         self.assertEqual(len({folder for _, folder in results}), 2)
         self.assertEqual({self.archivos[folder]["name"] for _, folder in results},
-                         {"Mantenimiento 001", "Mantenimiento 002"})
+                         {"2026-09-20 - Mantenimiento 001", "2026-09-20 - Mantenimiento 002"})
         count = len(self.archivos)
         for pk, folder in results:
             self.assertEqual(sincronizar_carpeta_registro(pk), folder)
