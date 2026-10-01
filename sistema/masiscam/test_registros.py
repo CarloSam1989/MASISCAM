@@ -49,8 +49,18 @@ class RegistroActionsTests(TestCase):
                             pending.append(n["id"])
                 return self.nodes[fileId].copy()
             return MagicMock(execute=execute)
+        def eliminar(fileId, **kw):
+            def execute():
+                pendientes = [fileId]
+                while pendientes:
+                    actual = pendientes.pop()
+                    pendientes.extend(n["id"] for n in self.nodes.values() if n["parents"] == [actual])
+                    self.nodes.pop(actual, None)
+                return {}
+            return MagicMock(execute=execute)
         self.api.files().list.side_effect = listar
         self.api.files().update.side_effect = actualizar
+        self.api.files().delete.side_effect = eliminar
         self.service = object.__new__(GoogleDriveService)
         self.service.drive, self.service.shared_drive_id = self.api, ""
         for path in ("masiscam.views.GoogleDriveService", "masiscam.drive_documents.GoogleDriveService"):
@@ -72,18 +82,17 @@ class RegistroActionsTests(TestCase):
         csrf_client = Client(enforce_csrf_checks=True)
         csrf_client.force_login(self.admin)
         self.assertEqual(csrf_client.post(self.url(), {"confirmar": "eliminar"}).status_code, 403)
-        self.api.files().update.assert_not_called()
+        self.api.files().delete.assert_not_called()
         self.assertTrue(RegistroEquipo.objects.filter(pk=self.registro.pk).exists())
 
     def test_admin_elimina_carpeta_contenido_y_registro_y_audita(self):
         response = self.client.post(self.url(), {"confirmar": "eliminar"})
         self.assertEqual(response.status_code, 302)
-        self.api.files().update.assert_called_once_with(
-            fileId="record", body={"trashed": True}, supportsAllDrives=True)
+        self.api.files().delete.assert_called_once_with(fileId="record", supportsAllDrives=True)
         for node in ("record", "nested", "pdf"):
-            self.assertTrue(self.nodes[node]["trashed"])
+            self.assertNotIn(node, self.nodes)
         for node in ("equipment-root", "sibling"):
-            self.assertFalse(self.nodes[node].get("trashed", False))
+            self.assertIn(node, self.nodes)
         self.assertFalse(RegistroEquipo.objects.filter(pk=self.registro.pk).exists())
         self.otro.refresh_from_db()
         self.equipo.refresh_from_db()
@@ -94,10 +103,11 @@ class RegistroActionsTests(TestCase):
         self.assertEqual(audit.objeto_id, str(self.registro.pk))
         self.assertEqual(audit.detalle["fecha"], "2026-09-20")
         self.assertEqual(audit.detalle["drive_folder_id"], "record")
+        self.assertEqual(audit.detalle["destino"], "eliminacion_permanente")
 
     def test_fallo_drive_conserva_datos_y_muestra_error(self):
         original = RegistroEquipo.objects.values().get(pk=self.registro.pk)
-        self.api.files().update.side_effect = TimeoutError("private provider details")
+        self.api.files().delete.side_effect = TimeoutError("private provider details")
         response = self.client.post(self.url(), {"confirmar": "eliminar"}, follow=True)
         self.assertContains(response, "Se conservaron los datos del registro")
         self.assertNotContains(response, "private provider details")
@@ -107,7 +117,7 @@ class RegistroActionsTests(TestCase):
     def test_fallo_auditoria_no_toca_drive(self):
         with patch("masiscam.views.auditar", side_effect=RuntimeError("database unavailable")):
             self.assertEqual(self.client.post(self.url(), {"confirmar": "eliminar"}).status_code, 302)
-        self.api.files().update.assert_not_called()
+        self.api.files().delete.assert_not_called()
         self.assertTrue(RegistroEquipo.objects.filter(pk=self.registro.pk).exists())
 
     def test_cliente_y_tecnico_no_pueden_eliminar_ni_ver_boton(self):
@@ -118,8 +128,8 @@ class RegistroActionsTests(TestCase):
             for method in (self.client.get, self.client.post):
                 self.assertEqual(method(self.url(), {"confirmar": "eliminar"}).status_code, 403)
             response = self.client.get(reverse("masiscam:ficha_detalle", args=[self.equipo.pk]))
-            self.assertNotContains(response, "Eliminar carpeta y registro")
-        self.api.files().update.assert_not_called()
+            self.assertNotContains(response, "Eliminar Registro")
+        self.api.files().delete.assert_not_called()
 
     def test_registro_de_otro_equipo_y_otra_empresa_no_se_elimina(self):
         self.assertEqual(self.client.post(self.url(equipo=self.equipo_ajeno.pk), {"confirmar": "eliminar"}).status_code, 404)
@@ -128,7 +138,7 @@ class RegistroActionsTests(TestCase):
         self.proyecto.empresa = empresa
         self.proyecto.save()
         self.assertEqual(self.client.post(self.url(), {"confirmar": "eliminar"}).status_code, 404)
-        self.api.files().update.assert_not_called()
+        self.api.files().delete.assert_not_called()
 
     def test_protege_raices_carpetas_compartidas_y_registros_anidados(self):
         for folder in ("configured-root", "equipment-root", "sibling"):
@@ -139,20 +149,20 @@ class RegistroActionsTests(TestCase):
         RegistroEquipo.objects.filter(pk=self.otro.pk).update(drive_folder_id="nested")
         self.assertEqual(self.client.post(self.url(), {"confirmar": "eliminar"}).status_code, 302)
         self.assertTrue(RegistroEquipo.objects.filter(pk=self.registro.pk).exists())
-        self.api.files().update.assert_not_called()
+        self.api.files().delete.assert_not_called()
 
     def test_carpeta_movida_fuera_del_equipo_no_se_elimina(self):
         self.nodes["record"]["parents"] = ["foreign-root"]
         self.client.post(self.url(), {"confirmar": "eliminar"})
         self.assertTrue(RegistroEquipo.objects.filter(pk=self.registro.pk).exists())
-        self.api.files().update.assert_not_called()
+        self.api.files().delete.assert_not_called()
 
-    def test_reintento_tras_respuesta_perdida_no_borra_otro_registro(self):
+    def test_reintento_tras_respuesta_perdida_borra_solo_el_registro_validado(self):
         self.nodes["record"]["trashed"] = True
         self.client.post(self.url(), {"confirmar": "eliminar"})
         self.assertFalse(RegistroEquipo.objects.filter(pk=self.registro.pk).exists())
         self.assertTrue(RegistroEquipo.objects.filter(pk=self.otro.pk).exists())
-        self.api.files().update.assert_not_called()
+        self.api.files().delete.assert_called_once_with(fileId="record", supportsAllDrives=True)
 
     def test_ficha_informe_ordenan_por_fecha_del_formulario(self):
         nuevo = RegistroEquipo.objects.create(equipo=self.equipo, tipo="NUEVO", fecha="2026-09-30")

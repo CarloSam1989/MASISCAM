@@ -20,8 +20,8 @@
               {% if registro.archivos_pendientes %}<ul class="registro-cargas">{% for archivo in registro.archivos_pendientes %}<li><span>{{ archivo.nombre }}</span><small class="text-muted">{{ archivo.get_estado_display }}</small></li>{% endfor %}</ul>{% endif %}
             </td>
             {% if not informe and puede_editar %}<td class="registro-acciones" data-label="Acciones"><div class="registro-botones">
-              <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:registro_reintentar' equipo.pk registro.pk %}"><span aria-hidden="true">{% if registro.error_carga or registro.carga_pendiente %}&#8635;{% else %}+{% endif %}</span> {% if registro.error_carga or registro.carga_pendiente %}Reintentar carga{% else %}Adjuntar archivos{% endif %}</a>
-              {% if puede_archivar and registro.drive_folder_id %}<a class="btn btn-sm btn-outline-danger" href="{% url 'masiscam:registro_eliminar' equipo.pk registro.pk %}"><span class="btn-close" aria-hidden="true"></span> Eliminar carpeta y registro</a>{% endif %}
+              <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:registro_reintentar' equipo.pk registro.pk %}"><span aria-hidden="true">{% if registro.error_carga or registro.carga_pendiente %}&#8635;{% else %}+{% endif %}</span> Adjuntar Archivos</a>
+              {% if puede_archivar and registro.drive_folder_id %}<a class="btn btn-sm btn-outline-danger" href="{% url 'masiscam:registro_eliminar' equipo.pk registro.pk %}"><span class="btn-close" aria-hidden="true"></span> Eliminar Registro</a>{% endif %}
             </div></td>{% endif %}
           </tr>
         {% empty %}<tr><td colspan="{% if not informe and puede_editar %}5{% else %}4{% endif %}" class="text-muted registro-vacio">Este equipo aún no tiene registros.</td></tr>{% endfor %}</tbody>

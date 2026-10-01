@@ -429,16 +429,15 @@ def registro_eliminar(request, pk, registro_pk):
             auditar(empresa=request.empresa_activa, usuario=request.user, accion="REGISTRO_EQUIPO_ELIMINADO",
                     objeto=registro, proyecto=equipo.proyecto,
                     detalle={"equipo_id": equipo.pk, "tipo": registro.tipo, "fecha": str(registro.fecha),
-                             "drive_folder_id": registro.drive_folder_id, "destino": "papelera"})
+                             "drive_folder_id": registro.drive_folder_id, "destino": "eliminacion_permanente"})
             registro.delete()
-            if not carpeta.get("trashed"):
-                servicio.enviar_papelera(carpeta["id"])
+            servicio.eliminar_permanentemente(carpeta["id"])
     except ValueError as exc:
         messages.error(request, str(exc))
     except Exception:
         messages.error(request, "No se pudo completar la eliminacion en Drive. Se conservaron los datos del registro; intente nuevamente.")
     else:
-        messages.success(request, "Carpeta y contenido enviados a la papelera de Drive. Registro eliminado.")
+        messages.success(request, "Carpeta, contenido y registro eliminados permanentemente.")
     return redirect(reverse("masiscam:ficha_detalle", args=[pk]) + "#historial-registros")
 
 

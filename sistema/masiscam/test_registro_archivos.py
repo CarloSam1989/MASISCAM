@@ -179,7 +179,7 @@ class RegistroUploadTests(TestCase):
                 url = reverse("masiscam:" + view, args=[self.equipo.pk])
                 response = self.client.get(url)
                 self.assertEqual({r.pk for r in response.context["registros"]}, {self.registro.pk, disponible.pk})
-                self.assertNotContains(response, "Eliminar carpeta y registro")
+                self.assertNotContains(response, "Eliminar Registro")
             repair.assert_not_called()
         RegistroEquipo.objects.filter(pk__in=[self.registro.pk, disponible.pk]).update(drive_error="Error Drive")
         for view in ("ficha_detalle", "equipo_informe"):
@@ -192,7 +192,7 @@ class RegistroUploadTests(TestCase):
         self.assertEqual(len(response.context["registros"]), 5)
         self.assertContains(response, "Error de Drive")
         self.assertContains(response, "Pendiente")
-        self.assertContains(response, "Eliminar carpeta y registro")
+        self.assertContains(response, "Eliminar Registro")
 
     def test_client_cannot_upload_and_does_not_see_partially_failed_record(self):
         self.fallar = "dos.pdf"

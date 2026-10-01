@@ -178,7 +178,7 @@ class DriveEquipoTests(TestCase):
             self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [padre["id"]])
             self.assertEqual(f"{registro.fecha} - {registro.get_tipo_display()} 001", self.archivos[registro.drive_folder_id]["name"])
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
-        for texto in ["Nuevo", "Asistencia", "Garantía", "Sin documentos", "Adjuntar archivos", "registro-modal", "Editar ficha", "Ver informe", "Descargar QR", "Imprimir etiqueta"]:
+        for texto in ["Nuevo", "Asistencia", "Garantía", "Sin documentos", "Adjuntar Archivos", "registro-modal", "Editar ficha", "Ver informe", "Descargar QR", "Imprimir etiqueta"]:
             self.assertContains(response, texto)
         self.assertNotContains(response, "https://drive.google.com/")
         html = response.content.decode()

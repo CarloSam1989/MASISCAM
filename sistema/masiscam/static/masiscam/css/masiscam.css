@@ -420,7 +420,7 @@
 .ficha-registros th:nth-child(1){width:7.25rem;}
 .ficha-registros th:nth-child(2){width:9rem;}
 .ficha-registros th:nth-child(3){width:7.5rem;}
-.ficha-registros th:nth-child(5){width:12rem;}
+.ficha-registros th:nth-child(5){width:18rem;}
 .registro-fecha{white-space:nowrap;font-variant-numeric:tabular-nums;}
 .registro-fecha,.registro-tipo,.registro-estado{vertical-align:middle!important;}
 .registro-estado{text-align:center;}

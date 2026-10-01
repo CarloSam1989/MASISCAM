@@ -210,8 +210,8 @@ class GoogleDriveService:
         finally:
             media.stream().close()
 
-    def enviar_papelera(self, file_id):
-        self.drive.files().update(fileId=file_id, body={"trashed": True}, supportsAllDrives=True).execute()
+    def eliminar_permanentemente(self, file_id):
+        self.drive.files().delete(fileId=file_id, supportsAllDrives=True).execute()
 
 
 def auditar(*, empresa, usuario, accion, objeto, proyecto=None, detalle=None):
