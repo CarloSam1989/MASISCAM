@@ -1,20 +1,20 @@
 {% extends "masiscam/base.html" %}
 {% block content %}
-<div class="container py-4">
-  <h1 class="h3 mb-4">Mis productos{% if producto_nombre %} · {{ producto_nombre }}{% endif %}</h1>
+<div class="container py-3 cliente-productos">
+  <h1 class="h3 mb-3">Mis productos{% if producto_nombre %} · {{ producto_nombre }}{% endif %}</h1>
   {% include "masiscam/_productos_cards.html" %}
-  <form method="get" class="my-4">
+  <form method="get" class="my-3">
     <label for="q" class="form-label">Buscar por N° equipo, serie o ratio (Relación motriz)</label>
     <div class="input-group"><input id="q" name="q" value="{{ q }}" class="form-control"><button class="btn btn-primary">Buscar</button></div>
   </form>
   {% if equipos %}
   <div class="table-responsive card masiscam-card">
-    <table class="table table-hover align-middle mb-0 masiscam-table">
+    <table class="table table-hover align-middle mb-0 masiscam-table cliente-productos-tabla">
       <thead><tr><th>N.º equipo</th><th>Camaronera</th><th>Estación</th><th>Sector</th><th>Marca</th><th>Modelo</th><th>Serie</th><th>Potencia</th><th>Acciones</th></tr></thead>
       <tbody>{% for equipo in equipos %}
         <tr>
-          <td class="fw-bold">{{ equipo.nombre }}</td><td>{{ equipo.proyecto.nombre }}</td><td>{{ equipo.ubicacion|default:"—" }}</td><td>{{ equipo.sector|default:"—" }}</td><td>{{ equipo.marca|default:"—" }}</td><td>{{ equipo.modelo|default:"—" }}</td><td>{{ equipo.numero_serie|default:"—" }}</td><td>{{ equipo.potencia_hp|default:"—" }}</td>
-          <td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a> <a class="btn btn-sm btn-outline-secondary" href="{% url 'masiscam:equipo_informe' equipo.pk %}" target="_blank" rel="noopener">Ver informe</a></td>
+          <td class="fw-bold" data-label="N.º equipo">{{ equipo.nombre }}</td><td data-label="Camaronera">{{ equipo.proyecto.nombre }}</td><td data-label="Estación">{{ equipo.ubicacion|default:"—" }}</td><td data-label="Sector">{{ equipo.sector|default:"—" }}</td><td data-label="Marca">{{ equipo.marca|default:"—" }}</td><td data-label="Modelo">{{ equipo.modelo|default:"—" }}</td><td data-label="Serie">{{ equipo.numero_serie|default:"—" }}</td><td data-label="Potencia">{{ equipo.potencia_hp|default:"—" }}</td>
+          <td class="cliente-productos-acciones" data-label="Acciones"><a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Ver ficha</a><a class="btn btn-sm btn-outline-secondary" href="{% url 'masiscam:equipo_informe' equipo.pk %}" target="_blank" rel="noopener">Ver informe</a></td>
         </tr>
       {% endfor %}</tbody>
     </table>

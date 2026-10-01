@@ -5,7 +5,7 @@
 <link rel="stylesheet" href="{% static 'masiscam/css/ficha_detalle.css' %}?v=registros-1">
 {% endblock %}
 {% block content %}
-<div class="container py-4 ficha-interna">
+<div class="container py-4 ficha-interna{% if es_cliente %} ficha-interna--cliente{% endif %}">
   <header class="ficha-cabecera mb-3">
     <div><div class="text-muted small">Ficha del equipo</div><h1 class="h3 mb-1">{{ equipo.nombre }}</h1><p class="text-muted mb-0">{{ equipo.proyecto.nombre }}</p></div>
     <div class="ficha-acciones">

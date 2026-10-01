@@ -192,7 +192,7 @@ class DriveEquipoTests(TestCase):
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         tabla = response.content.decode().split('id="historial-registros"', 1)[1].split('<dialog', 1)[0]
         self.assertEqual(tabla.count("<table "), 1)
-        self.assertLess(tabla.index("16/09/2026"), tabla.index("15/09/2026"))
+        self.assertLess(tabla.index("15/09/2026"), tabla.index("16/09/2026"))
         self.assertIn("Sin documentos", tabla)
 
     def test_registro_doble_envio_y_edicion_no_duplican(self):

@@ -341,6 +341,7 @@ def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, st
         placa = equipo.fotografia_placa
         placa_disponible = bool(placa and placa.storage.exists(placa.name))
     contexto = {"equipo": equipo, "placa_disponible": placa_disponible,
+                "es_cliente": bool(request.cliente_usuario),
                 "registros": equipo.registros.all(),
                 "registro_form": registro_form if registro_form is not None else RegistroEquipoForm()}
     contexto.update(_contexto_permisos(request))
@@ -557,7 +558,7 @@ def _contexto_documentos_drive(equipo, request=None, registros=True):
     contexto = {"documentos_drive": [], "error_documentos": False,
                 "puede_ver_documentos": permitido, "es_cliente": es_cliente}
     if registros:
-        contexto["registros"] = list(equipo.registros.prefetch_related("archivos").order_by("-fecha", "-pk")) if equipo.estado != Equipo.Estado.INACTIVO else []
+        contexto["registros"] = list(equipo.registros.prefetch_related("archivos").order_by("fecha", "secuencia", "pk")) if equipo.estado != Equipo.Estado.INACTIVO else []
         if permitido and not es_cliente and settings.GOOGLE_DRIVE_ENABLED:
             for registro in contexto["registros"]:
                 if not registro.drive_folder_id:

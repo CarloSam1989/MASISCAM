@@ -157,12 +157,17 @@ class RegistroActionsTests(TestCase):
     def test_ficha_informe_ordenan_por_fecha_del_formulario(self):
         nuevo = RegistroEquipo.objects.create(equipo=self.equipo, tipo="NUEVO", fecha="2026-09-30")
         antiguo = RegistroEquipo.objects.create(equipo=self.equipo, tipo="GARANTIA", fecha="2026-01-01")
+        secuencia_alta = RegistroEquipo.objects.create(
+            equipo=self.equipo, tipo="NUEVO", fecha="2026-09-15", secuencia=20)
+        secuencia_baja = RegistroEquipo.objects.create(
+            equipo=self.equipo, tipo="GARANTIA", fecha="2026-09-15", secuencia=10)
         for user in (self.admin, self.cliente_user):
             self.login_as(user)
             for view in ("ficha_detalle", "equipo_informe"):
                 response = self.client.get(reverse("masiscam:" + view, args=[self.equipo.pk]))
                 self.assertEqual([r.pk for r in response.context["registros"]],
-                                 [nuevo.pk, self.registro.pk, self.otro.pk, antiguo.pk] if user == self.admin else [self.registro.pk])
+                                 [antiguo.pk, self.otro.pk, secuencia_baja.pk, secuencia_alta.pk,
+                                  self.registro.pk, nuevo.pk] if user == self.admin else [self.registro.pk])
 
     def test_nombre_descarga_protegida_admin_cliente_y_equipo_ajeno(self):
         private = reverse("masiscam:equipo_documento_privado", args=[self.equipo.pk, "pdf"])

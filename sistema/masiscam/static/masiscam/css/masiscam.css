@@ -417,12 +417,14 @@
 .ficha-registros{width:100%;font-size:.875rem;table-layout:fixed;}
 .ficha-registros th{font-size:.75rem;text-transform:uppercase;letter-spacing:.035em;color:#5e7083;background:#f4f7fa;}
 .ficha-registros th,.ficha-registros td{padding:.65rem .6rem;vertical-align:top;overflow-wrap:anywhere;}
-.ficha-registros th:nth-child(1){width:7rem;}
-.ficha-registros th:nth-child(2){width:8rem;}
-.ficha-registros th:nth-child(3){width:8rem;}
-.ficha-registros th:nth-child(5){width:13rem;}
+.ficha-registros th:nth-child(1){width:7.25rem;}
+.ficha-registros th:nth-child(2){width:7rem;}
+.ficha-registros th:nth-child(3){width:7.5rem;}
+.ficha-registros th:nth-child(5){width:12rem;}
 .registro-fecha{white-space:nowrap;font-variant-numeric:tabular-nums;}
-.registro-documentos,.registro-cargas{list-style:none;padding:0;margin:0;display:grid;gap:.35rem;}
+.registro-fecha,.registro-tipo,.registro-estado{vertical-align:middle!important;}
+.registro-estado{text-align:center;}
+.registro-documentos,.registro-cargas{list-style:none;padding:0;margin:0;display:grid;gap:.2rem;}
 .registro-documentos a{display:inline-block;max-width:100%;overflow-wrap:anywhere;text-underline-offset:.15em;}
 .registro-cargas{margin-top:.5rem;}
 .registro-cargas li{display:flex;flex-wrap:wrap;gap:.25rem .5rem;overflow-wrap:anywhere;}
@@ -442,6 +444,29 @@
   .registro-botones{padding:.5rem 0 0;border-left:0;border-top:1px solid #edf1f5;}
 }
 @media print{.registro-acciones{display:none!important;}.registro-documentos a{color:inherit;}}
+
+.ficha-interna--cliente{padding-top:1rem!important;padding-bottom:1rem!important;}
+.ficha-interna--cliente .row.g-4{--bs-gutter-x:1.25rem;--bs-gutter-y:1.25rem;margin-bottom:1rem!important;}
+.ficha-interna--cliente>article>.card-body{padding:1rem!important;}
+
+.cliente-productos .masiscam-producto .card-body{padding:1rem!important;}
+.cliente-productos .masiscam-producto .display-6{font-size:1.8rem;margin:.5rem 0!important;}
+.sistema-masiscam main .cliente-productos .table-responsive>.cliente-productos-tabla{min-width:0;}
+.cliente-productos-tabla th,.cliente-productos-tabla td{padding:.55rem .5rem;}
+.cliente-productos-acciones{white-space:nowrap;}
+.cliente-productos-acciones .btn{min-height:38px;}
+@media(max-width:767px){
+    .cliente-productos .row{--bs-gutter-x:.75rem;--bs-gutter-y:.75rem;}
+    .cliente-productos .table-responsive{overflow:visible;border:0;box-shadow:none;background:transparent;}
+    .cliente-productos-tabla,.cliente-productos-tabla tbody{display:block;}
+    .cliente-productos-tabla thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}
+    .cliente-productos-tabla tbody{display:grid;gap:.65rem;}
+    .cliente-productos-tabla tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.45rem .75rem;padding:.75rem;border:1px solid #dce4ec;border-radius:8px;background:#fff;}
+    .cliente-productos-tabla td{display:block;min-width:0;padding:0;border:0;overflow-wrap:anywhere;}
+    .cliente-productos-tabla td[data-label]::before{content:attr(data-label);display:block;margin-bottom:.15rem;font-size:.7rem;color:#5e7083;}
+    .cliente-productos-tabla .cliente-productos-acciones{grid-column:1/-1;display:flex;gap:.5rem;white-space:normal;}
+    .cliente-productos-acciones .btn{display:inline-flex;flex:1;align-items:center;justify-content:center;min-width:0;min-height:40px;padding:.35rem .5rem;}
+}
 
 /* Product forms share the existing modal, with space for their full field set. */
 .masiscam-form-modal.masiscam-form-modal--wide[open]{width:min(1180px,96vw);max-width:1180px;max-height:92vh;max-height:92dvh}

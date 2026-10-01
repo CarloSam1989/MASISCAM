@@ -318,6 +318,6 @@ class ClienteAccessTests(TestCase):
             self.assertContains(response, '>Registros</h2>')
             for tipo in [*RegistroEquipo.Tipo.labels, "REVISION"]:
                 self.assertContains(response, '<td class="registro-tipo" data-label="Tipo">' + tipo + "</td>")
-            for dia in range(6, 1, -1):
-                self.assertLess(html.index(f"{dia:02}/09/2026"), html.index(f"{dia-1:02}/09/2026"))
+            for dia in range(1, 6):
+                self.assertLess(html.index(f"{dia:02}/09/2026"), html.index(f"{dia+1:02}/09/2026"))
             self.assertNotContains(response, "Reintentar Drive")
