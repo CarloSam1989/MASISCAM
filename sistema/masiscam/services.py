@@ -97,12 +97,78 @@ class GoogleDriveService:
         from .models import Equipo, RegistroEquipo
         if Equipo.objects.exclude(pk=registro.equipo_id).filter(drive_folder_id=equipo_folder_id).exists():
             raise ValueError("La carpeta del equipo esta compartida; requiere revision manual.")
-        nombre = nombre_carpeta_drive(registro.tipo)
-        carpeta = self.obtener_carpeta_equipo(nombre, equipo_folder_id)
-        if RegistroEquipo.objects.exclude(pk=registro.pk).filter(drive_folder_id=carpeta["id"]).exists():
-            carpeta = self.obtener_carpeta_equipo(f"{nombre} - REGISTRO-{registro.pk}", equipo_folder_id)
+        # The caller holds the existing database lock throughout allocation and save.
+        # Include trash so deleting a record does not immediately reuse its number.
+        carpetas = self.listar_carpetas(equipo_folder_id)
+        clave = str(registro.clave_creacion)
+        propias = [f for f in carpetas if not f.get("trashed")
+                   and f.get("appProperties", {}).get("masiscam_registro") == clave]
+        if len(propias) > 1:
+            raise ValueError("El registro tiene varias carpetas; requiere revision manual.")
+        if propias:
+            carpeta = propias[0]  # Recover a successful create whose response was lost.
+        else:
+            nombre = registro.get_tipo_display()
+            patron = re.compile(re.escape(nombre) + r" (\d+)$", re.IGNORECASE)
+            numeros = [int(m.group(1)) for f in carpetas if (m := patron.fullmatch(f["name"]))]
+            secuencia = max(numeros, default=0) + 1
+            carpeta = self.drive.files().create(
+                body={"name": f"{nombre} {secuencia:03d}",
+                      "mimeType": "application/vnd.google-apps.folder", "parents": [equipo_folder_id],
+                      "appProperties": {"masiscam_registro": clave}},
+                fields="id,webViewLink", supportsAllDrives=True,
+            ).execute()
         if RegistroEquipo.objects.exclude(pk=registro.pk).filter(drive_folder_id=carpeta["id"]).exists():
             raise ValueError("La carpeta del registro esta compartida; requiere revision manual.")
+        return carpeta
+
+    def listar_carpetas(self, padre):
+        padre = padre.replace("\\", "\\\\").replace("'", "\\'")
+        params = {"q": f"'{padre}' in parents and mimeType='application/vnd.google-apps.folder'",
+                  "fields": "nextPageToken,incompleteSearch,files(id,name,parents,trashed,appProperties,webViewLink)",
+                  "pageSize": 1000, "supportsAllDrives": True, "includeItemsFromAllDrives": True}
+        if self.shared_drive_id:
+            params.update(corpora="drive", driveId=self.shared_drive_id)
+        carpetas, paginas = [], set()
+        while True:
+            respuesta = self.drive.files().list(**params).execute()
+            if respuesta.get("incompleteSearch"):
+                raise ValueError("Drive no pudo listar todas las carpetas.")
+            carpetas.extend(respuesta.get("files", []))
+            token = respuesta.get("nextPageToken")
+            if not token:
+                return carpetas
+            if token in paginas:
+                raise ValueError("Drive devolvio una paginacion repetida.")
+            paginas.add(token)
+            params["pageToken"] = token
+
+    def validar_carpeta_registro_eliminable(self, registro):
+        from .models import Equipo, Proyecto, RegistroEquipo
+        carpeta_id = registro.drive_folder_id
+        equipo = registro.equipo
+        if not carpeta_id or not equipo.drive_folder_id:
+            raise ValueError("El registro no tiene una carpeta de Drive valida.")
+        protegidas = {settings.GOOGLE_DRIVE_ROOT_FOLDER_ID}
+        protegidas.update(Equipo.objects.exclude(drive_folder_id="").values_list("drive_folder_id", flat=True))
+        protegidas.update(Proyecto.objects.exclude(drive_folder_id="").values_list("drive_folder_id", flat=True))
+        protegidas.update(RegistroEquipo.objects.exclude(pk=registro.pk).exclude(
+            drive_folder_id="").values_list("drive_folder_id", flat=True))
+        if (carpeta_id in protegidas or Equipo.objects.exclude(pk=equipo.pk).filter(
+                drive_folder_id=equipo.drive_folder_id).exists()):
+            raise ValueError("La carpeta esta compartida o protegida; requiere revision manual.")
+        carpeta = self.drive.files().get(fileId=carpeta_id, fields="id,mimeType,parents,trashed",
+                                        supportsAllDrives=True).execute()
+        if (carpeta.get("mimeType") != "application/vnd.google-apps.folder"
+                or carpeta.get("parents") != [equipo.drive_folder_id]):
+            raise ValueError("La carpeta no pertenece directamente a este equipo.")
+        pendientes, vistas = [carpeta_id], set()
+        while pendientes:
+            actual = pendientes.pop()
+            if actual in protegidas or actual in vistas or len(vistas) >= 2000:
+                raise ValueError("La carpeta contiene referencias protegidas; requiere revision manual.")
+            vistas.add(actual)
+            pendientes.extend(f["id"] for f in self.listar_carpetas(actual))
         return carpeta
 
     def reservar_documento(self, documento_id):

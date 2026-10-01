@@ -137,14 +137,14 @@ class ClienteAccessTests(TestCase):
         self.assertNotContains(self.client.get(url, {"q": "no-coincide"}), self.equipo.nombre)
 
     @override_settings(GOOGLE_DRIVE_ENABLED=False)
-    def test_id_real_visible_admin_cliente_y_qr_existente_univoco(self):
+    def test_token_visible_admin_cliente_y_qr_existente_univoco(self):
         import qrcode
         originales = {equipo.pk: equipo.token_publico for equipo in (self.equipo, self.equipo_ajeno)}
         for usuario in (self.admin, self.cliente_user):
             self.login_as(usuario)
             for vista in ("ficha_detalle", "equipo_informe"):
                 response = self.client.get(reverse("masiscam:" + vista, args=[self.equipo.pk]))
-                self.assertContains(response, f"<dt>ID del equipo</dt><dd>{self.equipo.pk}</dd>", html=True)
+                self.assertContains(response, f"<dt>ID del producto</dt><dd>{self.equipo.token_publico}</dd>", html=True)
         self.login_as(self.admin)
         for equipo in (self.equipo, self.equipo_ajeno):
             with patch("qrcode.make", wraps=qrcode.make) as make:
@@ -154,14 +154,43 @@ class ClienteAccessTests(TestCase):
             Equipo.objects.filter(pk=equipo.pk).update(consulta_publica_activa=True)
             response = self.client.get(reverse("masiscam:equipo_publico", args=[equipo.token_publico]))
             self.assertEqual(response.context["equipo"].pk, equipo.pk)
-            self.assertContains(response, f"<dt>ID del equipo</dt><dd>{equipo.pk}</dd>", html=True)
+            self.assertContains(response, f"<dt>ID del producto</dt><dd>{equipo.token_publico}</dd>", html=True)
             self.login_as(self.admin)
+            response = self.client.post(reverse("masiscam:ficha_editar", args=[equipo.pk]), {
+                "cliente": equipo.cliente_id, "camaronera": equipo.proyecto.nombre,
+                "estacion": "E1", "sector": "S1", "numero_equipo": equipo.nombre,
+                "marca": "Marca", "modelo": "EDITADO", "numero_serie": equipo.numero_serie,
+                "potencia": "20 HP", "consulta_publica_activa": "on",
+            })
+            self.assertRedirects(response, reverse("masiscam:ficha_detalle", args=[equipo.pk]))
+            equipo.refresh_from_db()
+            self.assertEqual(equipo.modelo, "EDITADO")
+            self.assertEqual(equipo.token_publico, originales[equipo.pk])
+            response = self.client.get(reverse("masiscam:equipo_publico", args=[originales[equipo.pk]]))
+            self.assertEqual(response.context["equipo"].pk, equipo.pk)
         self.assertNotEqual(self.equipo.token_publico, self.equipo_ajeno.token_publico)
         self.assertTrue(Equipo._meta.get_field("token_publico").unique)
         self.assertEqual(dict(Equipo.objects.filter(pk__in=originales).values_list("pk", "token_publico")), originales)
         self.login_as(self.cliente_user)
         self.assertEqual(self.client.get(reverse("masiscam:equipo_publico", args=[self.equipo.token_publico])).status_code, 200)
         self.assertEqual(self.client.get(reverse("masiscam:equipo_publico", args=[self.equipo_ajeno.token_publico])).status_code, 403)
+
+    @override_settings(GOOGLE_DRIVE_ENABLED=False)
+    def test_id_cambia_solo_con_regenerar_qr(self):
+        self.login_as(self.admin)
+        original = self.equipo.token_publico
+        response = self.client.post(reverse("masiscam:equipo_publico_desactivar", args=[self.equipo.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.equipo.refresh_from_db()
+        self.assertFalse(self.equipo.consulta_publica_activa)
+        self.assertEqual(self.equipo.token_publico, original)
+        response = self.client.post(reverse("masiscam:equipo_token_regenerar", args=[self.equipo.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.equipo.refresh_from_db()
+        self.assertNotEqual(self.equipo.token_publico, original)
+        self.assertEqual(self.client.get(reverse("masiscam:equipo_publico", args=[original])).status_code, 404)
+        response = self.client.get(reverse("masiscam:equipo_publico", args=[self.equipo.token_publico]))
+        self.assertEqual(response.context["equipo"].pk, self.equipo.pk)
 
     def test_crear_usuario_cliente_desde_cliente(self):
         self.login_as(self.admin)

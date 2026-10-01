@@ -18,6 +18,7 @@ class PublicDriveDocumentsTests(TestCase):
         from .test_clientes import ClientesReductoresTests
         ClientesReductoresTests.setUpTestData.__func__(cls)
         cls.antiguo.consulta_publica_activa = True
+        cls.antiguo.cliente = cls.cliente
         cls.antiguo.drive_folder_id = "series-root"
         cls.antiguo.save()
         cls.other = Equipo.objects.create(proyecto=cls.proyecto, nombre="OTHER", drive_folder_id="other-root")
@@ -51,6 +52,7 @@ class PublicDriveDocumentsTests(TestCase):
         patcher = patch("masiscam.drive_documents.MediaIoBaseDownload", side_effect=downloader)
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.login()
 
     @staticmethod
     def node(id, name, mime, parent):
@@ -83,11 +85,11 @@ class PublicDriveDocumentsTests(TestCase):
                 self.assertNotIn(b"private provider", response.content)
         self.api.files().get_media.assert_not_called()
 
-    def test_pdf_inline_anonymous_and_safe_headers(self):
+    def test_pdf_attachment_authenticated_and_safe_headers(self):
         response = self.client.get(self.url())
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
-        self.assertTrue(response["Content-Disposition"].startswith("inline;"))
+        self.assertTrue(response["Content-Disposition"].startswith("attachment;"))
         self.assertEqual(response["Cache-Control"], "private, no-store")
         self.assertEqual(response["X-Content-Type-Options"], "nosniff")
         self.assertEqual(response["Referrer-Policy"], "no-referrer")
@@ -122,7 +124,7 @@ class PublicDriveDocumentsTests(TestCase):
         response = self.client.get(reverse("masiscam:equipo_publico", args=[self.antiguo.token_publico]))
         self.assertContains(response, "Documentos")
         self.assertContains(response, "informe.pdf")
-        self.assertContains(response, self.url())
+        self.assertContains(response, self.private_url())
         for text in ("ajeno.pdf", "programa.exe", "enlace.pdf", "drive.google.com", "series-root", "other-root"):
             self.assertNotContains(response, text)
 
@@ -216,6 +218,7 @@ class PublicDriveDocumentsTests(TestCase):
         return reverse("masiscam:equipo_documento_privado", args=[equipo or self.antiguo.pk, file])
 
     def test_internal_documents_require_login_and_ignore_public_flag(self):
+        self.client.logout()
         RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO", fecha="2026-09-22",
                                       drive_folder_id="internal")
         response = self.client.get(self.private_url())
@@ -263,7 +266,9 @@ class PublicDriveDocumentsTests(TestCase):
         self.assertIn(self.antiguo.token_publico, views._url_publica_equipo(self.antiguo))
         self.client.logout()
         self.assertEqual(self.client.get(old_url).status_code, 404)
-        self.assertEqual(self.client.get(reverse("masiscam:equipo_publico", args=[old])).status_code, 404)
+        self.assertEqual(self.client.get(reverse("masiscam:equipo_publico", args=[old])).status_code, 302)
+        self.assertEqual(self.client.get(self.url()).status_code, 302)
+        self.login()
         response = self.client.get(self.url())
         self.assertEqual(response.status_code, 200)
         response.close()
@@ -384,8 +389,6 @@ class PublicDriveDocumentsTests(TestCase):
         urls.append(reverse("masiscam:equipo_publico", args=[self.antiguo.token_publico]))
         for index, url in enumerate(urls):
             with self.subTest(url=url):
-                if index == 2:
-                    self.client.logout()
                 self.service_factory.reset_mock()
                 response = self.client.get(url)
                 self.assertEqual(response.status_code, 200)
@@ -403,9 +406,10 @@ class PublicDriveDocumentsTests(TestCase):
                 self.assertIn("nuevo.png", new)
                 self.assertNotIn("informe.pdf", new)
                 self.assertIn("Sin documentos", empty)
-                expected = self.url() if index == 2 else self.private_url()
+                expected = self.private_url()
                 self.assertIn(expected, maintenance)
-                self.assertEqual(html.count('aria-label="Ver informe.pdf"'), 1)
+                self.assertEqual(html.count('download>informe.pdf</a>'), 1)
+                self.assertNotIn('>Ver</a>', html)
 
     def test_inactive_equipment_hides_records_and_files_without_deleting(self):
         registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="MANTENIMIENTO",
@@ -451,19 +455,10 @@ class PublicDriveDocumentsTests(TestCase):
         RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="CLIENTE", cliente=self.cliente)
         for url in (ficha, ficha + "?foto=placa"):
             response = self.client.get(url)
-            self.assertTemplateUsed(response, "masiscam/equipo_inactivo.html")
-            self.assertTemplateUsed(response, "masiscam/base.html")
-            self.assertTrue(response.context["equipo_inactivo"])
-            self.assertContains(response, "Este equipo se encuentra actualmente inactivo.")
-            self.assertContains(response, 'id="appMenu"')
-            self.assertContains(response, "Mis productos")
-            self.assertContains(response, "Salir")
-            self.assertContains(response, reverse("accounts:logout"))
-            self.assertContains(response, "csrfmiddlewaretoken")
-            self.assertEqual(response["Cache-Control"], "private, no-store")
+            self.assertEqual(response.status_code, 403)
             for hidden in (self.antiguo.numero_serie, "Ver informe", "historial-registros",
                            "informe.pdf", "INFORMACIÓN GENERAL", "Descargar QR"):
-                self.assertNotContains(response, hidden)
+                self.assertNotContains(response, hidden, status_code=403)
         self.assertEqual(self.client.get(reverse("masiscam:equipo_informe", args=[self.antiguo.pk])).status_code, 403)
         self.assertEqual(self.client.get(self.private_url()).status_code, 403)
         self.service_factory.assert_not_called()

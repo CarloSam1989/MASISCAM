@@ -21,7 +21,7 @@ from .access import EquipoNoAsignado, masiscam_access_required, permiso_masiscam
 from .forms import ClienteForm, DocumentoForm, EquipoForm, FichaEquipoForm, ProyectoForm, VisibilidadProyectoForm, RegistroEquipoForm, datos_cliente
 from .models import Cliente, Auditoria, Documento, Equipo, Proyecto, RegistroEquipo, RolMasiscam
 from accounts.models import Perfil
-from .services import auditar, encolar_carpeta_registro, encolar_drive
+from .services import GoogleDriveService, auditar, encolar_carpeta_registro, encolar_drive
 from .tasks import crear_carpeta_proyecto, sincronizar_documento
 
 
@@ -384,6 +384,40 @@ def registro_reintentar(request, pk, registro_pk):
     return redirect(reverse("masiscam:ficha_detalle", args=[pk]) + "#historial-registros")
 
 
+@require_http_methods(["GET", "POST"])
+@permiso_masiscam_required("archivar")
+def registro_eliminar(request, pk, registro_pk):
+    equipo = _equipo(request, pk)
+    registro = get_object_or_404(RegistroEquipo, pk=registro_pk, equipo=equipo)
+    if request.method == "GET":
+        return render(request, "masiscam/registro_eliminar.html", {"equipo": equipo, "registro": registro})
+    if request.POST.get("confirmar") != "eliminar":
+        return HttpResponse("Debe confirmar la eliminacion.", status=400)
+    try:
+        with transaction.atomic():
+            # Same lock and order as folder creation: deletion cannot race a retry.
+            from accounts.models import Empresa
+            Empresa.objects.select_for_update().order_by("pk").first()
+            registro = RegistroEquipo.objects.select_for_update().select_related("equipo").get(
+                pk=registro_pk, equipo=equipo)
+            servicio = GoogleDriveService()
+            carpeta = servicio.validar_carpeta_registro_eliminable(registro)
+            auditar(empresa=request.empresa_activa, usuario=request.user, accion="REGISTRO_EQUIPO_ELIMINADO",
+                    objeto=registro, proyecto=equipo.proyecto,
+                    detalle={"equipo_id": equipo.pk, "tipo": registro.tipo, "fecha": str(registro.fecha),
+                             "drive_folder_id": registro.drive_folder_id, "destino": "papelera"})
+            registro.delete()
+            if not carpeta.get("trashed"):
+                servicio.enviar_papelera(carpeta["id"])
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    except Exception:
+        messages.error(request, "No se pudo completar la eliminacion en Drive. Se conservaron los datos del registro; intente nuevamente.")
+    else:
+        messages.success(request, "Carpeta y contenido enviados a la papelera de Drive. Registro eliminado.")
+    return redirect(reverse("masiscam:ficha_detalle", args=[pk]) + "#historial-registros")
+
+
 @permiso_masiscam_required("editar")
 def ficha_editar(request, pk):
     equipo = _equipo(request, pk)
@@ -499,7 +533,7 @@ def _contexto_documentos_drive(equipo, request=None, registros=True):
     contexto = {"documentos_drive": [], "error_documentos": False,
                 "puede_ver_documentos": permitido}
     if registros:
-        contexto["registros"] = list(equipo.registros.all()) if equipo.estado != Equipo.Estado.INACTIVO else []
+        contexto["registros"] = list(equipo.registros.order_by("-fecha", "-pk")) if equipo.estado != Equipo.Estado.INACTIVO else []
         if permitido and settings.GOOGLE_DRIVE_ENABLED:
             for registro in contexto["registros"]:
                 if not registro.drive_folder_id:
@@ -532,8 +566,7 @@ def _contexto_documentos_drive(equipo, request=None, registros=True):
 def equipo_publico_desactivar(request, pk):
     equipo = _equipo(request, pk)
     equipo.consulta_publica_activa = False
-    equipo.regenerar_token()
-    equipo.save(update_fields=["consulta_publica_activa", "token_publico", "actualizado_en"])
+    equipo.save(update_fields=["consulta_publica_activa", "actualizado_en"])
     auditar(empresa=request.empresa_activa, usuario=request.user, accion="CONSULTA_EQUIPO_DESACTIVADA", objeto=equipo)
     messages.success(request, "Consulta publica desactivada; el enlace anterior queda invalidado.")
     return redirect("masiscam:ficha_detalle", pk=pk)
@@ -563,7 +596,7 @@ def equipo_documento_drive(request, token, archivo_id):
     ).exclude(estado=Equipo.Estado.INACTIVO).exclude(proyecto__estado=Proyecto.Estado.ARCHIVADO).first()
     if equipo is None or not equipo.drive_folder_id:
         return _cabeceras_documentos(HttpResponse("Documento no disponible.", status=404))
-    return _servir_documento_drive(equipo, archivo_id)
+    return equipo_documento_privado(request, equipo.pk, archivo_id)
 
 
 def _servir_documento_drive(equipo, archivo_id):
@@ -573,7 +606,7 @@ def _servir_documento_drive(equipo, archivo_id):
         return _cabeceras_documentos(HttpResponse("Documento no disponible.", status=404))
     except Exception:
         return _cabeceras_documentos(HttpResponse("Documento no disponible temporalmente.", status=503))
-    response = FileResponse(archivo, as_attachment=False, filename=nombre, content_type=mime)
+    response = FileResponse(archivo, as_attachment=True, filename=nombre, content_type=mime)
     response["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'self'"
     return _cabeceras_documentos(response)
 

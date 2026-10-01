@@ -28,6 +28,7 @@ urlpatterns = [
     path("equipos/<int:pk>/informe/", views.equipo_informe, name="equipo_informe"),
     path("equipos/<int:pk>/registros/crear/", views.registro_crear, name="registro_crear"),
     path("equipos/<int:pk>/registros/<int:registro_pk>/reintentar/", views.registro_reintentar, name="registro_reintentar"),
+    path("equipos/<int:pk>/registros/<int:registro_pk>/eliminar/", views.registro_eliminar, name="registro_eliminar"),
     path("equipos/<int:pk>/editar/", views.ficha_editar, name="ficha_editar"),
     path("equipos/<int:pk>/archivar/", views.ficha_archivar, name="ficha_archivar"),
     path("equipos/<int:pk>/qr/", views.equipo_qr, name="equipo_qr"),

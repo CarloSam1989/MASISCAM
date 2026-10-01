@@ -22,7 +22,7 @@
   <section class="col-12 col-md-6 masiscam-info-bloque">
     <h2 class="h5">INFORMACIÓN GENERAL</h2>
     <dl class="masiscam-info-datos">
-      <dt>ID del equipo</dt><dd>{{ equipo.pk }}</dd>
+      <dt>ID del producto</dt><dd>{{ equipo.token_publico }}</dd>
       <dt>Razón social</dt><dd>{{ equipo.razon_social_cliente|default:"—"|linebreaksbr }}</dd>
       <dt>Camaronera</dt><dd>{{ equipo.proyecto.nombre|default:"—"|linebreaksbr }}</dd>
       <dt>RUC</dt><dd>{{ equipo.ruc_cliente|default:"—"|linebreaksbr }}</dd>

@@ -1,0 +1,13 @@
+{% extends "masiscam/base.html" %}
+{% block content %}
+<div class="card masiscam-card"><div class="card-body">
+  <h1 class="h4">Eliminar carpeta y registro</h1>
+  <p>Equipo: <strong>{{ equipo.nombre }}</strong></p>
+  <p>Registro: <strong>{{ registro.get_tipo_display }} — {{ registro.fecha|date:"d/m/Y" }}</strong></p>
+  <p>La carpeta y todo su contenido se enviarán a la papelera de Google Drive y se eliminará este registro del aplicativo.</p>
+  <form method="post">{% csrf_token %}
+    <button class="btn btn-danger" name="confirmar" value="eliminar">Confirmar eliminación</button>
+    <a class="btn btn-outline-secondary" href="{% url 'masiscam:ficha_detalle' equipo.pk %}">Cancelar</a>
+  </form>
+</div></div>
+{% endblock %}
