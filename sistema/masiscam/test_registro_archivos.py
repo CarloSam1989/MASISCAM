@@ -80,6 +80,32 @@ class RegistroUploadTests(TestCase):
     def retry_url(self, registro):
         return reverse("masiscam:registro_reintentar", args=[self.equipo.pk, registro.pk])
 
+    def test_create_without_files_succeeds_and_empty_record_is_admin_only(self):
+        from unittest.mock import ANY
+        with patch("masiscam.views.subir_archivos") as upload, \
+                patch("masiscam.views.encolar_revision") as review, \
+                patch("masiscam.views.messages.success") as success, \
+                patch("masiscam.views.messages.error") as error:
+            response = self.crear()
+        self.assertEqual(response.status_code, 302)
+        registro = self.ultimo()
+        self.assertEqual(registro.tipo, "MANTENIMIENTO")
+        self.assertEqual(str(registro.fecha), "2026-09-21")
+        self.assertFalse(registro.archivos.exists())
+        upload.assert_not_called()
+        review.assert_not_called()
+        success.assert_called_once_with(ANY, "Registro guardado. Puede adjuntar documentos más adelante.")
+        error.assert_not_called()
+
+        with patch("masiscam.views.encolar_carpeta_registro"), \
+                patch("masiscam.views.EquipoDriveDocuments.list", return_value=[]):
+            self.login_as(self.admin)
+            admin = self.client.get(reverse("masiscam:ficha_detalle", args=[self.equipo.pk]))
+            self.assertIn(registro.pk, [item.pk for item in admin.context["registros"]])
+            self.login_as(self.cliente_user)
+            cliente = self.client.get(reverse("masiscam:ficha_detalle", args=[self.equipo.pk]))
+            self.assertNotIn(registro.pk, [item.pk for item in cliente.context["registros"]])
+
     def test_multiple_upload_only_drive_and_metadata_no_permanent_local_copy(self):
         with TemporaryDirectory() as directory, override_settings(MEDIA_ROOT=Path(directory)/"media",
                 FILE_UPLOAD_TEMP_DIR=directory, FILE_UPLOAD_MAX_MEMORY_SIZE=1), patch("django.core.files.storage.FileSystemStorage.save") as save:

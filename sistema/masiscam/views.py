@@ -359,6 +359,7 @@ def registro_crear(request, pk):
     form = RegistroEquipoForm(request.POST, request.FILES)
     if not form.is_valid():
         return _render_ficha(request, equipo, registro_form=form, status=400)
+    archivos = form.cleaned_data["archivos"]
     with transaction.atomic():
         registro, creado = RegistroEquipo.objects.get_or_create(
             equipo=equipo, clave_creacion=form.cleaned_data["clave_creacion"],
@@ -367,8 +368,11 @@ def registro_crear(request, pk):
         if creado:
             auditar(empresa=request.empresa_activa, usuario=request.user, accion="REGISTRO_EQUIPO_CREADO",
                     objeto=registro, proyecto=equipo.proyecto)
-        registrar_archivos(registro, form.cleaned_data["archivos"])
-    if subir_archivos(registro, form.cleaned_data["archivos"]):
+        if archivos:
+            registrar_archivos(registro, archivos)
+    if not archivos:
+        messages.success(request, "Registro guardado. Puede adjuntar documentos más adelante.")
+    elif subir_archivos(registro, archivos):
         messages.success(request, "Registro guardado. Puede consultar el estado de Drive en el historial.")
     else:
         encolar_revision(registro.pk)
