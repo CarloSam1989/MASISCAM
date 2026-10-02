@@ -71,6 +71,13 @@ class RegistroArchivosForm(forms.Form):
     archivos = ArchivosRegistroField()
 
 
+class RegistroFechaForm(forms.ModelForm):
+    class Meta:
+        model = RegistroEquipo
+        fields = ("fecha",)
+        widgets = {"fecha": forms.DateInput(format="%Y-%m-%d", attrs={"type": "date", "class": "form-control"})}
+
+
 class RegistroEquipoForm(forms.ModelForm):
     clave_creacion = forms.UUIDField(initial=uuid.uuid4, widget=forms.HiddenInput)
     archivos = ArchivosRegistroField()

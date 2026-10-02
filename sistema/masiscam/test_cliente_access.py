@@ -317,7 +317,7 @@ class ClienteAccessTests(TestCase):
             self.assertEqual(html.count('class="table table-sm align-middle ficha-registros mb-0"'), 1)
             self.assertContains(response, '>Registros</h2>')
             for tipo in [*RegistroEquipo.Tipo.labels, "REVISION"]:
-                self.assertContains(response, '<td class="registro-tipo" data-label="Tipo">' + tipo + "</td>")
+                self.assertContains(response, '<td class="registro-tipo" data-label="Tipo">' + tipo + " #001</td>")
             for dia in range(1, 6):
                 self.assertLess(html.index(f"{dia:02}/09/2026"), html.index(f"{dia+1:02}/09/2026"))
             self.assertNotContains(response, "Reintentar Drive")

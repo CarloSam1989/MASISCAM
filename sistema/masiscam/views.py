@@ -18,10 +18,11 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 
 from .drive_documents import EquipoDriveDocuments, DocumentUnavailable
 from .access import EquipoNoAsignado, masiscam_access_required, permiso_masiscam_required, tiene_permiso
-from .forms import ClienteForm, DocumentoForm, EquipoForm, FichaEquipoForm, ProyectoForm, VisibilidadProyectoForm, RegistroEquipoForm, RegistroArchivosForm, datos_cliente
+from .forms import ClienteForm, DocumentoForm, EquipoForm, FichaEquipoForm, ProyectoForm, VisibilidadProyectoForm, RegistroEquipoForm, RegistroArchivosForm, RegistroFechaForm, datos_cliente
 from .models import ArchivoRegistro, Cliente, Auditoria, Documento, Equipo, Proyecto, RegistroEquipo, RolMasiscam
 from .registro_archivos import registrar_archivos, subir_archivos, encolar_revision, sincronizar_archivo
-from accounts.models import Perfil
+from .registro_orden import renumerar, sincronizar_grupo
+from accounts.models import Empresa, Perfil
 from .services import GoogleDriveService, auditar, encolar_carpeta_registro, encolar_drive
 from .tasks import crear_carpeta_proyecto, sincronizar_documento
 
@@ -361,11 +362,13 @@ def registro_crear(request, pk):
         return _render_ficha(request, equipo, registro_form=form, status=400)
     archivos = form.cleaned_data["archivos"]
     with transaction.atomic():
+        Empresa.objects.select_for_update().order_by("pk").first()
         registro, creado = RegistroEquipo.objects.get_or_create(
             equipo=equipo, clave_creacion=form.cleaned_data["clave_creacion"],
             defaults={campo: form.cleaned_data[campo] for campo in ("tipo", "fecha", "observacion")},
         )
         if creado:
+            renumerar(equipo.pk, registro.tipo)
             auditar(empresa=request.empresa_activa, usuario=request.user, accion="REGISTRO_EQUIPO_CREADO",
                     objeto=registro, proyecto=equipo.proyecto)
         if archivos:
@@ -395,7 +398,7 @@ def registro_reintentar(request, pk, registro_pk):
     with transaction.atomic():
         registro = RegistroEquipo.objects.select_for_update().get(pk=registro_pk, equipo=equipo)
         registrar_archivos(registro, form.cleaned_data["archivos"])
-    if not registro.drive_folder_id:
+    if not registro.drive_folder_id or registro.drive_error:
         encolar_carpeta_registro(registro.pk)
         registro.refresh_from_db()
     subir_archivos(registro, form.cleaned_data["archivos"])
@@ -410,6 +413,35 @@ def registro_reintentar(request, pk, registro_pk):
     else:
         messages.success(request, "Registro sincronizado con Drive.")
     return redirect(reverse("masiscam:ficha_detalle", args=[pk]) + "#historial-registros")
+
+
+@require_http_methods(["GET", "POST"])
+@permiso_masiscam_required("archivar")
+def registro_editar(request, pk, registro_pk):
+    equipo = _equipo(request, pk)
+    registro = get_object_or_404(RegistroEquipo, pk=registro_pk, equipo=equipo)
+    form = RegistroFechaForm(request.POST if request.method == "POST" else None, instance=registro)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            Empresa.objects.select_for_update().order_by("pk").first()
+            registro = RegistroEquipo.objects.select_for_update().get(pk=registro_pk, equipo=equipo)
+            anterior = registro.fecha
+            registro.fecha = form.cleaned_data["fecha"]
+            registro.save(update_fields=["fecha"])
+            renumerar(equipo.pk, registro.tipo, forzar=True)
+            auditar(empresa=request.empresa_activa, usuario=request.user, accion="REGISTRO_FECHA_EDITADA",
+                    objeto=registro, proyecto=equipo.proyecto,
+                    detalle={"fecha_anterior": str(anterior), "fecha": str(registro.fecha), "tipo": registro.tipo})
+        try:
+            sincronizar_grupo(equipo.pk, registro.tipo)
+        except Exception:
+            encolar_revision(registro.pk)
+            messages.error(request, "Fecha guardada. La reorganización de Drive quedó pendiente; conserve el registro y reintente desde Editar registro.")
+        else:
+            messages.success(request, "Fecha guardada. Numeración y carpetas de Drive reorganizadas.")
+        return redirect(reverse("masiscam:ficha_detalle", args=[pk]) + "#historial-registros")
+    return render(request, "masiscam/registro_editar.html", {"equipo": equipo, "registro": registro, "form": form},
+                  status=400 if request.method == "POST" else 200)
 
 
 @require_http_methods(["GET", "POST"])
@@ -435,6 +467,7 @@ def registro_eliminar(request, pk, registro_pk):
                     detalle={"equipo_id": equipo.pk, "tipo": registro.tipo, "fecha": str(registro.fecha),
                              "drive_folder_id": registro.drive_folder_id, "destino": "eliminacion_permanente"})
             registro.delete()
+            renumerar(equipo.pk, registro.tipo)
             servicio.eliminar_permanentemente(carpeta["id"])
     except ValueError as exc:
         messages.error(request, str(exc))
@@ -442,6 +475,11 @@ def registro_eliminar(request, pk, registro_pk):
         messages.error(request, "No se pudo completar la eliminacion en Drive. Se conservaron los datos del registro; intente nuevamente.")
     else:
         messages.success(request, "Carpeta, contenido y registro eliminados permanentemente.")
+        if settings.GOOGLE_DRIVE_ENABLED:
+            try:
+                sincronizar_grupo(equipo.pk, registro.tipo)
+            except Exception:
+                messages.error(request, "La numeración se actualizó; quedan carpetas por reorganizar en Drive.")
     return redirect(reverse("masiscam:ficha_detalle", args=[pk]) + "#historial-registros")
 
 
@@ -561,7 +599,7 @@ def _contexto_documentos_drive(equipo, request=None, registros=True):
     contexto = {"documentos_drive": [], "error_documentos": False,
                 "puede_ver_documentos": permitido, "es_cliente": es_cliente}
     if registros:
-        contexto["registros"] = list(equipo.registros.prefetch_related("archivos").order_by("fecha", "secuencia", "pk")) if equipo.estado != Equipo.Estado.INACTIVO else []
+        contexto["registros"] = list(equipo.registros.prefetch_related("archivos").order_by("fecha", "pk")) if equipo.estado != Equipo.Estado.INACTIVO else []
         if permitido and not es_cliente and settings.GOOGLE_DRIVE_ENABLED:
             for registro in contexto["registros"]:
                 if not registro.drive_folder_id:
@@ -584,7 +622,10 @@ def _contexto_documentos_drive(equipo, request=None, registros=True):
             folder = next((f for f in reversed(doc.get("folders", ())) if f in owners), None)
             if folder and owners[folder] == 1:
                 por_carpeta[folder].append(doc)
+        numeros = {}
         for registro in contexto["registros"]:
+            numeros[registro.tipo] = numeros.get(registro.tipo, 0) + 1
+            registro.numero_cronologico = numeros[registro.tipo]
             registro.documentos_drive = por_carpeta.get(registro.drive_folder_id, [])
             registro.archivos_pendientes = [a for a in registro.archivos.all() if a.estado != ArchivoRegistro.Estado.DISPONIBLE]
             registro.error_carga = bool(contexto["error_documentos"] or registro.drive_error or any(a.estado == ArchivoRegistro.Estado.ERROR for a in registro.archivos_pendientes))

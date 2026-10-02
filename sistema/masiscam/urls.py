@@ -27,6 +27,7 @@ urlpatterns = [
     path("equipos/<int:pk>/", views.ficha_detalle, name="ficha_detalle"),
     path("equipos/<int:pk>/informe/", views.equipo_informe, name="equipo_informe"),
     path("equipos/<int:pk>/registros/crear/", views.registro_crear, name="registro_crear"),
+    path("equipos/<int:pk>/registros/<int:registro_pk>/editar/", views.registro_editar, name="registro_editar"),
     path("equipos/<int:pk>/registros/<int:registro_pk>/reintentar/", views.registro_reintentar, name="registro_reintentar"),
     path("equipos/<int:pk>/registros/<int:registro_pk>/eliminar/", views.registro_eliminar, name="registro_eliminar"),
     path("equipos/<int:pk>/editar/", views.ficha_editar, name="ficha_editar"),

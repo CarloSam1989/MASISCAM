@@ -25,6 +25,8 @@ class DriveEquipoTests(TestCase):
         self.api = MagicMock()
         self.api.files().list.side_effect = self.listar
         self.api.files().create.side_effect = self.crear
+        self.api.files().get.side_effect = self.obtener
+        self.api.files().update.side_effect = self.actualizar
         self.servicio = object.__new__(GoogleDriveService)
         self.servicio.drive = self.api
         self.servicio.shared_drive_id = "shared-test"
@@ -53,6 +55,30 @@ class DriveEquipoTests(TestCase):
 
     def nuevo(self, **datos):
         return Equipo.objects.create(**dict({"proyecto": self.proyecto, "cliente": self.cliente, "nombre": "REDUCTOR-001"}, **datos))
+
+    def obtener(self, fileId, **kwargs):
+        from googleapiclient.errors import HttpError
+        from httplib2 import Response
+        def ejecutar():
+            if fileId not in self.archivos:
+                raise HttpError(Response({"status": "404"}), b"missing")
+            return self.archivos[fileId].copy()
+        return MagicMock(execute=ejecutar)
+
+    def actualizar(self, fileId, body, **kwargs):
+        def ejecutar():
+            self.archivos[fileId].update(body)
+            if kwargs.get("addParents"):
+                self.archivos[fileId]["parents"] = [kwargs["addParents"]]
+            return self.archivos[fileId].copy()
+        return MagicMock(execute=ejecutar)
+
+    def comprobar_jerarquia(self, folder, raiz):
+        fecha = self.archivos[self.archivos[folder]["parents"][0]]
+        tipo = self.archivos[fecha["parents"][0]]
+        self.assertRegex(fecha["name"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertEqual(tipo["parents"], [raiz])
+        self.assertTrue(self.archivos[folder]["name"].startswith(tipo["name"] + " "))
 
     def test_alta_formulario_encola_al_confirmar_y_edicion_no_encola(self):
         from .test_clientes import ClientesReductoresTests
@@ -170,13 +196,13 @@ class DriveEquipoTests(TestCase):
                 }), self.antiguo.pk)
             self.assertEqual(response.status_code, 302)
         self.assertEqual(RegistroEquipo.objects.count(), 5)
-        self.assertEqual(len(self.archivos), 8)
+        self.assertEqual(len(self.archivos), 18)
         self.antiguo.refresh_from_db()
         padre = next(f for f in self.archivos.values() if f["name"] == self.antiguo.numero_serie)
         self.assertEqual(padre["id"], self.antiguo.drive_folder_id)
         for registro in RegistroEquipo.objects.all():
-            self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [padre["id"]])
-            self.assertEqual(f"{registro.fecha} - {registro.get_tipo_display()} 001", self.archivos[registro.drive_folder_id]["name"])
+            self.comprobar_jerarquia(registro.drive_folder_id, padre["id"])
+            self.assertEqual(f"{registro.tipo} 001", self.archivos[registro.drive_folder_id]["name"])
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         for texto in ["Nuevo", "Asistencia", "Garantía", "Sin documentos", "Adjuntar Archivos", "registro-modal", "Editar ficha", "Ver informe", "Descargar QR", "Imprimir etiqueta"]:
             self.assertContains(response, texto)
@@ -186,7 +212,7 @@ class DriveEquipoTests(TestCase):
         self.assertNotIn("Historial / Registros", html)
         self.assertNotIn("Observación", tabla)
         for tipo in RegistroEquipo.Tipo.labels:
-            self.assertIn('<td class="registro-tipo" data-label="Tipo">' + tipo + "</td>", tabla)
+            self.assertIn('<td class="registro-tipo" data-label="Tipo">' + tipo + " #001</td>", tabla)
         self.assertEqual(tabla.count('<span class="text-muted">Sin documentos</span>'), 5)
         RegistroEquipo.objects.create(equipo=self.antiguo, tipo="ASISTENCIA", fecha="2026-09-16")
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
@@ -214,7 +240,7 @@ class DriveEquipoTests(TestCase):
                 registro.save()
             self.assertEqual(callbacks, [])
             self.assertEqual(sincronizar_carpeta_registro(registro.pk), carpeta)
-            self.assertEqual(len(self.archivos), 4)
+            self.assertEqual(len(self.archivos), 6)
 
     def test_registro_fallo_drive_guarda_y_reintento_desde_ficha(self):
         import uuid
@@ -231,9 +257,9 @@ class DriveEquipoTests(TestCase):
         self.assertFalse(registro.drive_folder_id)
         views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         registro.refresh_from_db()
-        self.assertEqual(registro.drive_folder_id, "folder-4")
+        self.assertEqual(registro.drive_folder_id, "folder-6")
         self.assertFalse(registro.drive_error)
-        self.assertEqual(len(self.archivos), 4)
+        self.assertEqual(len(self.archivos), 6)
 
     def test_registro_drive_caido_y_equipo_sin_drive(self):
         from .models import RegistroEquipo
@@ -253,7 +279,7 @@ class DriveEquipoTests(TestCase):
         sincronizar_carpeta_registro(registro.pk)
         registro.refresh_from_db()
         self.assertTrue(registro.drive_folder_id)
-        self.assertEqual(len(self.archivos), 4)
+        self.assertEqual(len(self.archivos), 6)
 
     def test_registro_valida_datos_y_empresa_y_rol(self):
         import uuid
@@ -328,7 +354,7 @@ class DriveEquipoTests(TestCase):
         self.assertEqual([[celda.replace(" Reintentar Drive", "") for celda in fila] for fila in interna.filas], externa.filas)
         self.assertEqual(len(externa.filas), 4)
         for tipo in ["Nuevo", "Asistencia", "Garantía", "REVISION"]:
-            self.assertContains(informe, '<td class="registro-tipo" data-label="Tipo">' + tipo + "</td>")
+            self.assertContains(informe, '<td class="registro-tipo" data-label="Tipo">' + tipo + " #001</td>")
         self.assertNotContains(informe, "https://drive.google.com/")
         self.assertNotContains(informe, "NO MOSTRAR OBSERVACION")
         self.assertNotContains(informe, "Reintentar Drive")
@@ -353,19 +379,18 @@ class DriveEquipoTests(TestCase):
             registro = RegistroEquipo.objects.create(equipo=equipo, tipo="NUEVO", fecha=date(2026, 9, 16))
             carpetas.append(sincronizar_carpeta_registro(registro.pk))
             equipo.refresh_from_db()
-            self.assertEqual(self.archivos[carpetas[-1]]["parents"], [equipo.drive_folder_id])
+            self.comprobar_jerarquia(carpetas[-1], equipo.drive_folder_id)
         self.assertNotEqual(*carpetas)
         equipo = equipos[0]
         Equipo.objects.filter(pk=equipo.pk).update(drive_folder_id="antigua")
         anteriores = deepcopy(self.archivos)
         nuevo = RegistroEquipo.objects.create(equipo=equipo, tipo="REPARACION", fecha=date(2026, 9, 18))
         nueva = sincronizar_carpeta_registro(nuevo.pk)
-        self.assertEqual(self.archivos[nueva]["parents"], ["antigua"])
+        self.comprobar_jerarquia(nueva, "antigua")
         for pk, archivo in anteriores.items():
             self.assertEqual(self.archivos[pk], archivo)
         equipo.refresh_from_db()
         self.assertEqual(self.servicio.crear_estructura_equipo(equipo)["id"], "antigua")
-        self.api.files().update.assert_not_called()
         self.api.files().delete.assert_not_called()
 
     def test_documentos_se_guardan_bajo_su_serie(self):
@@ -463,8 +488,8 @@ class DriveEquipoTests(TestCase):
                 registro = RegistroEquipo.objects.create(equipo=equipo, tipo="MANTENIMIENTO", fecha="2026-09-23")
             registro.refresh_from_db()
             equipo.refresh_from_db()
-            self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [equipo.drive_folder_id])
-            self.assertEqual(self.archivos[registro.drive_folder_id]["name"], f"{registro.fecha} - Mantenimiento 001")
+            self.comprobar_jerarquia(registro.drive_folder_id, equipo.drive_folder_id)
+            self.assertEqual(self.archivos[registro.drive_folder_id]["name"], "MANTENIMIENTO 001")
             registros.append(registro)
         self.assertEqual(len({r.drive_folder_id for r in registros}), 5)
         segundo = RegistroEquipo.objects.create(equipo=registros[0].equipo, tipo="MANTENIMIENTO", fecha="2026-09-23")
@@ -473,7 +498,6 @@ class DriveEquipoTests(TestCase):
         count = len(self.archivos)
         self.assertEqual(sincronizar_carpeta_registro(segundo.pk), folder)
         self.assertEqual(len(self.archivos), count)
-        self.api.files().update.assert_not_called()
         self.api.files().delete.assert_not_called()
 
     @override_settings(GOOGLE_DRIVE_ENABLED=True)
@@ -484,8 +508,8 @@ class DriveEquipoTests(TestCase):
         registro.refresh_from_db()
         self.antiguo.refresh_from_db()
         self.assertTrue(registro.drive_folder_id)
-        self.assertEqual(self.archivos[registro.drive_folder_id]["name"], f"{registro.fecha} - Mantenimiento 001")
-        self.assertEqual(self.archivos[registro.drive_folder_id]["parents"], [self.antiguo.drive_folder_id])
+        self.assertEqual(self.archivos[registro.drive_folder_id]["name"], "MANTENIMIENTO 001")
+        self.comprobar_jerarquia(registro.drive_folder_id, self.antiguo.drive_folder_id)
 
     @override_settings(GOOGLE_DRIVE_ENABLED=True)
     @patch("masiscam.views.EquipoDriveDocuments")
@@ -497,7 +521,7 @@ class DriveEquipoTests(TestCase):
         response = views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
         registro.refresh_from_db()
         self.assertTrue(registro.drive_folder_id)
-        self.assertEqual(self.archivos[registro.drive_folder_id]["name"], f"{registro.fecha} - Mantenimiento 001")
+        self.assertEqual(self.archivos[registro.drive_folder_id]["name"], "MANTENIMIENTO 001")
         self.assertContains(response, "Sin documentos")
         total = len(self.archivos)
         views.ficha_detalle(self.request_registro("ficha_detalle", post=False), self.antiguo.pk)
@@ -514,37 +538,38 @@ class DriveEquipoTests(TestCase):
             for secuencia in range(1, 4):
                 registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo=tipo, fecha="2026-01-01")
                 folder = sincronizar_carpeta_registro(registro.pk)
-                self.assertEqual(self.archivos[folder]["name"], f"{registro.fecha} - {nombre} {secuencia:03d}")
+                self.assertEqual(self.archivos[folder]["name"], f"{tipo} {secuencia:03d}")
                 self.assertNotEqual(folder, anterior["id"])
                 registro.refresh_from_db()
                 self.assertEqual(str(registro.fecha), "2026-01-01")
                 self.assertEqual(sincronizar_carpeta_registro(registro.pk), folder)
             self.assertEqual(self.archivos[anterior["id"]], original)
-        self.api.files().update.assert_not_called()
 
     def test_reintento_respuesta_perdida_recupera_la_misma_carpeta(self):
         from .models import RegistroEquipo
         from .services import sincronizar_carpeta_registro
         sincronizar_carpeta_equipo(self.antiguo.pk)
         registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="MANTENIMIENTO", fecha="2026-01-01")
-        self.fallar_despues = len(self.archivos) + 1
+        self.fallar_despues = len(self.archivos) + 3
         with self.assertRaises(TimeoutError), self.assertLogs("masiscam.services", level="ERROR"):
             sincronizar_carpeta_registro(registro.pk)
         total = len(self.archivos)
         folder = sincronizar_carpeta_registro(registro.pk)
         self.assertEqual(len(self.archivos), total)
-        self.assertEqual(self.archivos[folder]["name"], f"{registro.fecha} - Mantenimiento 001")
+        self.assertEqual(self.archivos[folder]["name"], "MANTENIMIENTO 001")
 
-    def test_secuencia_considera_papelera_y_todas_las_paginas(self):
+    def test_secuencia_cronologica_ignora_carpetas_ajenas_y_papelera(self):
         from .models import RegistroEquipo
         from .services import sincronizar_carpeta_registro
         root = sincronizar_carpeta_equipo(self.antiguo.pk)
         registro = RegistroEquipo.objects.create(equipo=self.antiguo, tipo="NUEVO", fecha="2026-01-01")
         def listar(**params):
-            files = [{"id": "old", "name": "Nuevo 002", "trashed": True}]
-            return MagicMock(execute=lambda: {"files": files} if params.get("pageToken") else {
-                "files": [{"id": "first", "name": "Nuevo 001"}], "nextPageToken": "page2"})
+            if params["q"].startswith(f"'{root}' in parents"):
+                files = [{"id": "old", "name": "Nuevo 002", "parents": [root], "trashed": True}]
+                return MagicMock(execute=lambda: {"files": files} if params.get("pageToken") else {
+                    "files": [{"id": "first", "name": "Nuevo 001", "parents": [root]}], "nextPageToken": "page2"})
+            return self.listar(**params)
         self.api.files().list.side_effect = listar
         folder = sincronizar_carpeta_registro(registro.pk)
-        self.assertEqual(self.archivos[folder]["name"], f"{registro.fecha} - Nuevo 003")
-        self.assertEqual(self.archivos[folder]["parents"], [root])
+        self.assertEqual(self.archivos[folder]["name"], "NUEVO 001")
+        self.comprobar_jerarquia(folder, root)

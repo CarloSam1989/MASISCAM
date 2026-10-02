@@ -118,7 +118,7 @@ class RegistroUploadTests(TestCase):
         self.assertEqual(registro.archivos.count(), 2)
         self.assertFalse(any(isinstance(f, models.FileField) for f in ArchivoRegistro._meta.fields))
         self.assertEqual(set(self.contenidos.values()), {b"%PDF-1.7 uno", b"%PDF-1.7 dos"})
-        self.assertEqual(self.nodes[registro.drive_folder_id]["name"], "2026-09-21 - Mantenimiento 001")
+        self.assertEqual(self.nodes[registro.drive_folder_id]["name"], "MANTENIMIENTO 003")
         for archivo in registro.archivos.all():
             self.assertEqual(archivo.estado, "DISPONIBLE")
             self.assertEqual(self.nodes[archivo.drive_file_id]["parents"], [registro.drive_folder_id])
@@ -134,12 +134,12 @@ class RegistroUploadTests(TestCase):
 
     def test_optional_files_and_sequence_across_dates_types_and_legacy_folders(self):
         self.nodes["legacy"] = dict(id="legacy", name="Mantenimiento 009", mimeType="application/vnd.google-apps.folder", parents=["equipment-root"])
-        for tipo, fecha, expected in (("MANTENIMIENTO", "2026-09-21", 10), ("MANTENIMIENTO", "2026-09-23", 11), ("NUEVO", "2026-09-23", 1)):
+        for tipo, fecha, expected in (("MANTENIMIENTO", "2026-09-21", 3), ("MANTENIMIENTO", "2026-09-23", 4), ("NUEVO", "2026-09-23", 1)):
             with self.captureOnCommitCallbacks(execute=True):
                 self.assertEqual(self.crear(tipo=tipo, fecha=fecha).status_code, 302)
             registro = self.ultimo()
             self.assertEqual(registro.secuencia, expected)
-            self.assertEqual(self.nodes[registro.drive_folder_id]["name"], f"{fecha} - {registro.get_tipo_display()} {expected:03d}")
+            self.assertEqual(self.nodes[registro.drive_folder_id]["name"], f"{tipo} {expected:03d}")
             self.assertEqual(str(registro.fecha), fecha)
         self.assertEqual(self.nodes["legacy"]["name"], "Mantenimiento 009")
 
@@ -307,9 +307,9 @@ class RegistroUploadTests(TestCase):
         with self.assertLogs("masiscam.services", level="ERROR"):
             self.crear([self.archivo()])
         registro = self.ultimo()
-        self.assertEqual(registro.secuencia, 1)
+        self.assertEqual(registro.secuencia, 3)
         self.api.files().create.side_effect = original
         self.client.post(self.retry_url(registro), {"archivos": [self.archivo()]})
         registro.refresh_from_db()
-        self.assertEqual(registro.secuencia, 1)
-        self.assertEqual(self.nodes[registro.drive_folder_id]["name"], "2026-09-21 - Mantenimiento 001")
+        self.assertEqual(registro.secuencia, 3)
+        self.assertEqual(self.nodes[registro.drive_folder_id]["name"], "MANTENIMIENTO 003")

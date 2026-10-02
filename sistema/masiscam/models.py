@@ -240,11 +240,16 @@ class RegistroEquipo(models.Model):
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["-fecha", "-creado_en", "-pk"]
+        ordering = ["fecha", "pk"]
         constraints = [
             models.UniqueConstraint(fields=["equipo", "clave_creacion"], name="masiscam_registro_envio_uniq"),
             models.UniqueConstraint(fields=["equipo", "tipo", "secuencia"], name="masiscam_registro_secuencia_uniq"),
         ]
+
+    @property
+    def nombre_numerado(self):
+        numero = getattr(self, "numero_cronologico", self.secuencia)
+        return f"{self.get_tipo_display()} #{numero:03d}" if numero is not None else self.get_tipo_display()
 
 
 class ArchivoRegistro(models.Model):

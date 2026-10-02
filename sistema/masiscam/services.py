@@ -93,34 +93,6 @@ class GoogleDriveService:
     def buscar_subcarpeta(self, proyecto, nombre):
         return self.obtener_carpeta_equipo(nombre, proyecto.drive_folder_id)["id"]
 
-    def crear_estructura_registro(self, registro, equipo_folder_id):
-        from .models import Equipo, RegistroEquipo
-        if Equipo.objects.exclude(pk=registro.equipo_id).filter(drive_folder_id=equipo_folder_id).exists():
-            raise ValueError("La carpeta del equipo esta compartida; requiere revision manual.")
-        # The caller holds the existing database lock throughout allocation and save.
-        # Include trash so deleting a record does not immediately reuse its number.
-        carpetas = self.listar_carpetas(equipo_folder_id)
-        clave = str(registro.clave_creacion)
-        propias = [f for f in carpetas if not f.get("trashed")
-                   and f.get("appProperties", {}).get("masiscam_registro") == clave]
-        if len(propias) > 1:
-            raise ValueError("El registro tiene varias carpetas; requiere revision manual.")
-        if propias:
-            carpeta = propias[0]  # Recover a successful create whose response was lost.
-        else:
-            nombre = registro.get_tipo_display()
-            if registro.secuencia is None:
-                raise ValueError("Reserve la secuencia antes de crear la carpeta.")
-            carpeta = self.drive.files().create(
-                body={"name": f"{registro.fecha} - {nombre} {registro.secuencia:03d}",
-                      "mimeType": "application/vnd.google-apps.folder", "parents": [equipo_folder_id],
-                      "appProperties": {"masiscam_registro": clave}},
-                fields="id,webViewLink", supportsAllDrives=True,
-            ).execute()
-        if RegistroEquipo.objects.exclude(pk=registro.pk).filter(drive_folder_id=carpeta["id"]).exists():
-            raise ValueError("La carpeta del registro esta compartida; requiere revision manual.")
-        return carpeta
-
     def listar_carpetas(self, padre):
         padre = padre.replace("\\", "\\\\").replace("'", "\\'")
         params = {"q": f"'{padre}' in parents and mimeType='application/vnd.google-apps.folder'",
@@ -158,9 +130,17 @@ class GoogleDriveService:
             raise ValueError("La carpeta esta compartida o protegida; requiere revision manual.")
         carpeta = self.drive.files().get(fileId=carpeta_id, fields="id,mimeType,parents,trashed",
                                         supportsAllDrives=True).execute()
-        if (carpeta.get("mimeType") != "application/vnd.google-apps.folder"
-                or carpeta.get("parents") != [equipo.drive_folder_id]):
-            raise ValueError("La carpeta no pertenece directamente a este equipo.")
+        if carpeta.get("mimeType") != "application/vnd.google-apps.folder":
+            raise ValueError("La carpeta del registro no está disponible.")
+        padres, ancestros = carpeta.get("parents", []), {carpeta_id}
+        while padres != [equipo.drive_folder_id]:
+            if len(padres) != 1 or padres[0] in protegidas or padres[0] in ancestros or len(ancestros) >= 64:
+                raise ValueError("La carpeta no pertenece de forma exclusiva a este equipo.")
+            ancestros.add(padres[0])
+            padre = self.drive.files().get(fileId=padres[0], fields="id,mimeType,parents,trashed", supportsAllDrives=True).execute()
+            if padre.get("trashed") or padre.get("mimeType") != "application/vnd.google-apps.folder":
+                raise ValueError("La carpeta superior no está disponible.")
+            padres = padre.get("parents", [])
         pendientes, vistas = [carpeta_id], set()
         while pendientes:
             actual = pendientes.pop()
@@ -268,44 +248,19 @@ def encolar_carpeta_registro(registro_id):
 
 
 def sincronizar_carpeta_registro(registro_id):
-    from .models import Empresa, RegistroEquipo
-    registro = RegistroEquipo.objects.select_related("equipo__proyecto").filter(pk=registro_id).first()
+    from .models import RegistroEquipo
+    from .registro_orden import PENDIENTE, sincronizar_grupo
+    registro = RegistroEquipo.objects.filter(pk=registro_id).first()
     if registro is None:
         return ""
-    if registro.drive_folder_id:
+    if registro.drive_folder_id and registro.secuencia is not None and registro.drive_error != PENDIENTE:
         return registro.drive_folder_id
     try:
-        equipo_folder_id = sincronizar_carpeta_equipo(registro.equipo_id)
-        # Commit the sequence before the remote write, including on lost responses.
-        with transaction.atomic():
-            Empresa.objects.select_for_update().order_by("pk").first()
-            registro = RegistroEquipo.objects.select_for_update().get(pk=registro_id)
-            if registro.drive_folder_id:
-                return registro.drive_folder_id
-            if registro.secuencia is None:
-                from django.db.models import Max
-                carpetas = GoogleDriveService().listar_carpetas(equipo_folder_id)
-                patron = re.compile(r"(?:\d{4}-\d{2}-\d{2} - )?" + re.escape(registro.get_tipo_display()) + r" (\d+)$", re.IGNORECASE)
-                numeros = [int(m.group(1)) for f in carpetas if (m := patron.fullmatch(f["name"]))]
-                maximo = RegistroEquipo.objects.filter(equipo_id=registro.equipo_id, tipo=registro.tipo).aggregate(
-                    valor=Max("secuencia"))["valor"] or 0
-                registro.secuencia = max([maximo, *numeros]) + 1
-                registro.save(update_fields=["secuencia"])
-        with transaction.atomic():
-            Empresa.objects.select_for_update().order_by("pk").first()
-            registro = RegistroEquipo.objects.select_for_update().get(pk=registro_id)
-            if registro.drive_folder_id:
-                return registro.drive_folder_id
-            servicio = GoogleDriveService()
-            carpeta = servicio.crear_estructura_registro(registro, equipo_folder_id)
-            RegistroEquipo.objects.filter(pk=registro_id).update(
-                drive_folder_id=carpeta["id"], drive_folder_url=carpeta.get("webViewLink", ""), drive_error="",
-            )
-            return carpeta["id"]
-    except Exception as exc:
-        logger.error("Error creando carpeta Drive del registro %s", registro_id)
-        RegistroEquipo.objects.filter(pk=registro_id, drive_folder_id="").update(drive_error="No se pudo sincronizar con Drive. Reintente o contacte al administrador.")
+        sincronizar_grupo(registro.equipo_id, registro.tipo)
+    except Exception:
+        logger.error("Error organizando carpetas Drive del registro %s", registro_id)
         raise
+    return RegistroEquipo.objects.get(pk=registro_id).drive_folder_id
 
 
 def encolar_drive(task, objeto_id):
