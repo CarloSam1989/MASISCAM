@@ -75,6 +75,7 @@ class EtapaExpediente(models.Model):
 
 
 class EvidenciaTecnica(models.Model):
+    pieza = models.ForeignKey('PiezaRequerida', on_delete=PROTECT, null=True, blank=True, related_name='fotografias')
     inspeccion = models.ForeignKey(Inspeccion, on_delete=PROTECT, null=True, blank=True, related_name='evidencias')
     diagnostico = models.ForeignKey(Diagnostico, on_delete=PROTECT, null=True, blank=True, related_name='evidencias')
     documento = models.ForeignKey('Documento', on_delete=PROTECT, related_name='evidencias_tecnicas')
@@ -167,7 +168,35 @@ class AplicabilidadReferenciaEquipo(models.Model):
         constraints = [models.UniqueConstraint(fields=['referencia','equipo'],name='tecnica_aplicabilidad_unica')]
 
 
+class MapaPlano(models.Model):
+    referencia = models.ForeignKey(ReferenciaTecnica, on_delete=PROTECT, related_name='mapas')
+    version = models.PositiveIntegerField()
+    hash_documento = models.CharField(max_length=64)
+    autor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=PROTECT)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    clave = models.UUIDField(unique=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['referencia', 'version'], name='plano_mapa_version_unica'),
+            models.CheckConstraint(condition=models.Q(version__gt=0), name='plano_mapa_version_positiva')]
+
+
+class PosicionPlano(models.Model):
+    mapa = models.ForeignKey(MapaPlano, on_delete=PROTECT, related_name='posiciones')
+    parte = models.ForeignKey(ParteReferenciaTecnica, on_delete=PROTECT, related_name='posiciones_plano')
+    numero = models.CharField(max_length=80)
+    pagina = models.PositiveIntegerField()
+    x = models.DecimalField(max_digits=9, decimal_places=8)
+    y = models.DecimalField(max_digits=9, decimal_places=8)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(x__gte=0, x__lte=1, y__gte=0, y__lte=1), name='plano_coordenadas_normalizadas'),
+            models.CheckConstraint(condition=models.Q(pagina__gt=0), name='plano_pagina_positiva')]
+
+
 class PiezaRequerida(models.Model):
+    posicion_plano = models.ForeignKey('PosicionPlano', on_delete=PROTECT, null=True, blank=True)
+    observaciones = models.TextField(blank=True)
     diagnostico = models.ForeignKey(Diagnostico, on_delete=PROTECT, related_name='piezas')
     parte = models.ForeignKey(ParteReferenciaTecnica, on_delete=PROTECT, null=True, blank=True)
     origen = models.CharField(max_length=10, choices=[('MANUAL','Manual'),('BIBLIOTECA','Biblioteca')])

@@ -155,7 +155,9 @@ def tecnica_revision(request,tipo,pk):
     for f in forms['guardar'].fields.values():
         f.disabled=not editable
     return render(request,'masiscam/tecnica_revision.html',dict(revision=obj,tipo=tipo,expediente=exp,
-        forms=forms,editable=editable,rol_tecnico=role,vigente=svc.vigente(obj),clave=uuid.uuid4()),status=400 if request.method=='POST' else 200)
+        forms=forms,editable=editable,rol_tecnico=role,vigente=svc.vigente(obj),clave=uuid.uuid4(),
+        planos=svc.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO').filter(
+            Q(aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True)|Q(partes__piezarequerida__diagnostico=obj.pk)).distinct() if tipo=='DIAGNOSTICO' else []),status=400 if request.method=='POST' else 200)
 
 
 @require_POST
@@ -195,7 +197,7 @@ def tecnica_documento(request,pk,documento_pk):
     exp=svc.expediente_autorizado(request.user,request.empresa_activa,pk)
     doc=get_object_or_404(Documento.objects.filter(Q(evidencias_tecnicas__inspeccion__expediente=exp)|
         Q(evidencias_tecnicas__diagnostico__expediente=exp)|Q(informe_tecnico__expediente=exp)).distinct(),pk=documento_pk)
-    return _archivo(doc,request.empresa_activa)
+    return _archivo(doc,request.empresa_activa,inline=request.GET.get('ver')=='1')
 
 
 def _archivo(doc,empresa,inline=False):

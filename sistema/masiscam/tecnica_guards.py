@@ -4,11 +4,11 @@ from django.db.models.signals import pre_save, pre_delete
 from django.dispatch import receiver
 from .models import (AsignacionTecnica, Inspeccion, Diagnostico, EvidenciaTecnica,
     DecisionTecnica, ReferenciaTecnica, ComponenteTecnico, ParteReferenciaTecnica,
-    AplicabilidadReferenciaEquipo, PiezaRequerida, EmisionInformeTecnico, EtapaExpediente)
+    AplicabilidadReferenciaEquipo, PiezaRequerida, EmisionInformeTecnico, EtapaExpediente, MapaPlano, PosicionPlano)
 
 MODELS={AsignacionTecnica,Inspeccion,Diagnostico,EvidenciaTecnica,DecisionTecnica,
     ReferenciaTecnica,ComponenteTecnico,ParteReferenciaTecnica,AplicabilidadReferenciaEquipo,
-    PiezaRequerida,EmisionInformeTecnico,EtapaExpediente}
+    PiezaRequerida,EmisionInformeTecnico,EtapaExpediente,MapaPlano,PosicionPlano}
 
 
 def parent(obj):
@@ -21,6 +21,8 @@ def parent(obj):
 def proteger(sender,instance,raw=False,using='default',**kwargs):
     if sender not in MODELS or raw:
         return
+    if sender in {MapaPlano,PosicionPlano} and instance.pk:
+        raise PermissionDenied('La configuración se conserva: guarde una nueva versión del mapa.')
     if isinstance(instance,(EvidenciaTecnica,PiezaRequerida)) and parent(instance).enviado_en:
         raise PermissionDenied('No se modifican detalles de una revisión enviada.')
     if isinstance(instance,ParteReferenciaTecnica) and instance.referencia.estado!='BORRADOR':

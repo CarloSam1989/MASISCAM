@@ -1,4 +1,5 @@
 from django.urls import path
+from . import plano_views
 from . import usuario_views, views, recepcion_views, tecnica_views, operacion_views
 from . import calibracion_views
 from . import cierre_views, taller_views
@@ -31,6 +32,11 @@ urlpatterns = [
     path('tecnica/diagnosticos/<int:pk>/informe/',tecnica_views.tecnica_informe,name='tecnica_informe'),
     path('expedientes/<int:pk>/tecnico/documentos/<int:documento_pk>/',tecnica_views.tecnica_documento,name='tecnica_documento'),
     path('biblioteca-tecnica/',tecnica_views.biblioteca,name='biblioteca'),
+    path('biblioteca-tecnica/importar-m20/',plano_views.plano_importar,name='plano_importar'),
+    path('biblioteca-tecnica/<int:pk>/plano/',plano_views.plano,name='plano'),
+    path('biblioteca-tecnica/<int:pk>/plano/datos/',plano_views.plano_datos,name='plano_datos'),
+    path('biblioteca-tecnica/<int:pk>/plano/mapa/',plano_views.plano_mapa,name='plano_mapa'),
+    path('tecnica/diagnostico/<int:pk>/piezas-plano/',plano_views.plano_pieza,name='plano_pieza'),
     path('biblioteca-tecnica/nueva/',tecnica_views.biblioteca_referencia_form,name='biblioteca_referencia_crear'),
     path('biblioteca-tecnica/componentes/',tecnica_views.biblioteca_componentes,name='biblioteca_componentes'),
     path('biblioteca-tecnica/componentes/<int:pk>/',tecnica_views.biblioteca_componentes,name='biblioteca_componente_editar'),

@@ -157,12 +157,13 @@ def crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo=''):
         data['inspeccion'] = source.inspeccion
     obj = _save(model(**data))
     if anterior:
-        for e in anterior.evidencias.all():
-            EvidenciaTecnica.objects.create(**{tipo.lower():obj}, documento=e.documento, referencia=e.referencia, clase=e.clase, leyenda=e.leyenda, autor=e.autor)
+        piezas_copiadas={}
         if tipo == 'DIAGNOSTICO':
             for pieza in anterior.piezas.all():
                 values = {f.name:getattr(pieza,f.name) for f in PiezaRequerida._meta.fields if f.name not in {'id','diagnostico'}}
-                PiezaRequerida.objects.create(diagnostico=obj, **values)
+                piezas_copiadas[pieza.pk]=PiezaRequerida.objects.create(diagnostico=obj, **values)
+        for e in anterior.evidencias.all():
+            EvidenciaTecnica.objects.create(**{tipo.lower():obj}, pieza=piezas_copiadas.get(e.pieza_id), documento=e.documento, referencia=e.referencia, clase=e.clase, leyenda=e.leyenda, autor=e.autor)
     field = tipo.lower()
     EtapaExpediente.objects.update_or_create(expediente=exp, codigo=tipo,
         defaults={field:obj,'estado':'EN_PROCESO','version':(etapa.version+1 if etapa else 1)})
@@ -304,6 +305,8 @@ def quitar_hijo(*,usuario,empresa,tipo,revision_id,version,clave,hijo_id,pieza=F
         return old
     _editable(usuario,empresa,obj,version)
     manager=obj.piezas if pieza and isinstance(obj,Diagnostico) else obj.evidencias
+    if pieza and isinstance(obj,Diagnostico):
+        manager.get(pk=hijo_id).fotografias.update(pieza=None)
     manager.get(pk=hijo_id).delete()  # Only draft relation, never deletes Documento.
     obj.version_edicion+=1
     obj.save(update_fields=['version_edicion'])
@@ -432,19 +435,36 @@ def _validar_pieza(p):
 
 
 @transaction.atomic
-def agregar_pieza(*,usuario,empresa,diagnostico_id,version,clave,datos):
+def agregar_pieza(*,usuario,empresa,diagnostico_id,version,clave,datos,pieza_id=None):
     obj=Diagnostico.objects.get(pk=diagnostico_id)
     exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'TECNICO'},True)
     obj.refresh_from_db()
     payload=dict(id=obj.pk,version=version,datos=datos)
-    old=_retry(exp,clave,'PIEZA_REQUERIDA_AGREGADA',payload)
+    action='PIEZA_REQUERIDA_EDITADA' if pieza_id else 'PIEZA_REQUERIDA_AGREGADA'
+    if pieza_id:
+        payload['pieza']=pieza_id
+    old=_retry(exp,clave,action,payload)
     if old:
         return PiezaRequerida.objects.get(pk=old)
     _editable(usuario,empresa,obj,version)
-    allowed={'origen','parte_id','descripcion','numero_parte','cantidad','unidad','motivo_unidad_pendiente','condicion','accion','motivo_manual'}
+    allowed={'origen','parte_id','descripcion','numero_parte','cantidad','unidad','motivo_unidad_pendiente','condicion','accion','motivo_manual','posicion_plano_id','observaciones'}
     if set(datos)-allowed:
         raise ValidationError('Campos de repuesto no permitidos.')
-    p=PiezaRequerida(diagnostico=obj,**datos)
+    if pieza_id:
+        p=obj.piezas.filter(pk=pieza_id).first()
+        if not p:
+            raise PermissionDenied('Pieza de otro diagnóstico.')
+        if datos.get('origen', p.origen)!=p.origen or datos.get('parte_id', p.parte_id)!=p.parte_id:
+            raise ValidationError('Para cambiar de componente retire la pieza del borrador y seleccione una nueva.')
+        for field,value in datos.items():
+            setattr(p,field,value)
+    else:
+        p=PiezaRequerida(diagnostico=obj,**datos)
+    if p.posicion_plano_id:
+        from .models import PosicionPlano
+        punto=PosicionPlano.objects.select_related('mapa').filter(pk=p.posicion_plano_id,parte_id=p.parte_id).first()
+        if not punto or punto.mapa.referencia_id!=p.parte.referencia_id or punto.mapa.hash_documento!=p.parte.referencia.documento.hash_sha256:
+            raise ValidationError('La posición no corresponde a la parte y versión documental seleccionadas.')
     if p.origen=='BIBLIOTECA':
         if not p.parte_id or not _parte_aplicable(p.parte,exp):
             raise PermissionDenied('Parte no publicada, no aplicable o de otra empresa.')
@@ -454,6 +474,9 @@ def agregar_pieza(*,usuario,empresa,diagnostico_id,version,clave,datos):
             posicion=p.parte.posicion,documento=p.parte.referencia.documento_id,
             hash=p.parte.referencia.documento.hash_sha256,version_fabricante=p.parte.referencia.version_fabricante)
         documento_valido(p.parte.referencia.documento,empresa)
+        if p.posicion_plano_id:
+            p.snapshot['plano']=dict(posicion_id=punto.pk,mapa_id=punto.mapa_id,version=punto.mapa.version,
+                pagina=punto.pagina,x=str(punto.x),y=str(punto.y),numero=punto.numero)
     else:
         p.snapshot=dict(origen='MANUAL',contexto=p.motivo_manual,
             identificacion_pendiente=not bool(p.numero_parte),unidad_pendiente=not bool(p.unidad))
@@ -461,7 +484,7 @@ def agregar_pieza(*,usuario,empresa,diagnostico_id,version,clave,datos):
     _save(p)
     obj.version_edicion+=1
     obj.save(update_fields=['version_edicion'])
-    _event(exp,usuario,clave,'PIEZA_REQUERIDA_AGREGADA',payload,p.pk)
+    _event(exp,usuario,clave,action,payload,p.pk)
     return p
 
 
@@ -657,7 +680,8 @@ def _snapshot_informe(obj):
             referencia=(dict(codigo=e.referencia.codigo,revision=e.referencia.revision,titulo=e.referencia.titulo,
                 tipo=e.referencia.tipo,version_fabricante=e.referencia.version_fabricante) if e.referencia_id else None)) for e in _evidencias(obj)],
         piezas=[dict(descripcion=p.descripcion,numero_parte=p.numero_parte,cantidad=str(p.cantidad),unidad=p.unidad,
-            motivo_unidad_pendiente=p.motivo_unidad_pendiente,condicion=p.condicion,accion=p.accion,origen=p.origen,referencia=p.snapshot) for p in obj.piezas.all().order_by('pk')])
+            motivo_unidad_pendiente=p.motivo_unidad_pendiente,condicion=p.condicion,accion=p.accion,origen=p.origen,referencia=p.snapshot,
+            observaciones=p.observaciones,fotografias=[dict(documento=e.documento_id,hash=e.documento.hash_sha256,leyenda=e.leyenda) for e in p.fotografias.select_related('documento').order_by('pk')]) for p in obj.piezas.all().order_by('pk')])
     return snapshot
 
 

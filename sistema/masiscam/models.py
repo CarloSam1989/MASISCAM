@@ -450,3 +450,4 @@ from .calibracion_models import (PlantillaCalibracion, ValidacionPlantillaCalibr
     AplicabilidadCalibracion, Calibracion, MedicionCalibracion, EvidenciaCalibracion,
     DecisionCalibracion, EmisionCalibracion)
 from .cierre_models import InformeFinal, RevisionInformeFinal, CierreExpediente
+from .tecnica_models import MapaPlano, PosicionPlano

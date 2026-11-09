@@ -69,7 +69,7 @@ def construir_informe(snapshot,fotografias=()):
         ref=pieza.get('referencia') or {}
         rows.append([f"{pieza['descripcion']}\nParte: {pieza['numero_parte'] or 'Identificación pendiente'}",
             f"{pieza['cantidad']} {pieza['unidad'] or 'Unidad pendiente'}\n{pieza['motivo_unidad_pendiente']}",
-            f"{pieza['condicion']}\n{pieza['accion']}",
+            f"{pieza['condicion']}\n{pieza['accion']}\n{pieza.get('observaciones','')}",
             f"{pieza['origen']}\n{ref.get('referencia','')} r{ref.get('revision','')} {ref.get('posicion','')}\n{ref.get('hash','')}"])
     if len(rows)>1:
         story.append(table(rows,[available*.32,available*.18,available*.25,available*.25],True))
