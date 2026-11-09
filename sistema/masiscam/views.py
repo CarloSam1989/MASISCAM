@@ -37,11 +37,14 @@ def _proyecto(request, pk):
 
 
 def _contexto_permisos(request):
-    return {"puede_ver_carpeta_producto": not request.cliente_usuario and (request.user.is_superuser or request.rol_masiscam.rol == RolMasiscam.Rol.ADMINISTRADOR), **{f"puede_{p}": tiene_permiso(request, p) for p in ("crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios", "clientes_crear", "clientes_editar")}}
+    return {"puede_ver_carpeta_producto": not request.cliente_usuario and (request.user.is_superuser or request.rol_masiscam.rol == RolMasiscam.Rol.ADMINISTRADOR), **{f"puede_{p}": tiene_permiso(request, p) for p in ("crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios", "clientes_crear", "clientes_editar", "equipos_crear")}}
 
 
 def _equipos_autorizados(request):
     equipos = Equipo.objects.filter(proyecto__empresa=request.empresa_activa)
+    if request.rol_masiscam and request.rol_masiscam.rol == "TALLER":
+        from .access import equipos_taller
+        equipos = equipos_taller(usuario=request.user, empresa=request.empresa_activa)
     if request.cliente_usuario:
         equipos = equipos.filter(cliente=request.cliente_usuario, cliente__empresa=request.empresa_activa,
                                  estado=Equipo.Estado.ACTIVO)
@@ -109,6 +112,8 @@ def _productos(equipos, cliente=None):
 
 @masiscam_access_required
 def dashboard(request):
+    if request.rol_masiscam and request.rol_masiscam.rol == "TALLER":
+        return redirect("masiscam:taller_inicio")
     if request.cliente_usuario:
         return _listado_cliente(request)
     productos = _productos(Equipo.objects.filter(proyecto__empresa=request.empresa_activa))
@@ -278,7 +283,7 @@ def _contexto_formulario_producto(request, form, equipo=None):
     return contexto
 
 
-@permiso_masiscam_required("crear")
+@permiso_masiscam_required("equipos_crear")
 def ficha_crear(request):
     tipo = request.GET.get("tipo", "REDUCTOR").upper()
     if tipo not in Equipo.TipoProducto.values:
@@ -305,7 +310,7 @@ def ficha_crear(request):
                 messages.success(request, "Equipo registrado correctamente.")
                 return JsonResponse({"success": True, "id": equipo.pk})
             messages.success(request, "Ficha del equipo creada correctamente.")
-            return redirect("masiscam:ficha_detalle", pk=equipo.pk)
+            return redirect(reverse("masiscam:recepcion_crear") + f"?equipo={equipo.pk}")
     contexto = _contexto_formulario_producto(request, form)
     if _es_modal(request) and request.method == "POST":
         return _respuesta_formulario_modal(request, "masiscam/ficha_form.html", contexto, form, status=400)
@@ -807,27 +812,12 @@ def proyecto_archivar(request, pk):
     return redirect("masiscam:proyecto_detalle", pk=pk)
 
 
-@permiso_masiscam_required("equipos")
+@permiso_masiscam_required("equipos_crear")
 def equipo_crear(request, pk):
-    proyecto = _proyecto(request, pk)
+    # One intake form and one authorized creation service for every product type.
     if request.method == "GET":
-        return render(request, "masiscam/_equipo_form.html", {"form": EquipoForm(empresa=request.empresa_activa, usuario=request.user), "proyecto": proyecto})
-    form = EquipoForm(request.POST, request.FILES, instance=Equipo(proyecto=proyecto), empresa=request.empresa_activa, usuario=request.user)
-    if form.is_valid():
-        equipo = form.save(commit=False)
-        equipo.proyecto = proyecto
-        equipo.save()
-        form.guardar_ruc()
-        auditar(empresa=request.empresa_activa, usuario=request.user, accion="EQUIPO_CREADO", objeto=equipo)
-        if _es_modal(request):
-            messages.success(request, "Equipo creado correctamente.")
-            return JsonResponse({"success": True, "id": equipo.pk})
-        messages.success(request, "Equipo registrado.")
-    else:
-        if _es_modal(request):
-            return _respuesta_formulario_modal(request, "masiscam/_equipo_form.html", {"form": form, "proyecto": proyecto}, form, status=400)
-        messages.error(request, "Revise los datos del equipo.")
-    return redirect("masiscam:proyecto_detalle", pk=pk)
+        return redirect("masiscam:ficha_crear")
+    raise PermissionDenied("Utilice el registro de equipos de Taller.")
 
 
 @permiso_masiscam_required("equipos")

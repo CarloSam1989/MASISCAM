@@ -19,6 +19,11 @@ class ClientesReductoresTests(TestCase):
     def setUpTestData(cls):
         cls.empresa = Empresa.objects.create(nombre="Empresa A", direccion="A")
         cls.otra = Empresa.objects.create(nombre="Empresa B", direccion="B")
+        cls.taller = Usuario.objects.create_user(username="taller-clientes")
+        taller_perfil = Perfil.objects.create(user=cls.taller, empresa=cls.empresa)
+        RolMasiscam.objects.create(perfil=taller_perfil, rol="TALLER")
+        otro_perfil = Perfil.objects.create(user=cls.taller, empresa=cls.otra)
+        RolMasiscam.objects.create(perfil=otro_perfil, rol="TALLER")
         cls.usuario = Usuario.objects.create_user(username="cliente-test")
         perfil = Perfil.objects.create(user=cls.usuario, empresa=cls.empresa)
         RolMasiscam.objects.create(perfil=perfil, rol=RolMasiscam.Rol.ADMINISTRADOR)
@@ -30,7 +35,7 @@ class ClientesReductoresTests(TestCase):
     def request(self, nombre, datos=None, pk=None, post=False, json_response=False):
         url = reverse("masiscam:" + nombre, args=[pk] if pk else [])
         request = (RequestFactory().post if post else RequestFactory().get)(url, datos or {}, HTTP_ACCEPT="application/json" if json_response else "text/html")
-        request.user = self.usuario
+        request.user = self.taller if nombre == "ficha_crear" else self.usuario
         request.empresa_activa = self.empresa
         request.session = {}
         request._messages = FallbackStorage(request)
@@ -114,7 +119,7 @@ class ClientesReductoresTests(TestCase):
         datos["marca"] = "Marca nueva"
         form = FichaEquipoForm(datos, empresa=self.empresa, equipo=self.antiguo)
         self.assertTrue(form.is_valid(), form.errors)
-        equipo = form.save(usuario=self.usuario)
+        equipo = form.save(usuario=self.usuario if form.equipo else self.taller)
         self.assertIsNone(equipo.cliente_id)
         self.assertEqual(equipo.token_publico, token)
         self.assertEqual(equipo.razon_social_cliente, "Razón anterior")
@@ -159,7 +164,7 @@ class ClientesReductoresTests(TestCase):
         self.assertContains(crear, 'name="numero_equipo"')
         form = FichaEquipoForm(self.datos_reductor(tipo_aceite="ISO VG 220"), empresa=self.empresa)
         self.assertTrue(form.is_valid(), form.errors)
-        equipo = form.save(usuario=self.usuario)
+        equipo = form.save(usuario=self.usuario if form.equipo else self.taller)
         self.assertEqual(equipo.tipo_aceite, "ISO VG 220")
         inicial = FichaEquipoForm(empresa=self.empresa, equipo=equipo)
         self.assertEqual(inicial["tipo_aceite"].value(), "ISO VG 220")
@@ -167,7 +172,7 @@ class ClientesReductoresTests(TestCase):
         self.assertContains(editar, 'value="ISO VG 220"')
         form = FichaEquipoForm(self.datos_reductor(tipo_aceite="ISO VG 320"), empresa=self.empresa, equipo=equipo)
         self.assertTrue(form.is_valid(), form.errors)
-        form.save(usuario=self.usuario)
+        form.save(usuario=self.usuario if form.equipo else self.taller)
         equipo.refresh_from_db()
         self.assertEqual(equipo.tipo_aceite, "ISO VG 320")
         self.assertEqual(equipo.nombre, "RED-1")
@@ -326,8 +331,7 @@ class ClientesRBACTests(TestCase):
                      EquipoForm(empresa=self.empresa, usuario=self.roles['TECNICO'].perfil.user)):
             self.assertEqual(list(form.fields['cliente'].queryset), [self.cliente])
         response = self.client.get(reverse('masiscam:ficha_crear'))
-        self.assertNotContains(response, 'id="cliente-modal"')
-        self.assertNotContains(response, 'id="cliente-crear"')
+        self.assertEqual(response.status_code, 403)
         self.asignacion.fin = timezone.now()
         self.asignacion.save(update_fields=['fin'])
         self.assertEqual(self.client.get(url, {'formato': 'json', 'ruc': '099'}).json()['clientes'], [])

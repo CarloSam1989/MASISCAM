@@ -18,7 +18,7 @@ class ProductosTests(TestCase):
     def guardar(self, **datos):
         form = FichaEquipoForm(self.datos_reductor(**datos), empresa=self.empresa)
         self.assertTrue(form.is_valid(), form.errors)
-        return form.save(usuario=self.usuario)
+        return form.save(usuario=self.usuario if form.equipo else self.taller)
 
     def test_numero_empresa_estacion_y_edicion(self):
         equipo = self.guardar()
@@ -28,10 +28,10 @@ class ProductosTests(TestCase):
         self.assertIn("numero_equipo", form.errors)
         form = FichaEquipoForm(self.datos_reductor(), empresa=self.empresa, equipo=equipo)
         self.assertTrue(form.is_valid(), form.errors)
-        form.save(usuario=self.usuario)
+        form.save(usuario=self.usuario if form.equipo else self.taller)
         form = FichaEquipoForm(self.datos_reductor(cliente=self.ajeno.pk), empresa=self.otra)
         self.assertTrue(form.is_valid(), form.errors)
-        form.save(usuario=self.usuario)
+        form.save(usuario=self.usuario if form.equipo else self.taller)
         copia = Equipo.objects.get(pk=equipo.pk)
         copia.pk = None
         copia.numero_serie = "DISTINTA"
@@ -87,7 +87,8 @@ class ProductosTests(TestCase):
         self.assertContains(response, "Crear bomba")
         self.assertContains(response, self.cliente.nombre_comercial)
         self.assertContains(response, 'aria-label="Migas de pan"', count=1)
-        self.assertContains(response, '?cliente=' + str(self.cliente.pk))
+        self.assertContains(response, reverse('masiscam:taller_inicio'))
+        self.assertNotContains(response, reverse('masiscam:cliente_detalle', args=[self.cliente.pk]))
         request = self.request("ficha_crear", {"tipo": "INVALIDO"})
         from django.http import Http404
         with self.assertRaises(Http404):
@@ -98,7 +99,7 @@ class ProductosTests(TestCase):
         for tipo in ("REDUCTOR", "BOMBA"):
             request = self.request("dashboard")
             response = views.producto_listado(request, tipo.lower())
-            self.assertContains(response, 'data-modal-form data-modal-size="wide"')
+            self.assertNotContains(response, 'data-modal-form data-modal-size="wide"')
             datos = self.datos_reductor(numero_equipo=tipo, numero_serie=tipo)
             request = self.request("ficha_crear", dict(datos, numero_serie=""), post=True)
             request.GET = {"tipo": tipo}

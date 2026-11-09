@@ -10,7 +10,7 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 from .access import masiscam_access_required
 from .models import Documento, EmisionGuiaIngreso, ExpedienteMantenimiento
 from .recepcion_forms import RecepcionForm
-from .recepcion_services import autorizar, abrir_recepcion, reservar_guia
+from .recepcion_services import autorizar, abrir_recepcion, reservar_guia, expedientes_autorizados
 
 
 @require_GET
@@ -18,16 +18,22 @@ from .recepcion_services import autorizar, abrir_recepcion, reservar_guia
 def expedientes(request):
     autorizar(request.user, request.empresa_activa)
     from django.core.paginator import Paginator
-    qs = ExpedienteMantenimiento.objects.filter(empresa=request.empresa_activa).select_related("cliente_contractual", "registro__equipo")
+    qs = expedientes_autorizados(request.user, request.empresa_activa).select_related("cliente_contractual", "registro__equipo")
     return render(request, "masiscam/recepcion_listado.html", {"pagina": Paginator(qs, 25).get_page(request.GET.get("page")),
-        "puede_recepcion": request.rol_masiscam and request.rol_masiscam.rol == "OFICINA"})
+        "puede_recepcion": request.rol_masiscam and request.rol_masiscam.rol in {"OFICINA", "TALLER"}})
 
 
 @require_http_methods(["GET", "POST"])
 @masiscam_access_required
 def recepcion_crear(request):
     autorizar(request.user, request.empresa_activa, escribir=True)
-    form = RecepcionForm(request.POST or None, request.FILES or None, empresa=request.empresa_activa)
+    form = RecepcionForm(request.POST or None, request.FILES or None, empresa=request.empresa_activa, usuario=request.user)
+    if request.method == "GET" and request.GET.get("equipo"):
+        equipo_id = request.GET["equipo"]
+        if not equipo_id.isascii() or not equipo_id.isdecimal() or len(equipo_id) > 18:
+            raise Http404
+        equipo = get_object_or_404(form.fields["equipo"].queryset, pk=equipo_id)
+        form.initial.update(equipo=equipo.pk, cliente=equipo.cliente_id)
     if request.method == "POST" and form.is_valid():
         data = form.cleaned_data.copy()
         data["equipo_id"] = data.pop("equipo").pk
@@ -45,7 +51,7 @@ def recepcion_crear(request):
 @masiscam_access_required
 def expediente_detalle(request, pk):
     autorizar(request.user, request.empresa_activa)
-    exp = get_object_or_404(ExpedienteMantenimiento, pk=pk, empresa=request.empresa_activa)
+    exp = get_object_or_404(expedientes_autorizados(request.user, request.empresa_activa), pk=pk)
     return _detalle(request, exp)
 
 
@@ -56,7 +62,7 @@ def _detalle(request, exp, form=None, status=200):
         "snapshot": exp.recepcion.snapshot, "clave_emision": uuid.uuid4(),
         "confirmacion": getattr(exp.recepcion, "confirmacion", None), "cierre_local": habilitada(),
         "form_confirmacion": form if form is not None else ConfirmacionRecepcionForm(recepcion=exp.recepcion),
-        "puede_recepcion": request.rol_masiscam and request.rol_masiscam.rol == "OFICINA"}, status=status)
+        "puede_recepcion": request.rol_masiscam and request.rol_masiscam.rol in {"OFICINA", "TALLER"}}, status=status)
 
 
 @require_POST
@@ -67,7 +73,7 @@ def recepcion_finalizar(request, pk):
     if not habilitada():
         raise Http404
     autorizar(request.user, request.empresa_activa, escribir=True)
-    exp = get_object_or_404(ExpedienteMantenimiento, pk=pk, empresa=request.empresa_activa)
+    exp = get_object_or_404(expedientes_autorizados(request.user, request.empresa_activa), pk=pk)
     form = ConfirmacionRecepcionForm(request.POST, request.FILES, recepcion=exp.recepcion)
     if form.is_valid():
         data = form.cleaned_data.copy()
@@ -93,7 +99,7 @@ def recepcion_finalizar(request, pk):
 @masiscam_access_required
 def guia_emitir(request, pk):
     autorizar(request.user, request.empresa_activa, escribir=True)
-    get_object_or_404(ExpedienteMantenimiento, pk=pk, empresa=request.empresa_activa)
+    get_object_or_404(expedientes_autorizados(request.user, request.empresa_activa), pk=pk)
     try:
         clave = uuid.UUID(request.POST.get("clave", ""))
         guia = reservar_guia(usuario=request.user, empresa=request.empresa_activa, expediente_id=pk, clave=clave,
@@ -112,7 +118,8 @@ def guia_emitir(request, pk):
 @masiscam_access_required
 def guia_reintentar(request, pk, guia_pk):
     autorizar(request.user, request.empresa_activa, escribir=True)
-    guia = get_object_or_404(EmisionGuiaIngreso, pk=guia_pk, expediente_id=pk, expediente__empresa=request.empresa_activa)
+    exp = get_object_or_404(expedientes_autorizados(request.user, request.empresa_activa), pk=pk)
+    guia = get_object_or_404(EmisionGuiaIngreso, pk=guia_pk, expediente=exp)
     from .recepcion_tasks import generar_guia_ingreso
     try:
         generar_guia_ingreso.apply_async(args=[guia.pk], retry=False)
@@ -125,7 +132,7 @@ def guia_reintentar(request, pk, guia_pk):
 @masiscam_access_required
 def recepcion_documento(request, pk, documento_pk):
     autorizar(request.user, request.empresa_activa)
-    exp = get_object_or_404(ExpedienteMantenimiento, pk=pk, empresa=request.empresa_activa)
+    exp = get_object_or_404(expedientes_autorizados(request.user, request.empresa_activa), pk=pk)
     from django.db.models import Q
     doc = get_object_or_404(Documento.objects.filter(Q(guia_ingreso__expediente=exp) |
         Q(evidencia_recepcion__recepcion__expediente=exp)).distinct(), pk=documento_pk)

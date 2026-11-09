@@ -60,6 +60,8 @@ def confirmar_recepcion(*, usuario, empresa, expediente_id, clave, placa,
         exp = ExpedienteMantenimiento.objects.select_for_update().filter(pk=expediente_id, empresa=empresa).first()
         if not exp or exp.registro.equipo.proyecto.empresa_id != empresa.pk:
             raise PermissionDenied("Expediente fuera del ámbito autorizado.")
+        from .recepcion_services import autorizar_expediente
+        autorizar_expediente(usuario, empresa, exp)
         autorizar(usuario, empresa, escribir=True)
         anterior = ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).select_related("guia__documento").first()
         if anterior:

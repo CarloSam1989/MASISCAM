@@ -58,6 +58,15 @@ class MasiscamLoginView(LoginView):
         acceso_cliente = acceso_cliente_usuario(self.request.user)
         if acceso_cliente:
             self.request.session["empresa_activa_id"] = acceso_cliente.perfil.empresa_id
+        from masiscam.access import rol_masiscam_usuario
+        empresas_taller = empresas_disponibles(self.request.user)
+        empresa_taller = empresas_taller.filter(pk=self.request.session.get("empresa_activa_id")).first()
+        if empresa_taller is None and empresas_taller.count() == 1:
+            empresa_taller = empresas_taller.first()
+        rol_taller = rol_masiscam_usuario(usuario=self.request.user, empresa=empresa_taller)
+        if rol_taller and rol_taller.rol == 'TALLER':
+            self.request.session['empresa_activa_id'] = empresa_taller.pk
+            return reverse('masiscam:taller_inicio')
         redirect_url = self.get_redirect_url() or self.request.session.pop("masiscam_login_next", "")
         if redirect_url:
             logger.info("Login redirección username=%r url=%s", self.request.user.get_username(), redirect_url)

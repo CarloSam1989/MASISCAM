@@ -1,18 +1,21 @@
 # Revisión local de usuarios y RBAC — 2026-11-09
 
 Ruta: `/app/usuarios/`. Roles existentes: ADMIN, OFICINA, TECNICO, PLANTA,
-GERENCIA, CLIENTE y CONSULTA. No faltan roles ni se convierten usuarios.
+GERENCIA, CLIENTE, CONSULTA y TALLER. TALLER se añade por autorización del propietario;
+no se convierten usuarios existentes.
 
 Matriz efectiva tras la corrección (sujeta a empresa, estado, autoría y asignación):
 
 | Ventana / operación | Acceso efectivo encontrado |
 | --- | --- |
 | Usuarios | ADMIN; superusuario técnico heredado |
-| Dashboard | Todos; CLIENTE con alcance propio |
+| Dashboard | Internos autorizados; CLIENTE con alcance propio; TALLER redirige a su inicio exclusivo |
+| Crear equipos operativamente | Solo TALLER; ADMIN conserva recuperación administrativa previamente autorizada |
 | Crear/editar clientes | ADMIN y OFICINA, en su empresa; TECNICO denegado |
 | Consultar clientes: TECNICO | Clientes contractuales de expedientes con asignación vigente, empresa y propietario coherentes |
 | Equipos y QR heredados | Según permisos generales y filtros de objeto existentes |
-| Recepción: leer / escribir | ADMIN, CONSULTA, OFICINA, PLANTA, GERENCIA / OFICINA |
+| Recepción: leer / escribir | ADMIN, CONSULTA, OFICINA, PLANTA, GERENCIA / OFICINA; TALLER solo sus ingresos |
+| TALLER: equipos y expedientes | Equipos ingresados por el usuario, recepción propia y estado; sin ejecución técnica ni acceso comercial |
 | Expedientes técnicos | Internos; TECNICO solo asignado; CLIENTE excluido |
 | Inspección, diagnóstico, piezas | TECNICO asignado y autor; PLANTA autoriza nueva revisión |
 | Biblioteca | Internos autorizados; TECNICO solo aplicable; PLANTA administra |
@@ -85,3 +88,37 @@ todos bajo `sistema/masiscam/`. Único documento actualizado: este archivo.
 Sin commits, push, despliegue ni cambios en aprobaciones pendientes.
 
 Estado: corrección RBAC validada y lista para revisión/publicación; no desplegada.
+
+Actualización TALLER: migración aditiva `0030_rol_taller_ingreso`, con
+`Equipo.registrado_por` nullable y no editable. Los históricos quedan sin vínculo
+automático. La creación operativa exige TALLER en vistas y formularios/servicios,
+sin bypass de superusuario; la ruta antigua redirige al registro único y rechaza
+su POST. Menú exclusivo: Inicio de taller (`/app/taller/`), Registrar equipo /
+recepción, Mis expedientes, Consultar estado y Mi cuenta/cerrar sesión. Solo
+se permiten búsquedas de clientes existentes por RUC dentro de su empresa.
+La recepción y las guías reutilizan Fase 2 con autorización sobre el objeto;
+las operaciones técnicas/comerciales de fases 3–6 siguen bloqueadas para TALLER.
+No se crean cuentas ni asignaciones técnicas automáticamente.
+
+Archivos de esta actualización: `accounts/admin.py`, `accounts/views.py`;
+en `masiscam/`: `admin.py`, `access.py`, `models.py`, `forms.py`, `views.py`, `taller_views.py`,
+`recepcion_services.py`, `recepcion_confirmacion.py`, `recepcion_forms.py`,
+`recepcion_views.py`, `usuario_forms.py`, `usuario_views.py`, `urls.py`,
+`templatetags/masiscam_navigation.py`, migración 0030; plantillas `base`,
+`ficha_form`, `producto_listado`, `proyecto_detalle`, `recepcion_listado` y
+`taller_inicio/estado/cuenta`; pruebas `test_taller`, `test_clientes`,
+`test_productos`, `test_drive_equipo`. Único documento actualizado: este archivo.
+
+Validación TALLER en PostgreSQL 16.4: regresión inicial de 301 casos, con 297
+aprobados y cuatro errores en la clase nueva por cerrar dos veces una respuesta
+PDF en el test y perder su conexión transaccional. Corregido usando el helper
+existente `consumir_respuesta`; repetición de los ocho casos: 8/8 aprobados.
+Se aprobaron además el recorrido TALLER → TECNICO asignado → PLANTA independiente
+y el upgrade 0029 → 0030 sin cambios en equipos/roles históricos. Comprobación
+final de módulos afectados: 59/59; control final de Django Admin y regresión de
+usuarios: 4/4. Total: 304 casos distintos verificados, sin fallos pendientes.
+Incluye fases 2–6, concurrencia real, QR, historial, descargas y bloqueos vigentes.
+`check`, `makemigrations --check --dry-run` y `git diff --check` correctos.
+
+TALLER está listo para publicación controlada con la migración 0030 preparada;
+no se aplicó a bases reales. Sin producción, Drive real, commits, push o deploy.

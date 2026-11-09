@@ -53,6 +53,8 @@ def breadcrumbs(context):
     request = context.get("request")
     if request is None:
         return []
+    if getattr(request, 'rol_masiscam', None) and request.rol_masiscam.rol == 'TALLER':
+        return [{'label': 'Inicio de taller', 'url': reverse('masiscam:taller_inicio')}]
     vista = request.resolver_match.url_name if request.resolver_match else ""
     items = [("Dashboard", reverse("masiscam:dashboard"))]
     equipo = context.get("equipo")

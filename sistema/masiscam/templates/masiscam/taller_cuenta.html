@@ -1,0 +1,2 @@
+{% extends 'masiscam/base.html' %}
+{% block content %}<div class="container py-4"><h1 class="h3">Mi cuenta</h1><dl class="card card-body"><dt>Usuario</dt><dd>{{ user.username }}</dd><dt>Nombre</dt><dd>{{ user.get_full_name }}</dd><dt>Empresa</dt><dd>{{ request.empresa_activa.nombre }}</dd><dt>Rol</dt><dd>TALLER</dd></dl><p>Para corregir sus datos o restablecer su contraseña, contacte al administrador.</p></div>{% endblock %}

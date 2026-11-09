@@ -8,6 +8,7 @@ from PIL import Image
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.base import ContentFile
 from django.db import transaction
+from django.db.models import F
 
 from accounts.models import Empresa
 from .access import acceso_cliente_usuario, rol_masiscam_usuario
@@ -20,10 +21,25 @@ def autorizar(usuario, empresa, escribir=False):
     if not usuario.is_authenticated or not usuario.is_active or not empresa or not empresa.activa or acceso_cliente_usuario(usuario):
         raise PermissionDenied("Recepción no autorizada.")
     rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa)
-    permitidos = {"OFICINA"} if escribir else {"OFICINA", "PLANTA", "GERENCIA", "ADMIN", "CONSULTA"}
+    permitidos = {"OFICINA", "TALLER"} if escribir else {"OFICINA", "TALLER", "PLANTA", "GERENCIA", "ADMIN", "CONSULTA"}
     if not rol or rol.rol not in permitidos:
         raise PermissionDenied("El rol no permite esta operación de recepción.")
     return rol
+
+
+def expedientes_autorizados(usuario, empresa):
+    rol = autorizar(usuario, empresa)
+    qs = ExpedienteMantenimiento.objects.filter(empresa=empresa)
+    if rol.rol == "TALLER":
+        from .access import equipos_taller
+        qs = qs.filter(registro__equipo__in=equipos_taller(usuario=usuario, empresa=empresa),
+            cliente_contractual_id=F('registro__equipo__cliente_id'))
+    return qs
+
+
+def autorizar_expediente(usuario, empresa, exp):
+    if not expedientes_autorizados(usuario, empresa).filter(pk=exp.pk).exists():
+        raise PermissionDenied("Expediente fuera del ámbito autorizado.")
 
 
 def _hash(archivo):
@@ -127,6 +143,10 @@ def abrir_recepcion(*, usuario, empresa, equipo_id, cliente_id, clave, tipo, fec
             cliente__empresa=empresa).exclude(estado="INACTIVO").exclude(proyecto__estado="ARCHIVADO").first()
         if not equipo:
             raise PermissionDenied("Equipo o cliente fuera del ámbito autorizado.")
+        if autorizar(usuario, empresa, escribir=True).rol == "TALLER":
+            from .access import equipos_taller
+            if not equipos_taller(usuario=usuario, empresa=empresa).filter(pk=equipo.pk).exists():
+                raise PermissionDenied("Equipo no vinculado a su trabajo.")
         registro = RegistroEquipo.objects.filter(equipo=equipo, clave_creacion=clave).first()
         if registro:
             exp = ExpedienteMantenimiento.objects.filter(registro=registro).first()
@@ -170,6 +190,7 @@ def reservar_guia(*, usuario, empresa, expediente_id, clave, nueva_version=False
     autorizar(usuario, empresa, escribir=True)
     with transaction.atomic():
         exp = ExpedienteMantenimiento.objects.select_for_update().get(pk=expediente_id, empresa=empresa)
+        autorizar_expediente(usuario, empresa, exp)
         from .models import ConfirmacionRecepcion
         confirmada = ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).select_related("guia").first()
         if confirmada:

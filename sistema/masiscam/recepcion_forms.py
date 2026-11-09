@@ -19,10 +19,18 @@ class RecepcionForm(forms.Form):
     guia_archivo = forms.FileField(required=False, label="Archivo de la guía (PDF)")
     fotografias = ArchivosRegistroField()
 
-    def __init__(self, *args, empresa, **kwargs):
+    def __init__(self, *args, empresa, usuario=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["cliente"].queryset = Cliente.objects.filter(empresa=empresa)
         self.fields["equipo"].queryset = Equipo.objects.filter(proyecto__empresa=empresa).exclude(estado="INACTIVO").exclude(proyecto__estado="ARCHIVADO")
+        if usuario:
+            from .access import equipos_taller, rol_masiscam_usuario
+            rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa)
+            if rol and rol.rol == "TALLER":
+                self.fields["equipo"].queryset = self.fields["equipo"].queryset.filter(
+                    pk__in=equipos_taller(usuario=usuario, empresa=empresa))
+                self.fields["cliente"].queryset = self.fields["cliente"].queryset.filter(
+                    pk__in=self.fields["equipo"].queryset.values("cliente_id"))
         self.fields["fotografias"].label = "Fotografías de recepción"
         self.fields["fotografias"].widget.attrs["accept"] = ".jpg,.jpeg,.png,.webp"
         for f in self.fields.values():

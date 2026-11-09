@@ -4,11 +4,11 @@ from datetime import date
 
 from django import forms
 from django.conf import settings
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from .access import clientes_autorizados
+from .access import autorizar_creacion_equipo, clientes_autorizados
 from .models import Cliente, Documento, Equipo, Proyecto, RegistroEquipo
 
 
@@ -174,6 +174,11 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
         super().__init__(*args, **kwargs)
         if equipo is None:
             self.fields["consulta_publica_activa"].initial = True
+        if usuario:
+            from .access import rol_masiscam_usuario
+            rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa)
+            if rol and rol.rol == "TALLER":
+                self.fields.pop("consulta_publica_activa")
         self.fields["cliente"].queryset = (clientes_autorizados(usuario=usuario, empresa=empresa) if usuario else Cliente.objects.filter(empresa=empresa))
         self.permite_sin_cliente = bool(equipo and not equipo.cliente_id)
         self.fields["cliente"].required = not self.permite_sin_cliente
@@ -209,6 +214,13 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
 
     @transaction.atomic
     def save(self, *, usuario):
+        if not self.equipo:
+            autorizar_creacion_equipo(usuario=usuario, empresa=self.empresa)
+        else:
+            from .access import rol_masiscam_usuario
+            rol = rol_masiscam_usuario(usuario=usuario, empresa=self.empresa)
+            if rol and rol.rol == "TALLER":
+                raise PermissionDenied("TALLER no modifica equipos ya registrados.")
         datos = self.cleaned_data
         cliente = datos.get("cliente")
         camaronera = datos["camaronera"].strip()
@@ -244,7 +256,8 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
                     fecha_inicio=date.today(),
                     creado_por=usuario,
                 )
-            equipo = Equipo(proyecto=proyecto, tipo_producto=self.tipo_producto)
+            equipo = Equipo(proyecto=proyecto, tipo_producto=self.tipo_producto, registrado_por=usuario,
+                            visible_publico=False)
         # Los datos del cliente se consultan por relacion, sin copiarlos al proyecto.
         if not cliente:
             campos = []
@@ -270,7 +283,7 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
             if not self.equipo or campo in self.changed_data:
                 setattr(equipo, campo, datos[campo])
         equipo.observaciones = datos.get("observaciones", "").strip()
-        equipo.consulta_publica_activa = datos.get("consulta_publica_activa", False)
+        equipo.consulta_publica_activa = datos.get("consulta_publica_activa", False) if self.equipo else False
         if datos.get("fotografia_equipo") is False:
             equipo.fotografia_general = ""
         elif datos.get("fotografia_equipo"):
@@ -302,6 +315,7 @@ class EquipoForm(MasiscamImageFormMixin, forms.ModelForm):
     ruc = forms.CharField(label="RUC", max_length=20, required=False)
 
     def __init__(self, *args, empresa=None, usuario=None, **kwargs):
+        self.usuario = usuario
         super().__init__(*args, **kwargs)
         if self.instance.proyecto_id:
             empresa = empresa or self.instance.proyecto.empresa
@@ -316,6 +330,18 @@ class EquipoForm(MasiscamImageFormMixin, forms.ModelForm):
 
     @transaction.atomic
     def save(self, commit=True):
+        if self.instance._state.adding:
+            autorizar_creacion_equipo(usuario=self.usuario, empresa=self.instance.proyecto.empresa)
+            if not self.instance.cliente_id or self.instance.cliente.empresa_id != self.instance.proyecto.empresa_id:
+                raise ValidationError("Seleccione un cliente existente de la empresa.")
+            self.instance.registrado_por = self.usuario
+            self.instance.consulta_publica_activa = False
+            self.instance.visible_publico = False
+        elif self.usuario:
+            from .access import rol_masiscam_usuario
+            rol = rol_masiscam_usuario(usuario=self.usuario, empresa=self.instance.proyecto.empresa)
+            if rol and rol.rol == "TALLER":
+                raise PermissionDenied("TALLER no modifica equipos ya registrados.")
         equipo = super().save(commit=commit)
         if commit:
             self.guardar_ruc()

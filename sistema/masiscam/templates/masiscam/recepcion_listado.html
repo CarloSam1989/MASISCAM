@@ -1,4 +1,4 @@
-{% extends 'masiscam/base.html' %}{% block content %}<div class="container py-4"><h1>Expedientes de mantenimiento</h1>
+{% extends 'masiscam/base.html' %}{% block content %}<div class="container py-4"><h1>{% if request.rol_masiscam.rol == "TALLER" %}Mis expedientes{% else %}Expedientes de mantenimiento{% endif %}</h1>
 {% if puede_recepcion %}<a href="{% url 'masiscam:recepcion_crear' %}" class="btn btn-primary">Registrar recepción</a>{% endif %}
 <ul>{% for e in pagina %}<li><a href="{% url 'masiscam:expediente_detalle' e.pk %}">{{ e.numero }}</a> · {{ e.cliente_contractual }} · {{ e.registro.equipo }} · {% if e.recepcion.confirmacion %}<span class="badge bg-success">Recepción confirmada</span>{% else %}<span class="badge bg-warning text-dark">Recepción provisional</span>{% endif %}</li>{% empty %}<li>No hay expedientes.</li>{% endfor %}</ul>
 {% if pagina.has_previous %}<a href="?page={{ pagina.previous_page_number }}">Anterior</a>{% endif %} {{ pagina.number }} / {{ pagina.paginator.num_pages }} {% if pagina.has_next %}<a href="?page={{ pagina.next_page_number }}">Siguiente</a>{% endif %}</div>{% endblock %}

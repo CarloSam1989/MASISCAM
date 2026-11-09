@@ -5,7 +5,18 @@ from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import AdminUserCreationForm
 from accounts.models import Empresa, Perfil
 from .models import Auditoria, Cliente, Documento, Equipo, Proyecto, RolMasiscam
-admin.site.register((RolMasiscam, Cliente, Proyecto, Equipo, Documento, Auditoria))
+admin.site.register((RolMasiscam, Cliente, Proyecto, Documento, Auditoria))
+
+
+@admin.register(Equipo)
+class EquipoAdmin(admin.ModelAdmin):
+    def has_add_permission(self, request):
+        from .access import rol_masiscam_usuario
+        rol = rol_masiscam_usuario(usuario=request.user, empresa=getattr(request, 'empresa_activa', None))
+        # Preserve existing technical recovery for superusers without an
+        # operational role, and ADMIN; restricted operational roles cannot add.
+        return (request.user.is_superuser and (rol is None or rol.rol == 'ADMIN')
+                and super().has_add_permission(request))
 
 
 class MasiscamUserCreationForm(AdminUserCreationForm):

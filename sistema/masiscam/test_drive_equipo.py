@@ -7,7 +7,7 @@ from django.db import transaction
 from django.test import TestCase, override_settings
 
 from .forms import FichaEquipoForm
-from .models import Equipo, Proyecto
+from .models import Equipo, Proyecto, RolMasiscam
 from .services import GoogleDriveService, sincronizar_carpeta_equipo
 
 
@@ -87,7 +87,7 @@ class DriveEquipoTests(TestCase):
             with self.captureOnCommitCallbacks(execute=True) as callbacks:
                 form = FichaEquipoForm(datos, empresa=self.empresa)
                 self.assertTrue(form.is_valid(), form.errors)
-                equipo = form.save(usuario=self.usuario)
+                equipo = form.save(usuario=self.usuario if form.equipo else self.taller)
                 encolar.assert_not_called()
             self.assertEqual(len(callbacks), 1)
             encolar.assert_called_once_with(equipo.pk)
@@ -96,7 +96,7 @@ class DriveEquipoTests(TestCase):
             with self.captureOnCommitCallbacks(execute=True) as callbacks:
                 form = FichaEquipoForm(dict(datos, modelo="EDITADO"), empresa=self.empresa, equipo=equipo)
                 self.assertTrue(form.is_valid(), form.errors)
-                form.save(usuario=self.usuario)
+                form.save(usuario=self.usuario if form.equipo else self.taller)
                 equipo.estado = Equipo.Estado.INACTIVO
                 equipo.save()
             self.assertEqual(callbacks, [])
@@ -183,6 +183,7 @@ class DriveEquipoTests(TestCase):
 
     @patch("masiscam.views.EquipoDriveDocuments")
     def test_registros_tipos_historial_y_jerarquia(self, documentos):
+        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="TECNICO")
         documentos.return_value.list.return_value = []
         import uuid
         from . import views

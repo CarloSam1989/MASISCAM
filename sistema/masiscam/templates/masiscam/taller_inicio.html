@@ -1,0 +1,11 @@
+{% extends 'masiscam/base.html' %}
+{% block content %}<div class="container py-4">
+  <h1 class="h3">Inicio de taller</h1>
+  <p>Registre el equipo y complete su recepción. Las actividades técnicas y aprobaciones corresponden al personal autorizado.</p>
+  <div class="d-flex flex-wrap gap-2 mb-4">{% for codigo, nombre in tipos %}<a class="btn btn-primary" href="{% url 'masiscam:ficha_crear' %}?tipo={{ codigo }}">Registrar {{ nombre|lower }}</a>{% endfor %}</div>
+  <h2 class="h5">Mis equipos ingresados</h2>
+  <div class="table-responsive"><table class="table"><thead><tr><th>Equipo</th><th>Serie</th><th>Ubicación</th><th>Continuar</th></tr></thead><tbody>
+  {% for equipo in pagina %}<tr><td>{{ equipo.producto_singular }} · {{ equipo.nombre }}</td><td>{{ equipo.numero_serie }}</td><td>{{ equipo.ubicacion }}</td><td>{% if equipo.expediente_actual_id %}<a href="{% url 'masiscam:expediente_detalle' equipo.expediente_actual_id %}">Continuar / consultar recepción</a>{% else %}<a href="{% url 'masiscam:recepcion_crear' %}?equipo={{ equipo.pk }}">Registrar recepción</a>{% endif %}</td></tr>{% empty %}<tr><td colspan="4">Aún no ha registrado equipos.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if pagina.has_previous %}<a href="?page={{ pagina.previous_page_number }}">Anterior</a>{% endif %} {{ pagina.number }} / {{ pagina.paginator.num_pages }} {% if pagina.has_next %}<a href="?page={{ pagina.next_page_number }}">Siguiente</a>{% endif %}
+</div>{% endblock %}

@@ -22,6 +22,7 @@ class RolMasiscam(models.Model):
         OFICINA = "OFICINA", "Secretaría / Oficina"
         PLANTA = "PLANTA", "Administrador de planta"
         GERENCIA = "GERENCIA", "Gerencia / Administración"
+        TALLER = "TALLER", "Taller / Registro de ingreso"
 
     perfil = models.OneToOneField(Perfil, on_delete=models.CASCADE, related_name="rol_masiscam")
     rol = models.CharField(max_length=12, choices=Rol.choices, default=Rol.CONSULTA)
@@ -128,6 +129,8 @@ class Equipo(models.Model):
         MANTENIMIENTO = "MANTENIMIENTO", "En mantenimiento"
 
     proyecto = models.ForeignKey(Proyecto, on_delete=models.CASCADE, related_name="equipos")
+    registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        null=True, blank=True, editable=False, related_name="equipos_ingresados")
     tipo_producto = models.CharField(max_length=32, choices=TipoProducto.choices, default=TipoProducto.REDUCTOR, editable=False)
     cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, null=True, blank=True, related_name="equipos")
     drive_folder_id = models.CharField(max_length=255, blank=True, editable=False)

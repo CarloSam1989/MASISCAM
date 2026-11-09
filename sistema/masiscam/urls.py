@@ -1,11 +1,14 @@
 from django.urls import path
 from . import usuario_views, views, recepcion_views, tecnica_views, operacion_views
 from . import calibracion_views
-from . import cierre_views
+from . import cierre_views, taller_views
 
 app_name = "masiscam"
 
 urlpatterns = [
+    path('taller/', taller_views.taller_inicio, name='taller_inicio'),
+    path('taller/estado/', taller_views.taller_estado, name='taller_estado'),
+    path('taller/cuenta/', taller_views.taller_cuenta, name='taller_cuenta'),
     path('seguimiento/',cierre_views.dashboard,name='cierre_dashboard'),
     path('expedientes/<int:pk>/cierre/',cierre_views.detalle,name='cierre_detalle'),
     path('expedientes/<int:pk>/final/<int:informe_pk>/',cierre_views.documento,name='cierre_documento'),

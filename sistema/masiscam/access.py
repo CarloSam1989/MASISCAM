@@ -14,6 +14,7 @@ class EquipoNoAsignado(PermissionDenied):
 
 
 PERMISOS_ROL = {
+    RolMasiscam.Rol.TALLER: {"ver", "equipos_crear"},
     RolMasiscam.Rol.OFICINA: {"ver", "clientes_crear", "clientes_editar"},
     RolMasiscam.Rol.PLANTA: {"ver"},
     RolMasiscam.Rol.GERENCIA: {"ver"},
@@ -22,6 +23,28 @@ PERMISOS_ROL = {
     RolMasiscam.Rol.CONSULTA: {"ver"},
     RolMasiscam.Rol.CLIENTE: {"ver"},
 }
+
+VISTAS_TALLER = {
+    "masiscam.views": {"dashboard", "ficha_crear", "equipo_crear", "clientes", "equipo_foto_privada"},
+    "masiscam.taller_views": {"taller_inicio", "taller_estado", "taller_cuenta"},
+    "masiscam.recepcion_views": {"expedientes", "recepcion_crear", "expediente_detalle",
+        "recepcion_finalizar", "guia_emitir", "guia_reintentar", "recepcion_documento"},
+}
+
+
+def autorizar_creacion_equipo(*, usuario, empresa):
+    rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa) if usuario else None
+    if not rol or rol.rol != "TALLER" or acceso_cliente_usuario(usuario):
+        raise PermissionDenied("Solo TALLER puede registrar equipos mediante el flujo operativo.")
+    return rol
+
+
+def equipos_taller(*, usuario, empresa):
+    from .models import Equipo
+    rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa)
+    qs = Equipo.objects.filter(proyecto__empresa=empresa, registrado_por=usuario,
+                               cliente__empresa=empresa)
+    return qs if rol and rol.rol == "TALLER" and not acceso_cliente_usuario(usuario) else qs.none()
 
 
 def clientes_autorizados(*, usuario, empresa):
@@ -87,6 +110,12 @@ def tiene_permiso(request, permiso):
         return False
     if getattr(request, "cliente_usuario", None):
         return permiso == "ver"
+    if permiso == "equipos_crear":
+        rol = getattr(request, "rol_masiscam", None)
+        return bool(rol and rol.rol == "TALLER" and rol.activo)
+    asignacion = getattr(request, "rol_masiscam", None)
+    if asignacion and asignacion.rol == "TALLER":
+        return permiso in PERMISOS_ROL["TALLER"]
     if request.user.is_superuser:
         return True
     asignacion = getattr(request, "rol_masiscam", None)
@@ -118,6 +147,13 @@ def masiscam_access_required(view_func):
         request.rol_masiscam = rol_masiscam_usuario(usuario=request.user, empresa=empresa)
         if not request.user.is_superuser and request.rol_masiscam is None:
             raise PermissionDenied("El perfil no tiene un rol MASISCAM activo.")
+        if request.rol_masiscam and request.rol_masiscam.rol == "TALLER":
+            if view_func.__name__ not in VISTAS_TALLER.get(view_func.__module__, set()):
+                raise PermissionDenied("Esta ventana no está autorizada para TALLER.")
+            if view_func.__name__ == "clientes" and (
+                request.method not in {"GET", "HEAD"} or request.GET.get("formato") != "json"
+            ):
+                raise PermissionDenied("Utilice la búsqueda de clientes del registro de ingreso.")
         try:
             response = view_func(request, *args, **kwargs)
         except EquipoNoAsignado as error:
