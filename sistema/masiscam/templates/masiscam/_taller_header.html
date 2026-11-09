@@ -1,0 +1,17 @@
+{% load static %}
+<header class="tw-header">
+  <div class="container tw-topbar">
+    <a href="{% url 'masiscam:taller_inicio' %}" class="tw-brand" aria-label="MASISCAM · Inicio de taller"><img src="{% static 'masiscam/img/logo_transparente.png' %}" alt="MASISCAM" width="160"><span class="tw-mobile-module">Espacio de taller</span></a>
+    <div class="tw-module"><span class="tw-eyebrow">MANTENIMIENTO INDUSTRIAL</span><strong>Espacio de taller</strong></div>
+    <div class="tw-user">{% include 'masiscam/_taller_icon.html' with icono='user' %}<div><strong>{{ user.get_full_name|default:user.username }}</strong><span>{{ request.empresa_activa.nombre }}</span></div></div>
+    <button class="btn app-menu-toggle tw-menu-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#appMenu" aria-controls="appMenu" aria-expanded="false">Menú <span aria-hidden="true">☰</span></button>
+  </div>
+  <div class="tw-nav-wrap"><nav id="appMenu" class="container collapse app-menu" aria-label="Sistema MASISCAM">
+    <a href="{% url 'masiscam:taller_inicio' %}"{% if request.resolver_match.url_name == 'taller_inicio' %} aria-current="page"{% endif %}>{% include 'masiscam/_taller_icon.html' with icono='home' %}Inicio</a>
+    <a href="{% url 'masiscam:ficha_crear' %}"{% if request.resolver_match.url_name == 'ficha_crear' %} aria-current="page"{% endif %}>{% include 'masiscam/_taller_icon.html' with icono='plus' %}Registrar equipo</a>
+    <a href="{% url 'masiscam:expedientes' %}"{% if request.resolver_match.url_name == 'expedientes' %} aria-current="page"{% endif %}>{% include 'masiscam/_taller_icon.html' with icono='folder' %}Mis expedientes</a>
+    <a href="{% url 'masiscam:taller_estado' %}"{% if request.resolver_match.url_name == 'taller_estado' %} aria-current="page"{% endif %}>{% include 'masiscam/_taller_icon.html' with icono='clock' %}Estado del mantenimiento</a>
+    <a href="{% url 'masiscam:taller_cuenta' %}"{% if request.resolver_match.url_name == 'taller_cuenta' %} aria-current="page"{% endif %}>{% include 'masiscam/_taller_icon.html' with icono='user' %}Mi cuenta</a>
+    <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button class="btn tw-logout">{% include 'masiscam/_taller_icon.html' with icono='exit' %}Salir</button></form>
+  </nav></div>
+</header>

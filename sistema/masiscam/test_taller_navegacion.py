@@ -1,5 +1,7 @@
 """Optional real-browser regression against disposable QA settings only."""
 import os
+import re
+from pathlib import Path
 from unittest import skipUnless
 
 from django.conf import settings
@@ -25,8 +27,10 @@ class TallerBrowserTests(StaticLiveServerTestCase):
 
         equipo = self.crear('NAVEGADOR')
         exp = self.recepcion(equipo)
+        self.crear('BOMBA', tipo='BOMBA')
+        self.crear('INGRESO')
         cookies = {}
-        for codigo, user in self.usuarios.items():
+        for codigo, user in {**self.usuarios, 'VACIO': self.otro}.items():
             client = Client()
             client.force_login(user)
             cookies[codigo] = client.cookies[settings.SESSION_COOKIE_NAME].value
@@ -34,7 +38,7 @@ class TallerBrowserTests(StaticLiveServerTestCase):
             browser = pw.chromium.launch(channel='msedge', headless=True)
             try:
                 for width in (1440, 768, 390):
-                    for codigo, user in self.usuarios.items():
+                    for codigo in cookies:
                         with self.subTest(ancho=width, rol=codigo):
                             context = browser.new_context(viewport={'width': width, 'height': 900})
                             context.add_cookies([{'name': settings.SESSION_COOKIE_NAME,
@@ -47,21 +51,48 @@ class TallerBrowserTests(StaticLiveServerTestCase):
                             if width < 992:
                                 expect(toggle).to_be_visible()
                                 toggle.click()
+                                expect(menu).to_have_class(re.compile(r'\bcollapse\b.*\bshow\b'))
                             else:
                                 expect(toggle).not_to_be_visible()
                             expect(menu).to_be_visible()
-                            if codigo == 'TALLER':
+                            if codigo in {'TALLER', 'VACIO'}:
                                 self.assertTrue(page.url.endswith('/app/taller/'))
                                 expect(menu.locator('a')).to_have_text(['Inicio',
-                                    'Registrar equipo / recepción', 'Mis expedientes',
+                                    'Registrar equipo', 'Mis expedientes',
                                     'Estado del mantenimiento', 'Mi cuenta'])
-                                expect(menu.get_by_role('button', name='Cerrar sesión')).to_be_visible()
-                                expect(page.get_by_role('link', name='Registrar equipo', exact=True)).to_be_visible()
-                                expect(page.locator('main')).to_contain_text(exp.numero)
-                                expect(page.locator('main')).to_contain_text('Actividad pendiente:')
-                                page.get_by_role('link', name='Registrar equipo', exact=True).click()
+                                expect(menu.get_by_role('button', name='Salir')).to_be_visible()
+                                action = page.get_by_role('button', name='Registrar nuevo equipo', exact=True)
+                                expect(action).to_have_count(1)
+                                if codigo == 'TALLER':
+                                    expect(page.locator('main')).to_contain_text(exp.numero)
+                                    expect(page.locator('.tw-job')).to_have_count(3)
+                                    expect(page.locator('[data-metrica="equipos"]')).to_have_text('3')
+                                else:
+                                    expect(page.locator('.tw-empty')).to_be_visible()
+                                    expect(page.locator('[data-metrica="equipos"]')).to_have_text('0')
+                                    expect(page.locator('table')).to_have_count(0)
+                                if width < 992:
+                                    toggle.click()
+                                    expect(menu).not_to_be_visible()
+                                self.assertTrue(page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'))
+                                evidence = os.environ.get('MASISCAM_UI_EVIDENCE_DIR')
+                                if evidence:
+                                    output = Path(evidence)
+                                    output.mkdir(parents=True, exist_ok=True)
+                                    page.screenshot(path=str(output / f'taller-{codigo.lower()}-{width}.png'), full_page=True)
+                                action.click()
+                                modal = page.locator('#tipoEquipo')
+                                expect(modal).to_be_visible()
+                                expect(modal.locator('.tw-type-option')).to_have_count(2)
+                                expect(modal.locator('.modal-dialog')).to_have_css('transform', 'none')
+                                page.keyboard.press('Escape')
+                                expect(modal).not_to_be_visible()
+                                action.click()
+                                modal.locator('a[href$="tipo=BOMBA"]').click()
                                 expect(page.locator('#id_ruc')).to_be_visible()
                                 expect(page.locator('#cliente-crear')).to_have_count(0)
+                                if evidence and codigo == 'TALLER':
+                                    page.screenshot(path=str(output / f'taller-formulario-{width}.png'), full_page=True)
                             elif codigo == 'CLIENTE':
                                 expect(menu.locator('a')).to_have_text(['Mis productos'])
                             else:

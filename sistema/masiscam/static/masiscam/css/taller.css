@@ -1,0 +1,74 @@
+/* Exclusive workshop skin. Corporate tokens and Bootstrap remain shared. */
+.taller-ui{background:#f3f6fa;color:var(--masiscam-text)}
+.taller-ui .tw-icon{flex-shrink:0;vertical-align:middle}
+.taller-ui .tw-header{background:#fff;border-bottom:1px solid #dce3ea}
+.taller-ui .tw-topbar{display:flex;flex-wrap:wrap;align-items:center;gap:14px 18px;min-height:88px;padding-top:14px;padding-bottom:14px}
+.taller-ui .tw-brand img{display:block;width:148px;height:auto}
+.taller-ui .tw-brand{text-decoration:none}.taller-ui .tw-mobile-module{display:block;font-size:11px;font-weight:700;color:#34577d;margin-top:6px}
+@media(min-width:576px){.taller-ui .tw-mobile-module{display:none}}
+.taller-ui .tw-module{display:none;border-left:1px solid #dce3ea;padding-left:22px}
+.taller-ui .tw-module strong{display:block;font-size:17px;color:#16283d}
+.taller-ui .tw-eyebrow{display:block;font-size:10px;font-weight:800;letter-spacing:.12em;color:#52677e;margin:0 0 8px}
+.taller-ui .tw-user{display:flex;align-items:center;gap:10px;order:4;flex-basis:100%;border-top:1px solid #edf1f5;padding-top:10px;color:#34577d}
+.taller-ui .tw-user strong,.taller-ui .tw-user span{display:block;overflow-wrap:anywhere}
+.taller-ui .tw-user strong{font-size:13px;color:#16283d}.taller-ui .tw-user span{font-size:11px;color:#52606d;margin-top:3px}
+.taller-ui .tw-menu-toggle{margin-left:auto;border:1px solid #cad5e0;background:#fff;color:#16283d;gap:12px}
+.taller-ui .tw-nav-wrap{background:#16283d;color:#fff}
+.taller-ui .tw-nav-wrap .app-menu{padding-top:8px;padding-bottom:8px;gap:4px}
+.taller-ui .tw-nav-wrap .app-menu>a,.taller-ui .tw-logout{display:flex;align-items:center;gap:8px;color:#e4ecf5;text-decoration:none;font-size:12px;font-weight:600;padding:12px;border-radius:7px;min-height:44px}
+.taller-ui .tw-nav-wrap .tw-icon{width:17px;height:17px}
+.taller-ui .tw-nav-wrap a:hover,.taller-ui .tw-logout:hover{background:#29435f;color:#fff}
+.taller-ui .tw-nav-wrap a[aria-current]{background:#34577d;color:#fff}
+.taller-ui .tw-nav-wrap form{margin:0}.taller-ui .tw-logout{border:0;background:transparent}
+.taller-ui .tw-dashboard{padding-top:28px;padding-bottom:12px}
+.taller-ui .tw-welcome{display:flex;flex-direction:column;gap:18px;margin-bottom:26px}
+.taller-ui .tw-welcome h1{font-size:clamp(26px,3vw,34px);font-weight:700;letter-spacing:-.035em;margin:0 0 10px;color:#16283d}
+.taller-ui .tw-welcome p:last-child{font-size:14px;color:#52606d;line-height:1.7;max-width:520px;margin:0}
+.taller-ui .tw-primary{padding:13px 20px;min-height:50px;gap:9px;box-shadow:0 5px 12px #34577d20;white-space:nowrap;font-size:13px}
+.taller-ui .tw-primary .tw-icon{width:20px;height:20px}
+.taller-ui .tw-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:30px}
+.taller-ui .tw-metric{display:flex;flex-direction:column;align-items:flex-start;gap:14px;background:#fff;padding:18px;border:1px solid #e0e7ef;border-radius:14px;box-shadow:0 3px 10px #16283d03}
+.taller-ui .tw-metric-icon,.taller-ui .tw-equipment-icon{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:11px;background:#edf2f8;color:#34577d;flex-shrink:0}
+.taller-ui .tw-amber{background:#fbf3e2;color:#886318}.taller-ui .tw-green{background:#eaf3ee;color:#356249}
+.taller-ui .tw-metric div>span{display:block;font-size:11px;font-weight:600;color:#52606d;min-height:32px;line-height:1.5}
+.taller-ui .tw-metric strong{display:block;font-size:32px;line-height:1.15;letter-spacing:-.04em;color:#16283d;margin:4px 0 8px;font-variant-numeric:tabular-nums}
+.taller-ui .tw-metric small{display:block;font-size:10px;line-height:1.5;color:#637180}
+.taller-ui .tw-section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
+.taller-ui .tw-section-heading h2{font-size:20px;font-weight:700;letter-spacing:-.02em;margin:0 0 6px}
+.taller-ui .tw-section-heading p{margin:0;color:#52606d;font-size:12px;line-height:1.6}
+.taller-ui .tw-count{font-size:11px;font-weight:600;white-space:nowrap;border:1px solid #dce3ea;border-radius:20px;padding:6px 10px;color:#52606d}
+.taller-ui .tw-work-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.taller-ui .tw-job{background:#fff;border:1px solid #dde5ed;border-radius:16px;overflow:hidden;padding:20px;box-shadow:0 4px 15px #16283d04;display:flex;flex-direction:column;min-width:0}
+.taller-ui .tw-job-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px}
+.taller-ui .tw-status{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:700;border-radius:20px;padding:6px 9px;line-height:1.4}
+.taller-ui .tw-status::before{content:"";width:5px;height:5px;background:currentColor;border-radius:50%;flex-shrink:0}
+.taller-ui .tw-status-pending{background:#fbf3e2;color:#805a14}.taller-ui .tw-status-active{background:#eaf0f8;color:#34577d}.taller-ui .tw-status-done{background:#eaf3ee;color:#356249}
+.taller-ui .tw-job-type{font-size:10px;color:#52677e;font-weight:700;letter-spacing:.025em;margin:0 0 5px;overflow-wrap:anywhere}
+.taller-ui .tw-job h3{font-size:18px;font-weight:700;letter-spacing:-.02em;margin:0 0 18px;overflow-wrap:anywhere}
+.taller-ui .tw-job dl{margin:0 0 22px;font-size:12px;line-height:1.6;flex:1}
+.taller-ui .tw-job dl>div{display:grid;grid-template-columns:65px minmax(0,1fr);gap:8px;margin-bottom:7px}
+.taller-ui .tw-job dt{font-weight:500;color:#637180}.taller-ui .tw-job dd{font-weight:600;margin:0;overflow-wrap:anywhere;color:#253c54}
+.taller-ui .tw-job-bottom{border-top:1px solid #edf1f5;padding-top:15px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.taller-ui .tw-job-bottom>span{font-size:10px;color:#52606d}.taller-ui .tw-job-bottom .btn{font-size:11px;padding:8px 12px;min-height:44px;flex-shrink:0}
+.taller-ui .tw-job-bottom .tw-icon{width:15px;height:15px}
+.taller-ui .tw-empty{text-align:center;background:#fff;border:1px solid #dde5ed;border-radius:16px;padding:38px 22px}
+.taller-ui .tw-empty-icon{display:inline-flex;align-items:center;justify-content:center;width:76px;height:76px;border-radius:24px;background:#edf2f8;color:#34577d;margin-bottom:22px;box-shadow:0 0 0 10px #f7f9fc}
+.taller-ui .tw-empty-icon svg{width:36px;height:36px}.taller-ui .tw-empty h3{font-size:23px;letter-spacing:-.025em;margin:0 0 12px}
+.taller-ui .tw-empty p{font-size:13px;line-height:1.8;color:#52606d;margin:0 0 22px}
+.taller-ui .tw-empty small{display:block;font-size:10px;color:#637180;margin-top:18px;line-height:1.6}
+.taller-ui .tw-flow{display:flex;flex-direction:column;gap:20px;padding:24px 8px;margin-top:24px}
+.taller-ui .tw-flow>div{display:flex;gap:12px;align-items:center}.taller-ui .tw-step{display:flex;align-items:center;justify-content:center;border:1px solid #cad5e0;border-radius:50%;width:30px;height:30px;color:#34577d;font-size:11px;font-weight:700;flex-shrink:0}
+.taller-ui .tw-flow strong,.taller-ui .tw-flow small{display:block}.taller-ui .tw-flow strong{font-size:11px;color:#34577d}.taller-ui .tw-flow small{font-size:10px;color:#637180;margin-top:4px}.taller-ui .tw-flow-line{display:none}
+.taller-ui .tw-pagination{display:flex;justify-content:center;align-items:center;gap:16px;margin-top:24px;font-size:12px}
+.taller-ui .tw-type-modal{border:0;border-radius:18px;overflow:hidden;box-shadow:0 20px 70px #16283d30}
+.taller-ui .tw-type-modal .modal-header,.taller-ui .tw-type-modal .modal-body{padding:24px}.taller-ui .tw-type-modal .modal-header{align-items:flex-start;border-color:#e4e9ee}.taller-ui .tw-type-modal .modal-body>p{font-size:13px;line-height:1.7}
+.taller-ui .tw-type-modal .modal-title{font-weight:700;font-size:23px;line-height:1.3;letter-spacing:-.025em}.taller-ui .tw-type-modal .btn-close{min-width:44px;min-height:44px;margin:-10px -10px 0 6px}
+.taller-ui .tw-type-options{display:grid;gap:12px;margin-top:20px}.taller-ui .tw-type-option{display:flex;align-items:center;gap:14px;border:1px solid #dce3ea;border-radius:12px;padding:16px;color:#16283d;text-decoration:none;min-height:76px}.taller-ui .tw-type-option:hover{border-color:#34577d;background:#f3f6fa}.taller-ui .tw-type-option>svg:last-child{margin-left:auto;width:18px;height:18px;color:#52677e}
+.taller-ui .tw-type-modal .modal-footer{justify-content:center;gap:10px;background:#f7f9fb;font-size:10px;color:#52606d;padding:15px}
+.taller-ui .app-footer{background:transparent;border-color:#dce3ea;margin-top:12px;font-size:11px;color:#637180}
+.taller-ui :focus-visible{outline:3px solid #9db2c9;outline-offset:3px}
+.taller-ui .reductor-formulario .card{margin-bottom:20px;border-radius:16px}.taller-ui .reductor-formulario h2{font-size:17px;letter-spacing:0}
+@media(min-width:576px){.taller-ui .tw-module{display:block}.taller-ui .tw-topbar{gap:24px}.taller-ui .tw-brand img{width:160px}.taller-ui .tw-welcome{margin-bottom:30px}.taller-ui .tw-work-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.taller-ui .tw-metric{padding:22px}.taller-ui .tw-metric div>span{font-size:12px;min-height:0}.taller-ui .tw-metric small{font-size:11px}.taller-ui .tw-empty{padding:44px}.taller-ui .tw-flow{flex-direction:row;flex-wrap:wrap;justify-content:space-between}.taller-ui .tw-flow>div{flex:1;min-width:160px}}
+@media(min-width:992px){.taller-ui .tw-user{order:initial;flex-basis:auto;border:0;padding:0;margin-left:auto;max-width:280px}.taller-ui .tw-dashboard{padding-top:36px}.taller-ui .tw-welcome{flex-direction:row;justify-content:space-between;align-items:center}.taller-ui .tw-metrics{grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.taller-ui .tw-metric{padding:20px;flex-direction:row;gap:12px}.taller-ui .tw-metric-icon{width:36px;height:36px}.taller-ui .tw-metric div>span{font-size:11px;min-height:32px}.taller-ui .tw-metric small{font-size:10px}.taller-ui .tw-work-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.taller-ui .tw-nav-wrap .app-menu{flex-wrap:nowrap}.taller-ui .tw-nav-wrap form{margin-left:auto}.taller-ui .tw-flow{gap:20px}.taller-ui .tw-flow>div{flex:initial}.taller-ui .tw-flow-line{display:block;flex:1;height:1px;background:#dce3ea;align-self:center}}
+@media(max-width:991px){.taller-ui .tw-nav-wrap .app-menu{width:100%}.taller-ui .tw-nav-wrap .app-menu.show{display:flex;flex-direction:column;align-items:stretch}.taller-ui .tw-nav-wrap .app-menu>a{padding:12px 16px}.taller-ui .tw-logout{width:100%;justify-content:flex-start;padding:12px 16px}}
+@media(prefers-reduced-motion:reduce){.taller-ui .modal.fade .modal-dialog{transition:none}}

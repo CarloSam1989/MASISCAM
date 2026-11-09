@@ -1,22 +1,32 @@
 {% extends 'masiscam/base.html' %}
-{% block content %}<div class="container py-4">
-  <h1 class="h3">Inicio de taller</h1>
-  <p>Registre el equipo y complete su recepción. Las actividades técnicas y aprobaciones corresponden al personal autorizado.</p>
-  <p><a class="btn btn-primary btn-lg" href="{% url 'masiscam:ficha_crear' %}">Registrar equipo</a></p>
-  <div class="d-flex flex-wrap gap-2 mb-4">{% for codigo, nombre in tipos %}<a class="btn btn-outline-primary" href="{% url 'masiscam:ficha_crear' %}?tipo={{ codigo }}">Registrar {{ nombre|lower }}</a>{% endfor %}</div>
-  <h2 class="h5">Mis expedientes y actividades pendientes</h2>
-  {% for exp in expedientes %}<section class="card card-body mb-3">
-    <h3 class="h6">{{ exp.numero }} · {{ exp.registro.equipo.nombre }}</h3>
-    {% if exp.recepcion.confirmacion %}<p>Recepción confirmada. Continúa el personal autorizado.</p>{% else %}<p>Actividad pendiente: completar y confirmar la recepción.</p><a href="{% url 'masiscam:expediente_detalle' exp.pk %}">Continuar recepción</a>{% endif %}
-    <ul>{% for etapa in exp.etapas_tecnicas.all %}<li>{{ etapa.get_codigo_display }}: {{ etapa.get_estado_display }}</li>{% empty %}<li>Sin etapas técnicas registradas.</li>{% endfor %}</ul>
-    {% if exp.calibraciones_estado %}<p>Calibración: {{ exp.calibraciones_estado.0.get_estado_display }}.</p>{% endif %}
-    {% if exp.informes_estado %}<p>Informe: {{ exp.informes_estado.0.get_estado_display }}.</p>{% endif %}
-    {% if exp.cerrado %}<p>Expediente cerrado.</p>{% endif %}
-  </section>{% empty %}<p>No hay expedientes asociados a su trabajo.</p>{% endfor %}
-  <p><a href="{% url 'masiscam:expedientes' %}">Ver mis expedientes</a> · <a href="{% url 'masiscam:taller_estado' %}">Estado del mantenimiento</a></p>
-  <h2 class="h5">Mis equipos ingresados</h2>
-  <div class="table-responsive"><table class="table"><thead><tr><th>Equipo</th><th>Serie</th><th>Ubicación</th><th>Continuar</th></tr></thead><tbody>
-  {% for equipo in pagina %}<tr><td>{{ equipo.producto_singular }} · {{ equipo.nombre }}</td><td>{{ equipo.numero_serie }}</td><td>{{ equipo.ubicacion }}</td><td>{% if equipo.expediente_actual_id %}<a href="{% url 'masiscam:expediente_detalle' equipo.expediente_actual_id %}">Continuar / consultar recepción</a>{% else %}<a href="{% url 'masiscam:recepcion_crear' %}?equipo={{ equipo.pk }}">Registrar recepción</a>{% endif %}</td></tr>{% empty %}<tr><td colspan="4">Aún no ha registrado equipos.</td></tr>{% endfor %}
-  </tbody></table></div>
-  {% if pagina.has_previous %}<a href="?page={{ pagina.previous_page_number }}">Anterior</a>{% endif %} {{ pagina.number }} / {{ pagina.paginator.num_pages }} {% if pagina.has_next %}<a href="?page={{ pagina.next_page_number }}">Siguiente</a>{% endif %}
-</div>{% endblock %}
+{% block title %}Mi taller · MASISCAM{% endblock %}
+{% block contexto_superior %}{% endblock %}
+{% block content %}
+<div class="container tw-dashboard">
+  <section class="tw-welcome" aria-labelledby="taller-titulo">
+    <div><p class="tw-eyebrow">TU ESPACIO DE TRABAJO</p><h1 id="taller-titulo">Todo listo para avanzar.</h1><p>Registra equipos, completa sus recepciones y sigue cada mantenimiento.</p></div>
+    {% if indicadores.equipos %}<button class="btn btn-primary tw-primary" data-bs-toggle="modal" data-bs-target="#tipoEquipo">{% include 'masiscam/_taller_icon.html' with icono='plus' %}Registrar nuevo equipo</button>{% endif %}
+  </section>
+  <section class="tw-metrics" aria-label="Resumen de mi taller">
+    <article class="tw-metric"><span class="tw-metric-icon">{% include 'masiscam/_taller_icon.html' %}</span><div><span>Equipos registrados</span><strong data-metrica="equipos">{{ indicadores.equipos }}</strong><small>Ingresados por ti</small></div></article>
+    <article class="tw-metric"><span class="tw-metric-icon tw-amber">{% include 'masiscam/_taller_icon.html' with icono='clock' %}</span><div><span>Recepciones pendientes</span><strong data-metrica="pendientes">{{ indicadores.pendientes }}</strong><small>Por registrar o confirmar</small></div></article>
+    <article class="tw-metric"><span class="tw-metric-icon">{% include 'masiscam/_taller_icon.html' with icono='folder' %}</span><div><span>Expedientes activos</span><strong data-metrica="activos">{{ indicadores.activos }}</strong><small>Mantenimientos sin cierre</small></div></article>
+    <article class="tw-metric"><span class="tw-metric-icon tw-green">{% include 'masiscam/_taller_icon.html' with icono='check' %}</span><div><span>Expedientes finalizados</span><strong data-metrica="finalizados">{{ indicadores.finalizados }}</strong><small>Con cierre registrado</small></div></article>
+  </section>
+  <section class="tw-work" aria-labelledby="trabajos-titulo">
+    <div class="tw-section-heading"><div><h2 id="trabajos-titulo">Mis trabajos recientes</h2><p>Los equipos y expedientes vinculados a tu trabajo.</p></div>{% if indicadores.equipos %}<span class="tw-count">{{ pagina.paginator.count }} equipo{{ pagina.paginator.count|pluralize:"s" }}</span>{% endif %}</div>
+    {% if pagina %}<div class="tw-work-grid">
+    {% for equipo in pagina %}<article class="tw-job">
+      <div class="tw-job-top"><span class="tw-equipment-icon">{% if equipo.tipo_producto == 'BOMBA' %}{% include 'masiscam/_taller_icon.html' with icono='pump' %}{% else %}{% include 'masiscam/_taller_icon.html' %}{% endif %}</span><span class="tw-status {% if equipo.expediente_cerrado %}tw-status-done{% elif equipo.recepcion_confirmada %}tw-status-active{% else %}tw-status-pending{% endif %}">{% if equipo.expediente_cerrado %}Finalizado{% elif equipo.recepcion_confirmada %}En mantenimiento{% elif equipo.expediente_actual_id %}Recepción pendiente{% else %}Por recibir{% endif %}</span></div>
+      <p class="tw-job-type">{{ equipo.producto_singular }}{% if equipo.expediente_numero %} · {{ equipo.expediente_numero }}{% endif %}</p>
+      <h3>{{ equipo.nombre }}</h3>
+      <dl><div><dt>Serie</dt><dd>{{ equipo.numero_serie|default:"Sin número de serie" }}</dd></div><div><dt>Cliente</dt><dd>{{ equipo.cliente.nombre_comercial }}</dd></div><div><dt>Ubicación</dt><dd>{{ equipo.ubicacion|default:"Sin ubicación registrada" }}</dd></div></dl>
+      <div class="tw-job-bottom"><span>{% if equipo.expediente_cerrado %}Mantenimiento completado{% elif equipo.recepcion_confirmada %}En seguimiento{% else %}Completar recepción{% endif %}</span><a class="btn btn-outline-primary" aria-label="Continuar con {{ equipo.nombre }}" href="{% if equipo.expediente_actual_id %}{% url 'masiscam:expediente_detalle' equipo.expediente_actual_id %}{% else %}{% url 'masiscam:recepcion_crear' %}?equipo={{ equipo.pk }}{% endif %}">Continuar {% include 'masiscam/_taller_icon.html' with icono='arrow' %}</a></div>
+    </article>{% endfor %}</div>
+    {% else %}<div class="tw-empty"><span class="tw-empty-icon">{% include 'masiscam/_taller_icon.html' %}</span><h3>Tu próximo trabajo empieza aquí</h3><p>Registra tu primer equipo y crea su recepción.<br>Después podrás seguir su mantenimiento desde este panel.</p><button class="btn btn-primary tw-primary" data-bs-toggle="modal" data-bs-target="#tipoEquipo">{% include 'masiscam/_taller_icon.html' with icono='plus' %}Registrar nuevo equipo</button><small>Selecciona un cliente existente. Sus datos se mantienen protegidos.</small></div>{% endif %}
+    {% if pagina.has_other_pages %}<nav class="tw-pagination" aria-label="Páginas de mis trabajos">{% if pagina.has_previous %}<a class="btn btn-outline-primary" href="?page={{ pagina.previous_page_number }}">Anterior</a>{% endif %}<span>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>{% if pagina.has_next %}<a class="btn btn-outline-primary" href="?page={{ pagina.next_page_number }}">Siguiente</a>{% endif %}</nav>{% endif %}
+  </section>
+  <aside class="tw-flow" aria-label="Flujo de ingreso"><div><span class="tw-step">1</span><span><strong>Registra el equipo</strong><small>Identificación y cliente</small></span></div><span class="tw-flow-line" aria-hidden="true"></span><div><span class="tw-step">2</span><span><strong>Completa la recepción</strong><small>Fotografías y documentos</small></span></div><span class="tw-flow-line" aria-hidden="true"></span><div><span class="tw-step">3</span><span><strong>Sigue el mantenimiento</strong><small>Consulta su estado</small></span></div></aside>
+</div>
+<div class="modal fade" id="tipoEquipo" tabindex="-1" aria-labelledby="tipoEquipoTitulo" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content tw-type-modal"><div class="modal-header"><div><p class="tw-eyebrow">NUEVO INGRESO</p><h2 class="modal-title h4" id="tipoEquipoTitulo">¿Qué equipo vas a registrar?</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div><div class="modal-body"><p class="text-muted">Selecciona un tipo disponible para continuar con sus datos.</p><div class="tw-type-options">{% for codigo, nombre in tipos %}<a href="{% url 'masiscam:ficha_crear' %}?tipo={{ codigo }}" class="tw-type-option"><span class="tw-equipment-icon">{% if codigo == 'BOMBA' %}{% include 'masiscam/_taller_icon.html' with icono='pump' %}{% else %}{% include 'masiscam/_taller_icon.html' %}{% endif %}</span><strong>{{ nombre }}</strong>{% include 'masiscam/_taller_icon.html' with icono='arrow' %}</a>{% endfor %}</div></div><div class="modal-footer"><span>1. Equipo</span><span aria-hidden="true">→</span><span>2. Recepción</span><span aria-hidden="true">→</span><span>3. Seguimiento</span></div></div></div></div>
+{% endblock %}

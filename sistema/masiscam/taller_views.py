@@ -1,5 +1,5 @@
 from django.core.paginator import Paginator
-from django.db.models import Exists, OuterRef, Prefetch, Subquery
+from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Subquery
 from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
@@ -12,14 +12,27 @@ from .recepcion_services import expedientes_autorizados
 @masiscam_access_required
 def taller_inicio(request):
     autorizar_creacion_equipo(usuario=request.user, empresa=request.empresa_activa)
-    equipos = equipos_taller(usuario=request.user, empresa=request.empresa_activa).order_by('-creado_en')
-    actuales = expedientes_autorizados(request.user, request.empresa_activa).filter(
-        registro__equipo_id=OuterRef('pk')).order_by('-correlativo')
-    equipos = equipos.annotate(expediente_actual_id=Subquery(actuales.values('pk')[:1]))
+    equipos = equipos_taller(usuario=request.user, empresa=request.empresa_activa).select_related('cliente').order_by('-creado_en', '-pk')
+    expedientes = expedientes_autorizados(request.user, request.empresa_activa).annotate(
+        cerrado=Exists(CierreExpediente.objects.filter(expediente_id=OuterRef('pk'))))
+    actuales = expedientes.filter(registro__equipo_id=OuterRef('pk')).order_by('-correlativo')
+    equipos = equipos.annotate(
+        expediente_actual_id=Subquery(actuales.values('pk')[:1]),
+        expediente_numero=Subquery(actuales.values('numero')[:1]),
+        recepcion_confirmada=Subquery(actuales.values('recepcion__confirmacion__pk')[:1]),
+        expediente_cerrado=Subquery(actuales.values('cerrado')[:1]),
+    )
+    indicadores = expedientes.aggregate(
+        activos=Count('pk', filter=Q(cerrado=False)),
+        finalizados=Count('pk', filter=Q(cerrado=True)),
+        pendientes=Count('pk', filter=Q(recepcion__confirmacion__isnull=True)),
+    )
+    indicadores['equipos'] = equipos.count()
+    indicadores['pendientes'] += equipos.filter(expediente_actual_id__isnull=True).count()
     return render(request, 'masiscam/taller_inicio.html', {
         'tipos': Equipo.TipoProducto.choices,
-        'pagina': Paginator(equipos, 25).get_page(request.GET.get('page')),
-        'expedientes': estados_autorizados(request).order_by('-pk')[:10],
+        'pagina': Paginator(equipos, 12).get_page(request.GET.get('page')),
+        'indicadores': indicadores,
     })
 
 

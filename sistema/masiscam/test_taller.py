@@ -49,8 +49,9 @@ class TallerTests(TestCase):
         url = reverse('accounts:seleccionar_empresa')
         response = self.client.get(url)
         self.assertEqual(response.wsgi_request.rol_masiscam.rol, 'TALLER')
-        self.assertContains(response, '>Inicio</a>')
-        self.assertContains(response, 'Cerrar sesi&oacute;n')
+        self.assertContains(response, 'aria-label="MASISCAM · Inicio de taller"')
+        self.assertContains(response, '/static/masiscam/css/taller.css')
+        self.assertContains(response, 'Salir</button>')
         self.assertNotContains(response, '>Clientes</a>')
         self.assertNotContains(response, '>Proyectos</a>')
         self.assertRedirects(self.client.post(url, {'empresa_id': self.empresa.pk}),
@@ -77,6 +78,7 @@ class TallerTests(TestCase):
             response = self.client.get(reverse('masiscam:dashboard'))
             with self.subTest(rol=codigo):
                 self.assertEqual(response.status_code, 200)
+                self.assertNotContains(response, '/static/masiscam/css/taller.css')
                 for texto in ('Panel', 'Reductores', 'Bombas', 'Clientes', 'Proyectos'):
                     self.assertContains(response, '>' + texto + '</a>')
                 self.assertNotContains(response, '>Mis expedientes</a>')
@@ -89,10 +91,40 @@ class TallerTests(TestCase):
         propio = self.crear('PANEL')
         exp = self.recepcion(propio)
         response = self.client.get(reverse('masiscam:taller_inicio'))
-        self.assertContains(response, '>Registrar equipo</a>')
+        self.assertContains(response, 'Registrar nuevo equipo</button>')
         self.assertContains(response, exp.numero)
-        self.assertContains(response, 'Actividad pendiente:')
+        self.assertContains(response, 'Completar recepción')
         self.assertNotContains(response, self.historico.numero_serie)
+
+    def test_indicadores_no_cuentan_trabajos_ajenos_y_recepcion_confirmada(self):
+        url = reverse('masiscam:taller_inicio')
+        self.assertEqual(self.client.get(url).context['indicadores'],
+            dict(equipos=0, pendientes=0, activos=0, finalizados=0))
+        propio = self.crear('INDICADOR')
+        exp = self.recepcion(propio)
+        self.crear('SIN-RECEPCION')
+        ajeno = self.crear('NO-VISIBLE', usuario=self.otro)
+        from io import BytesIO
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        contenido = BytesIO()
+        Image.new('RGB', (40, 30), 'green').save(contenido, 'PNG')
+        foto_ajena = SimpleUploadedFile('ajena.png', contenido.getvalue(), content_type='image/png')
+        abrir_recepcion(usuario=self.otro, empresa=self.empresa, equipo_id=ajeno.pk,
+            cliente_id=self.cliente.pk, clave=uuid.uuid4(), tipo='MANTENIMIENTO',
+            fecha=timezone.now(), condicion_ingreso='Solo QA', fotografias=[foto_ajena])
+        self.client.force_login(self.taller)
+        response = self.client.get(url)
+        self.assertEqual(response.context['indicadores'],
+            dict(equipos=2, pendientes=2, activos=1, finalizados=0))
+        self.assertNotContains(response, ajeno.numero_serie)
+        confirmar_recepcion(usuario=self.taller, empresa=self.empresa, expediente_id=exp.pk,
+            clave=uuid.uuid4(), placa='SIN_PLACA', motivo_sin_placa='Solo QA',
+            motivo_sin_guia='Solo QA', general_id=exp.recepcion.evidencias.get().pk)
+        response = self.client.get(url)
+        self.assertEqual(response.context['indicadores'],
+            dict(equipos=2, pendientes=1, activos=1, finalizados=0))
+        self.assertContains(response, 'En mantenimiento')
 
     def crear(self, sufijo='1', usuario=None, tipo='REDUCTOR'):
         self.client.force_login(usuario or self.taller)
@@ -300,6 +332,39 @@ class TallerTests(TestCase):
             with self.subTest(rol=codigo):
                 self.assertEqual(self.client.get(url).status_code, 403)
                 self.assertEqual(self.client.post(url, {}).status_code, 403)
+
+
+@override_settings(GOOGLE_DRIVE_ENABLED=False, MASISCAM_RECEPCION_LOCAL=True)
+class TallerIndicadoresCierreTests(TestCase):
+    def test_indicador_finalizado_usa_cierre_real_del_flujo_qa(self):
+        from .test_cierre import FLAGS, preparar_final
+        from .test_calibracion import anchor_qa
+        from .test_tecnica import usuario
+        from . import cierre_services
+        # Complete only synthetic fixtures through the existing independent roles.
+        with override_settings(**FLAGS):
+            empresa, oficina, planta, _, exp, plantilla = preparar_final()
+            with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[anchor_qa(plantilla)]):
+                informe = cierre_services.reservar(usuario=oficina, empresa=empresa,
+                    expediente_id=exp.pk, clave=uuid.uuid4())
+                cierre_services.generar(informe.pk)
+                cierre_services.revisar(usuario=planta, empresa=empresa, informe_id=informe.pk,
+                    clave=uuid.uuid4(), decision='APROBADO', motivo='Solo simulación QA')
+                gerente = usuario(empresa, 'gerente-indicadores-qa', 'GERENCIA')
+                cierre_services.cerrar(usuario=gerente, empresa=empresa, informe_id=informe.pk,
+                    clave=uuid.uuid4(), motivo='Cierre sintético QA')
+        self.taller = usuario(empresa, 'taller-cierre-qa', 'TALLER')
+        self.client.force_login(self.taller)
+        equipo = exp.registro.equipo
+        equipo.registrado_por = self.taller
+        equipo.save(update_fields=['registrado_por'])
+        session = self.client.session
+        session['empresa_activa_id'] = empresa.pk
+        session.save()
+        response = self.client.get(reverse('masiscam:taller_inicio'))
+        self.assertEqual(response.context['indicadores'],
+            dict(equipos=1, pendientes=0, activos=0, finalizados=1))
+        self.assertContains(response, 'Finalizado')
 
 
 class TallerMigrationTests(TransactionTestCase):
