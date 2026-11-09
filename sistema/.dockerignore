@@ -23,6 +23,8 @@ coverage/
 .coverage
 .pytest_cache/
 artifacts/
+.qa*/
+.test-*
 *.p12
 *.pfx
 *.pem

@@ -32,6 +32,7 @@ class UsuarioCamposMixin:
         )
         if self.is_bound and self.data.get(self.add_prefix("rol")) in {
             RolMasiscam.Rol.ADMINISTRADOR, RolMasiscam.Rol.TECNICO,
+            RolMasiscam.Rol.OFICINA, RolMasiscam.Rol.PLANTA, RolMasiscam.Rol.GERENCIA,
         }:
             self.data = self.data.copy()
             self.data[self.add_prefix("cliente")] = ""
@@ -44,6 +45,9 @@ class UsuarioCamposMixin:
 
     def clean(self):
         data = super().clean()
+        if self.asignacion and self.asignacion.perfil.user_id == getattr(self, "actor_id", None):
+            if data.get("rol") != self.asignacion.rol and data.get("rol") in {"OFICINA", "PLANTA", "GERENCIA"}:
+                self.add_error("rol", "No puede autoasignarse un rol operativo de recepción.")
         if data.get("rol") == RolMasiscam.Rol.CLIENTE:
             if not data.get("cliente"):
                 self.add_error("cliente", "Seleccione un cliente de esta empresa.")

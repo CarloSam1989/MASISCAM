@@ -115,6 +115,9 @@ class GoogleDriveService:
             params["pageToken"] = token
 
     def validar_carpeta_registro_eliminable(self, registro):
+        from .models import ExpedienteMantenimiento
+        if ExpedienteMantenimiento.objects.filter(registro=registro).exists():
+            raise ValueError("Registro protegido por expediente; no se modifica su carpeta.")
         from .models import Equipo, Proyecto, RegistroEquipo
         carpeta_id = registro.drive_folder_id
         equipo = registro.equipo
@@ -163,14 +166,35 @@ class GoogleDriveService:
             return documento.drive_upload_id
 
     def subir_documento(self, documento):
+        from .recepcion_guards import documento_protegido
+        protected=documento_protegido(getattr(documento, "pk", None))
+        md5=None
+        if protected:
+            digest = hashlib.sha256()
+            md5=hashlib.md5(usedforsecurity=False)
+            with documento.archivo.open("rb") as stream:
+                for block in iter(lambda: stream.read(65536), b""):
+                    digest.update(block)
+                    md5.update(block)
+            if digest.hexdigest() != documento.hash_sha256:
+                raise ValueError("Integridad documental no verificable.")
         from googleapiclient.errors import HttpError
         from googleapiclient.http import MediaFileUpload
         remote_id = documento.drive_file_id or documento.drive_upload_id
         if not remote_id:
             raise ValueError("Reservar ID de carga antes de subir el documento.")
         fields = "id,webViewLink,webContentLink"
+        if protected: fields+=',size,md5Checksum,trashed'
+        def verified(result):
+            if protected:
+                try: size=int(result.get('size',''))
+                except (ValueError,TypeError): size=-1
+                if (result.get('id')!=remote_id or result.get('trashed',False)
+                        or size!=documento.tamano or result.get('md5Checksum')!=md5.hexdigest()):
+                    raise ValueError('La copia remota no coincide con el documento persistente; no se sobrescribe ni confirma.')
+            return result
         try:
-            return self.drive.files().get(fileId=remote_id, fields=fields, supportsAllDrives=True).execute()
+            return verified(self.drive.files().get(fileId=remote_id, fields=fields, supportsAllDrives=True).execute())
         except HttpError as exc:
             if exc.resp.status != 404:
                 raise
@@ -182,11 +206,11 @@ class GoogleDriveService:
             padre = self.buscar_subcarpeta(documento.proyecto, carpeta)
         media = MediaFileUpload(documento.archivo.path, mimetype=documento.tipo_mime, resumable=True)
         try:
-            return self.drive.files().create(body={"id": remote_id, "name": nombre_seguro(documento.nombre_original), "parents": [padre]}, media_body=media, fields=fields, supportsAllDrives=True).execute()
+            return verified(self.drive.files().create(body={"id": remote_id, "name": nombre_seguro(documento.nombre_original), "parents": [padre]}, media_body=media, fields=fields, supportsAllDrives=True).execute())
         except HttpError as exc:
             if exc.resp.status != 409:
                 raise
-            return self.drive.files().get(fileId=remote_id, fields=fields, supportsAllDrives=True).execute()
+            return verified(self.drive.files().get(fileId=remote_id, fields=fields, supportsAllDrives=True).execute())
         finally:
             media.stream().close()
 
@@ -235,6 +259,9 @@ def sincronizar_carpeta_equipo(equipo_id):
 
 
 def encolar_carpeta_registro(registro_id):
+    from .models import ExpedienteMantenimiento
+    if ExpedienteMantenimiento.objects.filter(registro_id=registro_id).exists():
+        return
     from .models import RegistroEquipo
     if not settings.GOOGLE_DRIVE_ENABLED:
         return
@@ -248,6 +275,9 @@ def encolar_carpeta_registro(registro_id):
 
 
 def sincronizar_carpeta_registro(registro_id):
+    from .models import ExpedienteMantenimiento
+    if ExpedienteMantenimiento.objects.filter(registro_id=registro_id).exists():
+        return ""
     from .models import RegistroEquipo
     from .registro_orden import PENDIENTE, sincronizar_grupo
     registro = RegistroEquipo.objects.filter(pk=registro_id).first()

@@ -8,7 +8,7 @@ from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError, SuspiciousFileOperation
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Prefetch
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
@@ -28,7 +28,12 @@ from .tasks import crear_carpeta_proyecto, sincronizar_documento
 
 
 def _proyecto(request, pk):
-    return get_object_or_404(Proyecto.objects.prefetch_related("equipos", "documentos"), pk=pk, empresa=request.empresa_activa)
+    documentos = Documento.objects.filter(evidencias_tecnicas__isnull=True,
+        referencias_tecnicas__isnull=True, informe_tecnico__isnull=True,
+        evidencias_operativas__isnull=True, emision_operativa__isnull=True,
+        plantillas_calibracion__isnull=True,evidencias_calibracion__isnull=True,informe_calibracion__isnull=True,informe_final__isnull=True).distinct()
+    return get_object_or_404(Proyecto.objects.prefetch_related("equipos",
+        Prefetch("documentos", queryset=documentos)), pk=pk, empresa=request.empresa_activa)
 
 
 def _contexto_permisos(request):
@@ -367,6 +372,8 @@ def registro_crear(request, pk):
             equipo=equipo, clave_creacion=form.cleaned_data["clave_creacion"],
             defaults={campo: form.cleaned_data[campo] for campo in ("tipo", "fecha", "observacion")},
         )
+        if hasattr(registro, "expediente_mantenimiento"):
+            raise PermissionDenied("Gestione las evidencias desde el expediente.")
         if creado:
             renumerar(equipo.pk, registro.tipo)
             auditar(empresa=request.empresa_activa, usuario=request.user, accion="REGISTRO_EQUIPO_CREADO",
@@ -388,6 +395,8 @@ def registro_crear(request, pk):
 def registro_reintentar(request, pk, registro_pk):
     equipo = _equipo(request, pk)
     registro = get_object_or_404(RegistroEquipo, pk=registro_pk, equipo=equipo)
+    if hasattr(registro, "expediente_mantenimiento"):
+        raise PermissionDenied("Gestione las evidencias desde el expediente.")
     form = RegistroArchivosForm(request.POST if request.method == "POST" else None,
                                 request.FILES if request.method == "POST" else None)
     if request.method == "GET" or not form.is_valid():
@@ -420,6 +429,8 @@ def registro_reintentar(request, pk, registro_pk):
 def registro_editar(request, pk, registro_pk):
     equipo = _equipo(request, pk)
     registro = get_object_or_404(RegistroEquipo, pk=registro_pk, equipo=equipo)
+    if hasattr(registro, "expediente_mantenimiento"):
+        raise PermissionDenied("Registro vinculado a un expediente inmutable.")
     form = RegistroFechaForm(request.POST if request.method == "POST" else None, instance=registro)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
@@ -449,6 +460,8 @@ def registro_editar(request, pk, registro_pk):
 def registro_eliminar(request, pk, registro_pk):
     equipo = _equipo(request, pk)
     registro = get_object_or_404(RegistroEquipo, pk=registro_pk, equipo=equipo)
+    if hasattr(registro, "expediente_mantenimiento"):
+        raise PermissionDenied("No puede eliminar un registro con expediente.")
     if request.method == "GET":
         return render(request, "masiscam/registro_eliminar.html", {"equipo": equipo, "registro": registro})
     if request.POST.get("confirmar") != "eliminar":
@@ -599,10 +612,10 @@ def _contexto_documentos_drive(equipo, request=None, registros=True):
     contexto = {"documentos_drive": [], "error_documentos": False,
                 "puede_ver_documentos": permitido, "es_cliente": es_cliente}
     if registros:
-        contexto["registros"] = list(equipo.registros.prefetch_related("archivos").order_by("fecha", "pk")) if equipo.estado != Equipo.Estado.INACTIVO else []
+        contexto["registros"] = list(equipo.registros.filter(expediente_mantenimiento__isnull=True).prefetch_related("archivos").order_by("fecha", "pk")) if equipo.estado != Equipo.Estado.INACTIVO else []
         if permitido and not es_cliente and settings.GOOGLE_DRIVE_ENABLED:
             for registro in contexto["registros"]:
-                if not registro.drive_folder_id:
+                if not registro.drive_folder_id and not hasattr(registro, "expediente_mantenimiento"):
                     encolar_carpeta_registro(registro.pk)
                     registro.refresh_from_db(fields=["drive_folder_id", "drive_error"])
             equipo.refresh_from_db(fields=["drive_folder_id"])
@@ -986,6 +999,9 @@ def equipo_foto_privada(request, pk, tipo):
 @require_GET
 @masiscam_access_required
 def documento_privado(request, pk, documento_pk):
+    from .recepcion_guards import documento_protegido
+    if documento_protegido(documento_pk):
+        raise PermissionDenied("Consulte el documento desde su expediente.")
     proyecto = _proyecto(request, pk)
     documentos = proyecto.documentos.exclude(estado_sincronizacion=Documento.Sincronizacion.ARCHIVADO).exclude(equipo__estado=Equipo.Estado.INACTIVO)
     if request.cliente_usuario:

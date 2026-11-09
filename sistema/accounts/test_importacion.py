@@ -39,7 +39,11 @@ class ImportacionTests(TestCase):
             self.assertEqual(equipo.ratio, "15:1")
             self.assertEqual(equipo.tipo_aceite, "ISO VG 220")
             self.assertEqual(RegistroEquipo.objects.get(pk=91).drive_folder_id, "drive-registro-original")
-            publico = self.client.get(reverse("masiscam:equipo_publico", args=[equipo.token_publico]))
+            url_qr = reverse("masiscam:equipo_publico", args=[equipo.token_publico])
+            self.assertRedirects(self.client.get(url_qr), reverse("accounts:login") + "?next=" + url_qr,
+                                 fetch_redirect_response=False)
+            self.client.force_login(get_user_model().objects.get(pk=17))
+            publico = self.client.get(url_qr)
             self.assertContains(publico, "15:1")
             with self.assertRaises(CommandError):
                 call_command("importar_syscloud", str(archivo), apply=True, stdout=StringIO())

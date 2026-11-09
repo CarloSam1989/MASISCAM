@@ -14,8 +14,10 @@ FOLDER = "application/vnd.google-apps.folder"
 @transaction.atomic
 def renumerar(equipo_id, tipo, forzar=False):
     Empresa.objects.select_for_update().order_by("pk").first()
-    registros = list(RegistroEquipo.objects.select_for_update().filter(
-        equipo_id=equipo_id, tipo=tipo).order_by("fecha", "pk"))
+    # The optional reverse OneToOne filter adds a LEFT JOIN. PostgreSQL cannot
+    # lock that nullable side; only the actual RegistroEquipo rows need locks.
+    registros = list(RegistroEquipo.objects.select_for_update(of=("self",)).filter(
+        equipo_id=equipo_id, tipo=tipo, expediente_mantenimiento__isnull=True).order_by("fecha", "pk"))
     cambio = any(r.secuencia != n for n, r in enumerate(registros, 1))
     if cambio:
         # Release numbers first to satisfy the existing unique constraint on swaps.

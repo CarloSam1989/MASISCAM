@@ -14,6 +14,9 @@ class EquipoNoAsignado(PermissionDenied):
 
 
 PERMISOS_ROL = {
+    RolMasiscam.Rol.OFICINA: {"ver"},
+    RolMasiscam.Rol.PLANTA: {"ver"},
+    RolMasiscam.Rol.GERENCIA: {"ver"},
     RolMasiscam.Rol.ADMINISTRADOR: {"ver", "crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios"},
     RolMasiscam.Rol.TECNICO: {"ver", "crear", "editar", "equipos", "documentos", "reemplazar", "qr", "historial"},
     RolMasiscam.Rol.CONSULTA: {"ver"},

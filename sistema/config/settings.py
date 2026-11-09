@@ -7,6 +7,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env()
 environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
 DEBUG = env.bool("DEBUG", default=False)
+from .expedientes_config import configurar
+# Legacy setting names remain compatible. Production activation is explicit,
+# independent of DEBUG, and never supplies commercial/industrial approvals.
+globals().update(configurar(env,DEBUG))
 SECRET_KEY = env("SECRET_KEY", default="dev-only-masiscam" if DEBUG else environ.Env.NOTSET)
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])

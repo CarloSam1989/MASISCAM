@@ -1,0 +1,6 @@
+{% extends 'masiscam/base.html' %}
+{% block content %}<div class="container py-4"><h1>Recepción de equipo</h1>
+<p>El responsable es el usuario autenticado. La recepción no autoriza trabajos ni aprueba técnicamente el equipo.</p>
+<p>Este paso abre la recepción provisional. Para confirmarla se requiere fotografía GENERAL y fotografía PLACA, o excepción SIN_PLACA justificada. La ausencia de guía requiere motivo. Los datos técnicos desconocidos permanecen pendientes.</p>
+<form method="post" enctype="multipart/form-data">{% csrf_token %}{{ form.as_p }}
+<button class="btn btn-primary">Registrar recepción</button></form></div>{% endblock %}

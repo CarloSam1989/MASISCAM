@@ -1,3 +1,4 @@
+from masiscam.test_utils import consumir_respuesta
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -196,7 +197,7 @@ class RegistroActionsTests(TestCase):
                 response = self.client.get(private)
                 self.assertEqual(response.status_code, 200)
                 self.assertTrue(response["Content-Disposition"].startswith("attachment;"))
-                response.close()
+                consumir_respuesta(response)
         self.login_as(self.cliente_user)
         Equipo.objects.filter(pk=self.equipo_ajeno.pk).update(consulta_publica_activa=True, drive_folder_id="foreign-root")
         for url in (reverse("masiscam:equipo_documento_privado", args=[self.equipo_ajeno.pk, "pdf"]),
@@ -212,7 +213,7 @@ class RegistroActionsTests(TestCase):
             self.assertEqual(self.client.get(url).status_code, 302)
 
 
-@override_settings(GOOGLE_DRIVE_ENABLED=False, GOOGLE_DRIVE_ROOT_FOLDER_ID="root-masiscam")
+@override_settings(GOOGLE_DRIVE_ENABLED=True, GOOGLE_DRIVE_ROOT_FOLDER_ID="root-masiscam")
 class ConcurrentRecordFoldersTests(TransactionTestCase):
     @skipUnlessDBFeature("has_select_for_update")
     def test_simultaneous_same_type_creations_and_retries(self):
@@ -230,7 +231,9 @@ class ConcurrentRecordFoldersTests(TransactionTestCase):
                 return registro.pk, sincronizar_carpeta_registro(registro.pk)
             finally:
                 connections.close_all()
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        # Patch once outside both threads: overlapping patch contexts would
+        # race while restoring the global signal callback.
+        with patch("masiscam.signals.encolar_carpeta_registro"), ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: create(), range(2)))
         self.assertEqual(len({folder for _, folder in results}), 2)
         self.assertEqual({self.archivos[folder]["name"] for _, folder in results},

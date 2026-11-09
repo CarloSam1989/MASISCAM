@@ -1,9 +1,46 @@
 from django.urls import path
-from . import usuario_views, views
+from . import usuario_views, views, recepcion_views, tecnica_views, operacion_views
+from . import calibracion_views
+from . import cierre_views
 
 app_name = "masiscam"
 
 urlpatterns = [
+    path('seguimiento/',cierre_views.dashboard,name='cierre_dashboard'),
+    path('expedientes/<int:pk>/cierre/',cierre_views.detalle,name='cierre_detalle'),
+    path('expedientes/<int:pk>/final/<int:informe_pk>/',cierre_views.documento,name='cierre_documento'),
+    path('equipos/<int:pk>/historial-mantenimiento/',cierre_views.historial,name='cierre_historial'),
+    path('calibracion/',calibracion_views.inicio,name='calibracion_inicio'),
+    path('calibracion/plantillas/',calibracion_views.plantillas,name='calibracion_plantillas'),
+    path('calibracion/plantillas/<int:pk>/',calibracion_views.plantilla,name='calibracion_plantilla'),
+    path('calibracion/plantillas/<int:pk>/fuente/',calibracion_views.fuente,name='calibracion_fuente'),
+    path('expedientes/<int:pk>/calibracion/',calibracion_views.expediente,name='calibracion_expediente'),
+    path('calibracion/revisiones/<int:pk>/',calibracion_views.revision,name='calibracion_revision'),
+    path('expedientes/<int:pk>/calibracion/documentos/<int:documento_pk>/',calibracion_views.documento,name='calibracion_documento'),
+    path('operacion/',operacion_views.inicio,name='operacion_inicio'),
+    path('expedientes/<int:pk>/operacion/',operacion_views.detalle,name='operacion_detalle'),
+    path('expedientes/<int:pk>/operacion/accion/<str:op>/',operacion_views.operar,name='operacion_operar'),
+    path('expedientes/<int:pk>/operacion/documentos/<int:documento_pk>/',operacion_views.documento,name='operacion_documento'),
+    path('tecnica/',tecnica_views.tecnica_inicio,name='tecnica_inicio'),
+    path('expedientes/<int:pk>/tecnico/',tecnica_views.tecnica_expediente,name='tecnica_expediente'),
+    path('expedientes/<int:pk>/tecnico/nueva/<str:tipo>/',tecnica_views.tecnica_nueva_revision,name='tecnica_nueva_revision'),
+    path('tecnica/<str:tipo>/<int:pk>/',tecnica_views.tecnica_revision,name='tecnica_revision'),
+    path('tecnica/diagnosticos/<int:pk>/informe/',tecnica_views.tecnica_informe,name='tecnica_informe'),
+    path('expedientes/<int:pk>/tecnico/documentos/<int:documento_pk>/',tecnica_views.tecnica_documento,name='tecnica_documento'),
+    path('biblioteca-tecnica/',tecnica_views.biblioteca,name='biblioteca'),
+    path('biblioteca-tecnica/nueva/',tecnica_views.biblioteca_referencia_form,name='biblioteca_referencia_crear'),
+    path('biblioteca-tecnica/componentes/',tecnica_views.biblioteca_componentes,name='biblioteca_componentes'),
+    path('biblioteca-tecnica/componentes/<int:pk>/',tecnica_views.biblioteca_componentes,name='biblioteca_componente_editar'),
+    path('biblioteca-tecnica/<int:pk>/',tecnica_views.biblioteca_referencia,name='biblioteca_referencia'),
+    path('biblioteca-tecnica/<int:pk>/editar/',tecnica_views.biblioteca_referencia_form,name='biblioteca_referencia_editar'),
+    path('biblioteca-tecnica/<int:pk>/documento/',tecnica_views.biblioteca_documento,name='biblioteca_documento'),
+    path("expedientes/", recepcion_views.expedientes, name="expedientes"),
+    path("expedientes/recepcion/", recepcion_views.recepcion_crear, name="recepcion_crear"),
+    path("expedientes/<int:pk>/", recepcion_views.expediente_detalle, name="expediente_detalle"),
+    path("expedientes/<int:pk>/finalizar/", recepcion_views.recepcion_finalizar, name="recepcion_finalizar"),
+    path("expedientes/<int:pk>/guia/", recepcion_views.guia_emitir, name="guia_emitir"),
+    path("expedientes/<int:pk>/guia/<int:guia_pk>/reintentar/", recepcion_views.guia_reintentar, name="guia_reintentar"),
+    path("expedientes/<int:pk>/documentos/<int:documento_pk>/", recepcion_views.recepcion_documento, name="recepcion_documento"),
     path("usuarios/", usuario_views.usuarios, name="usuarios"),
     path("usuarios/crear/", usuario_views.usuario_crear, name="usuario_crear"),
     path("usuarios/<int:pk>/editar/", usuario_views.usuario_editar, name="usuario_editar"),

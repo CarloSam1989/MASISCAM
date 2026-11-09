@@ -1,3 +1,4 @@
+from masiscam.test_utils import consumir_respuesta
 import io
 import json
 import tempfile
@@ -79,12 +80,20 @@ class StandaloneTests(TestCase):
         url_publica = reverse("masiscam:equipo_publico", args=[equipo.token_publico])
         self.assertTrue(url_publica.startswith("/consulta/"))
         self.client.logout()
+        self.assertRedirects(self.client.get(url_publica), reverse("accounts:login") + "?next=" + url_publica,
+                             fetch_redirect_response=False)
+        self.login()
         self.assertContains(self.client.get(url_publica), "15:1")
         for codigo in (equipo.token_publico, equipo.nombre, equipo.numero_serie):
             self.assertRedirects(self.client.get("/consulta/", {"code": codigo}), url_publica)
         equipo.consulta_publica_activa = False
         equipo.save()
-        self.assertNotContains(self.client.get(url_publica), "15:1")
+        # Existing QR routes resolve through authenticated equipment access;
+        # the old public-lookup flag does not revoke authorized private access.
+        self.assertContains(self.client.get(url_publica), "15:1")
+        self.client.logout()
+        self.assertRedirects(self.client.get(url_publica), reverse("accounts:login") + "?next=" + url_publica,
+                             fetch_redirect_response=False)
         self.assertEqual(self.client.get("/consulta/", {"code": equipo.token_publico}).status_code, 200)
 
     def test_aislamiento_permisos_y_tipos_de_registro(self):
@@ -127,7 +136,7 @@ class StandaloneTests(TestCase):
             proyecto.save()
             respuesta = self.client.get(url)
             self.assertEqual(respuesta.status_code, 200)
-            respuesta.close()
+            consumir_respuesta(respuesta)
             documento.publico = False
             documento.save()
             self.assertEqual(self.client.get(url).status_code, 404)

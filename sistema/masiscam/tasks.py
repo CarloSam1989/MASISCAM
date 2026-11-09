@@ -111,3 +111,12 @@ def sincronizar_documento(documento_id):
             estado_sincronizacion=Documento.Sincronizacion.ERROR,
             error_sincronizacion="No se pudo sincronizar con Drive. Reintente más tarde.")
         raise DriveSyncError("No se pudo sincronizar el documento con Drive.") from None
+
+
+# Celery autodiscovers this module; workers must register phase tasks even
+# before a web view imports them. These imports perform no remote operations.
+from .recepcion_tasks import generar_guia_ingreso  # noqa: E402,F401
+from .tecnica_tasks import generar_informe_inicial  # noqa: E402,F401
+from .operacion_tasks import generar_documento_operativo  # noqa: E402,F401
+from .calibracion_tasks import generar_informe_calibracion  # noqa: E402,F401
+from .cierre_tasks import generar_informe_final  # noqa: E402,F401

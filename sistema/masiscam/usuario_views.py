@@ -70,6 +70,7 @@ def usuario_editar(request, pk):
     rol = _rol(request, pk)
     form = UsuarioEditarForm(request.POST if request.method == "POST" else None,
                              instance=rol.perfil.user, empresa=request.empresa_activa, asignacion=rol)
+    form.actor_id = request.user.pk
     if request.method == "POST" and form.is_valid():
         try:
             with transaction.atomic():

@@ -1,0 +1,21 @@
+{% extends 'masiscam/base.html' %}{% block content %}
+<div class="container py-4"><h1>Seguimiento de mantenimiento</h1>
+<p>Estados registrados en su empresa. Las aprobaciones históricas no sustituyen la vigencia de sus fuentes.</p>
+{% if not comercial_habilitado %}<div class="alert alert-warning">Política comercial pendiente: cierre operativo bloqueado.</div>{% endif %}
+{% if not protocolos_habilitados %}<div class="alert alert-warning">Protocolos industriales pendientes de aprobación expresa.</div>{% endif %}
+{% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+<form method="get" class="row g-2 mb-4">
+<div class="col-12"><label for="empresa">Empresa activa</label><input id="empresa" class="form-control" value="{{ request.empresa_activa }}" readonly><input name="empresa" type="hidden" value="{{ request.empresa_activa.pk }}"></div>
+<div class="col-6 col-md-2"><label for="cliente">Cliente</label><select class="form-select" id="cliente" name="cliente"><option value="">Todos autorizados</option>{% for id,nombre in clientes_filtro %}<option value="{{ id }}" {% if filtros.cliente == id %}selected{% endif %}>{{ nombre }}</option>{% endfor %}</select></div>
+<div class="col-6 col-md-2"><label for="equipo">Equipo</label><select class="form-select" id="equipo" name="equipo"><option value="">Todos autorizados</option>{% for id,nombre in equipos_filtro %}<option value="{{ id }}" {% if filtros.equipo == id %}selected{% endif %}>{{ nombre }}</option>{% endfor %}</select></div>
+<div class="col-6 col-md-2"><label for="tecnico">Técnico</label><select class="form-select" id="tecnico" name="tecnico"><option value="">Todos autorizados</option>{% for id,nombre in tecnicos_filtro %}<option value="{{ id }}" {% if filtros.tecnico == id %}selected{% endif %}>{{ nombre }}</option>{% endfor %}</select></div>
+<div class="col-6 col-md-2"><label for="desde">Desde</label><input class="form-control" id="desde" name="desde" type="date" value="{{ filtros.desde }}"></div>
+<div class="col-6 col-md-2"><label for="hasta">Hasta</label><input class="form-control" id="hasta" name="hasta" type="date" value="{{ filtros.hasta }}"></div>
+<div class="col-6 col-md-2"><label for="estado">Estado</label><input class="form-control" id="estado" name="estado" value="{{ filtros.estado }}"></div>
+<div><button class="btn btn-primary">Filtrar</button></div></form>
+<div class="row g-3 mb-3"><div class="col-6 col-md-3"><strong>Abiertos: {{ abiertos }}</strong></div><div class="col-6 col-md-3"><strong>Finalizados: {{ finalizados }}</strong></div><div class="col-12 col-md-6">Alertas documentales: {{ alertas }} | Total filtrado: {{ total }}</div></div>
+<ul>{% for estado,n in conteos %}<li>{{ estado }}: {{ n }}</li>{% endfor %}</ul>
+<p>Se muestran hasta 100 expedientes. Empresa: {{ request.empresa_activa }} (ámbito obligatorio).</p>
+<div class="table-responsive"><table class="table"><thead><tr><th>Expediente</th><th>Cliente / equipo</th><th>Etapa registrada</th><th>Documentación</th></tr></thead><tbody>
+{% for exp in expedientes %}<tr><td><a href="{% url 'masiscam:cierre_detalle' exp.pk %}">{{ exp.numero }}</a></td><td>{{ exp.cliente_contractual }}<br>{{ exp.registro.equipo }}</td><td>{{ exp.etapa_actual }}</td><td>{% if exp.alerta_documental %}Pendiente{% else %}Consultar integridad y vigencia en expediente{% endif %}</td></tr>{% empty %}<tr><td colspan="4">Sin expedientes autorizados.</td></tr>{% endfor %}</tbody></table></div>
+<h2 class="h4">Actividad reciente</h2><ul>{% for a in actividades %}<li>{{ a.creado_en|date:'d/m/Y H:i' }} · {{ a.expediente.numero }} · {{ a.accion }} · {{ a.usuario }}</li>{% empty %}<li>Sin actividad.</li>{% endfor %}</ul></div>{% endblock %}

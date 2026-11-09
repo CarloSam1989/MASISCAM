@@ -19,6 +19,9 @@ class RolMasiscam(models.Model):
         TECNICO = "TECNICO", "Técnico"
         CONSULTA = "CONSULTA", "Consulta"
         CLIENTE = "CLIENTE", "Cliente (solo sus productos)"
+        OFICINA = "OFICINA", "Secretaría / Oficina"
+        PLANTA = "PLANTA", "Administrador de planta"
+        GERENCIA = "GERENCIA", "Gerencia / Administración"
 
     perfil = models.OneToOneField(Perfil, on_delete=models.CASCADE, related_name="rol_masiscam")
     rol = models.CharField(max_length=12, choices=Rol.choices, default=Rol.CONSULTA)
@@ -325,6 +328,7 @@ class Documento(models.Model):
 
 
 class Auditoria(models.Model):
+    expediente = models.ForeignKey("ExpedienteMantenimiento", on_delete=models.PROTECT, null=True, blank=True, related_name="auditoria")
     empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="auditoria_masiscam")
     proyecto = models.ForeignKey(Proyecto, on_delete=models.CASCADE, related_name="historial", null=True, blank=True)
     usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
@@ -337,3 +341,109 @@ class Auditoria(models.Model):
     class Meta:
         ordering = ["-creado_en"]
         indexes = [models.Index(fields=["empresa", "-creado_en"])]
+
+
+class ContadorExpediente(models.Model):
+    empresa = models.OneToOneField(Empresa, on_delete=models.PROTECT)
+    ultimo_numero = models.PositiveBigIntegerField(default=0)
+
+
+class ExpedienteMantenimiento(models.Model):
+    registro = models.OneToOneField(RegistroEquipo, on_delete=models.PROTECT, related_name="expediente_mantenimiento")
+    empresa = models.ForeignKey(Empresa, on_delete=models.PROTECT)
+    cliente_contractual = models.ForeignKey(Cliente, on_delete=models.PROTECT)
+    correlativo = models.PositiveBigIntegerField()
+    numero = models.CharField(max_length=80, unique=True, editable=False)
+    huella_solicitud = models.CharField(max_length=64, editable=False)
+    creado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["empresa", "correlativo"], name="masiscam_exp_empresa_numero_uniq"),
+            models.CheckConstraint(condition=models.Q(correlativo__gt=0), name="masiscam_exp_numero_positivo"),
+        ]
+
+    def __str__(self):
+        return self.numero
+
+
+class RecepcionEquipo(models.Model):
+    expediente = models.OneToOneField(ExpedienteMantenimiento, on_delete=models.PROTECT, related_name="recepcion")
+    fecha = models.DateTimeField()
+    responsable = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    condicion_ingreso = models.TextField()
+    observaciones = models.TextField(blank=True)
+    guia_remision = models.CharField(max_length=150, blank=True)
+    snapshot = models.JSONField(default=dict)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+
+class EvidenciaRecepcion(models.Model):
+    recepcion = models.ForeignKey(RecepcionEquipo, on_delete=models.PROTECT, related_name="evidencias")
+    documento = models.OneToOneField(Documento, on_delete=models.PROTECT, related_name="evidencia_recepcion")
+    tipo = models.CharField(max_length=12, choices=[("FOTO", "Fotografía"), ("GUIA", "Guía de remisión")])
+
+
+class FotoRecepcionClasificada(models.Model):
+    evidencia = models.OneToOneField(EvidenciaRecepcion, on_delete=models.PROTECT, related_name="clasificacion")
+    clase = models.CharField(max_length=10, choices=[("GENERAL", "General"), ("PLACA", "Placa")])
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(clase__in=["GENERAL", "PLACA"]), name="recepcion_clase_foto_valida")]
+
+
+class ConfirmacionRecepcion(models.Model):
+    recepcion = models.OneToOneField(RecepcionEquipo, on_delete=models.PROTECT, related_name="confirmacion")
+    guia = models.OneToOneField("EmisionGuiaIngreso", on_delete=models.PROTECT, related_name="confirmacion")
+    clave = models.UUIDField(unique=True, editable=False)
+    huella = models.CharField(max_length=64, editable=False)
+    placa = models.CharField(max_length=12, choices=[("CON_PLACA", "Con placa"), ("SIN_PLACA", "Sin placa")])
+    motivo_sin_placa = models.TextField(blank=True)
+    motivo_sin_guia = models.TextField(blank=True)
+    politica = models.CharField(max_length=40, editable=False)
+    responsable = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    confirmado_en = models.DateTimeField()
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=(models.Q(placa="CON_PLACA", motivo_sin_placa="") |
+            (models.Q(placa="SIN_PLACA") & ~models.Q(motivo_sin_placa=""))), name="recepcion_excepcion_placa_valida")]
+
+
+class EmisionGuiaIngreso(models.Model):
+    class Estado(models.TextChoices):
+        PENDIENTE = "PENDIENTE", "Pendiente de generación"
+        GENERADA = "GENERADA", "Generada localmente"
+        ERROR = "ERROR", "Error de generación"
+
+    expediente = models.ForeignKey(ExpedienteMantenimiento, on_delete=models.PROTECT, related_name="guias")
+    version = models.PositiveIntegerField()
+    clave = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    snapshot = models.JSONField()
+    documento = models.OneToOneField(Documento, on_delete=models.PROTECT, null=True, blank=True, related_name="guia_ingreso")
+    hash_sha256 = models.CharField(max_length=64, blank=True, editable=False)
+    estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.PENDIENTE)
+    error = models.CharField(max_length=255, blank=True)
+    creado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["version"]
+        constraints = [
+            models.UniqueConstraint(fields=["expediente", "version"], name="masiscam_guia_version_uniq"),
+            models.CheckConstraint(condition=models.Q(version__gt=0), name="masiscam_guia_version_positiva"),
+            models.CheckConstraint(condition=(models.Q(estado="GENERADA", documento__isnull=False) | ~models.Q(estado="GENERADA")), name="masiscam_guia_generada_documento"),
+        ]
+
+
+from .tecnica_models import (AsignacionTecnica, EtapaExpediente, Inspeccion, Diagnostico,
+    EvidenciaTecnica, DecisionTecnica, ReferenciaTecnica, ComponenteTecnico,
+    ParteReferenciaTecnica, AplicabilidadReferenciaEquipo, PiezaRequerida, EmisionInformeTecnico)
+from .operacion_models import (PropuestaComercial, DecisionComercial, RecepcionRepuesto,
+    ActividadReparacion, UsoRepuesto, ResultadoReparacion, RevisionReparacion,
+    EvidenciaOperativa, EmisionOperativa)
+from .calibracion_models import (PlantillaCalibracion, ValidacionPlantillaCalibracion,
+    AplicabilidadCalibracion, Calibracion, MedicionCalibracion, EvidenciaCalibracion,
+    DecisionCalibracion, EmisionCalibracion)
+from .cierre_models import InformeFinal, RevisionInformeFinal, CierreExpediente

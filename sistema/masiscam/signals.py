@@ -25,5 +25,5 @@ def equipo_creado(sender, instance, created, raw, using, **kwargs):
 
 @receiver(post_save, sender=RegistroEquipo, dispatch_uid="masiscam_registro_drive")
 def registro_creado(sender, instance, created, raw, using, **kwargs):
-    if created and not raw and not instance.drive_folder_id:
+    if created and not raw and not instance.drive_folder_id and not getattr(instance, "_sin_drive_recepcion", False):
         transaction.on_commit(partial(encolar_carpeta_registro, instance.pk), using=using)

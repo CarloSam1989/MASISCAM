@@ -8,6 +8,41 @@ register = template.Library()
 
 
 @register.simple_tag(takes_context=True)
+def puede_ver_cierre(context):
+    from django.conf import settings
+    return bool(getattr(settings,'MASISCAM_CIERRE_LOCAL',False) and puede_ver_tecnica(context))
+
+
+@register.simple_tag(takes_context=True)
+def puede_ver_calibracion(context):
+    from django.conf import settings
+    return bool(getattr(settings,'MASISCAM_CALIBRACION_LOCAL',False) and puede_ver_tecnica(context))
+
+
+@register.simple_tag(takes_context=True)
+def puede_ver_operacion(context):
+    from django.conf import settings
+    return bool(getattr(settings,'MASISCAM_OPERACION_LOCAL',False) and puede_ver_tecnica(context))
+
+
+@register.simple_tag(takes_context=True)
+def puede_ver_tecnica(context):
+    from django.conf import settings
+    request=context.get('request')
+    role=getattr(request,'rol_masiscam',None)
+    return bool(getattr(settings,'MASISCAM_TECNICA_LOCAL',False) and request and request.user.is_authenticated
+        and not getattr(request,'cliente_usuario',None) and role and role.rol in {'TECNICO','OFICINA','PLANTA','GERENCIA','ADMIN','CONSULTA'})
+
+
+@register.simple_tag(takes_context=True)
+def puede_ver_recepcion(context):
+    request = context.get("request")
+    rol = getattr(request, "rol_masiscam", None)
+    return bool(request and request.user.is_authenticated and not getattr(request, "cliente_usuario", None)
+                and rol and rol.rol in {"OFICINA", "PLANTA", "GERENCIA", "ADMIN", "CONSULTA"})
+
+
+@register.simple_tag(takes_context=True)
 def puede_gestionar_usuarios(context):
     request = context.get("request")
     return bool(request and request.user.is_authenticated and tiene_permiso(request, "usuarios"))

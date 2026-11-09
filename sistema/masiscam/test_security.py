@@ -1,3 +1,4 @@
+from masiscam.test_utils import consumir_respuesta
 import io
 import json
 import os
@@ -59,7 +60,7 @@ class SecurityTests(TestCase):
         self.login()
         for url in self.private_urls():
             response=self.client.get(url); self.assertEqual(response.status_code,200)
-            self.assertEqual(response["Cache-Control"],"private, no-store"); response.close()
+            self.assertEqual(response["Cache-Control"],"private, no-store"); consumir_respuesta(response)
         self.assertEqual(self.client.get("/media/doc.pdf").status_code,404)
         self.rol.activo=False;self.rol.save()
         for url in self.private_urls():self.assertIn(self.client.get(url).status_code,(302,403))
@@ -76,18 +77,22 @@ class SecurityTests(TestCase):
         response=self.client.get(self.private_urls()[2]); self.assertEqual(response.status_code,404)
         self.assertNotContains(response,self.temp.name,status_code=404)
         Documento.objects.filter(pk=self.documento.pk).update(archivo="doc.pdf",nombre_original='bad"name.pdf')
-        response=self.client.get(self.private_urls()[2]);self.assertTrue(response["Content-Disposition"].startswith("attachment;"));response.close()
+        response=self.client.get(self.private_urls()[2]);self.assertTrue(response["Content-Disposition"].startswith("attachment;"));consumir_respuesta(response)
 
     def test_public_media_visibility_and_inactive_company(self):
         url=reverse("masiscam:imagen_proyecto_publica",args=[self.proyecto.token_publico,"proyecto",0])
-        response=self.client.get(url);self.assertEqual(response.status_code,200);response.close()
+        response=self.client.get(url);self.assertEqual(response.status_code,200);consumir_respuesta(response)
         eq=reverse("masiscam:equipo_foto_publica",args=[self.equipo.token_publico,"placa"])
-        response=self.client.get(eq);self.assertEqual(response.status_code,200);response.close()
+        response=self.client.get(eq);self.assertEqual(response.status_code,200);consumir_respuesta(response)
         doc=reverse("masiscam:documento_publico",args=[self.proyecto.token_publico,self.documento.pk])
-        response=self.client.get(doc);self.assertEqual(response.status_code,200);response.close()
+        response=self.client.get(doc);self.assertEqual(response.status_code,200);consumir_respuesta(response)
         self.empresa.activa=False;self.empresa.save()
         for target in [url,eq,doc]:self.assertEqual(self.client.get(target).status_code,404)
-        self.assertNotContains(self.client.get(reverse("masiscam:equipo_publico",args=[self.equipo.token_publico])),"test-picture")
+        qr = reverse("masiscam:equipo_publico", args=[self.equipo.token_publico])
+        response = self.client.get(qr)
+        self.assertRedirects(response, reverse("accounts:login") + "?next=" + qr,
+                             fetch_redirect_response=False)
+        self.assertNotIn(b"test-picture", response.content)
 
     def test_templates_legal_login_and_protected_links(self):
         login=self.client.get(reverse("accounts:login"))

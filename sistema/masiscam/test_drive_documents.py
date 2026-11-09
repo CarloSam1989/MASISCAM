@@ -1,3 +1,4 @@
+from masiscam.test_utils import consumir_respuesta
 import re
 from unittest.mock import MagicMock, patch
 
@@ -94,7 +95,7 @@ class PublicDriveDocumentsTests(TestCase):
         self.assertEqual(response["X-Content-Type-Options"], "nosniff")
         self.assertEqual(response["Referrer-Policy"], "no-referrer")
         self.assertEqual(b"".join(response.streaming_content), self.content)
-        response.close()
+        consumir_respuesta(response)
         self.api.files().get_media.assert_called_once_with(fileId="pdf", supportsAllDrives=True)
         self.api.permissions.assert_not_called()
 
@@ -108,7 +109,7 @@ class PublicDriveDocumentsTests(TestCase):
             response = self.client.get(self.url(ext))
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response["Content-Type"], mime)
-            response.close()
+            consumir_respuesta(response)
 
     def test_mime_extension_and_content_mismatch_rejected(self):
         self.nodes["pdf"]["name"] = "fake.html"
@@ -230,7 +231,7 @@ class PublicDriveDocumentsTests(TestCase):
         response = self.client.get(self.private_url())
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
-        response.close()
+        consumir_respuesta(response)
         self.assertEqual(self.client.get(self.private_url("foreign")).status_code, 404)
         for vista in ("ficha_detalle", "equipo_informe"):
             response = self.client.get(reverse("masiscam:" + vista, args=[self.antiguo.pk]))
@@ -245,7 +246,7 @@ class PublicDriveDocumentsTests(TestCase):
         self.login()
         response = self.client.get(self.private_url())
         self.assertEqual(response.status_code, 200)
-        response.close()
+        consumir_respuesta(response)
         self.assertEqual(self.client.get(self.private_url("foreign", self.other.pk)).status_code, 403)
 
     def test_token_rotation_changes_url_qr_and_keeps_data(self):
@@ -271,7 +272,7 @@ class PublicDriveDocumentsTests(TestCase):
         self.login()
         response = self.client.get(self.url())
         self.assertEqual(response.status_code, 200)
-        response.close()
+        consumir_respuesta(response)
         self.assertContains(self.client.get(reverse("masiscam:equipo_publico", args=[self.antiguo.token_publico])), "informe.pdf")
         self.api.files().create.assert_not_called()
         self.api.files().update.assert_not_called()

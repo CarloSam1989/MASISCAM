@@ -8,3 +8,8 @@ class MasiscamConfig(AppConfig):
 
     def ready(self):
         from . import signals  # noqa: F401
+        from . import recepcion_guards  # noqa: F401
+        from . import tecnica_guards  # noqa: F401
+        from . import operacion_guards  # noqa: F401
+        from . import calibracion_guards  # noqa: F401
+        from . import cierre_guards  # noqa: F401

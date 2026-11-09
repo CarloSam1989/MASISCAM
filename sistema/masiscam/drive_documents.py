@@ -53,6 +53,11 @@ class EquipoDriveDocuments:
                 and 0 < int(item.get("size", 0)) <= MAX_BYTES)
 
     def authorize(self, file_id):
+        from .models import Documento
+        from .recepcion_guards import documento_protegido
+        for pk in Documento.objects.filter(drive_file_id=file_id).values_list("pk", flat=True):
+            if documento_protegido(pk):
+                raise DocumentUnavailable()
         item = self.metadata(file_id)
         if not self.allowed(item):
             raise DocumentUnavailable()
@@ -75,6 +80,12 @@ class EquipoDriveDocuments:
         raise DocumentUnavailable()
 
     def list(self):
+        from .models import Documento
+        from django.db.models import Q
+        protegidos = set(Documento.objects.filter(Q(guia_ingreso__isnull=False) | Q(evidencia_recepcion__isnull=False) |
+            Q(evidencias_tecnicas__isnull=False) | Q(referencias_tecnicas__isnull=False) | Q(informe_tecnico__isnull=False) |
+            Q(evidencias_operativas__isnull=False) | Q(emision_operativa__isnull=False) |
+            Q(plantillas_calibracion__isnull=False) | Q(evidencias_calibracion__isnull=False) | Q(informe_calibracion__isnull=False) | Q(informe_final__isnull=False)).values_list("drive_file_id", flat=True))
         if self.metadata(self.root).get("mimeType") != FOLDER:
             raise DocumentUnavailable()
         pending, seen, result = [(self.root, ())], set(), []
@@ -98,7 +109,7 @@ class EquipoDriveDocuments:
                         continue
                     if item.get("mimeType") == FOLDER:
                         pending.append((item["id"], ancestors + (parent,)))
-                    elif self.allowed(item):
+                    elif self.allowed(item) and item["id"] not in protegidos:
                         result.append({"id": item["id"], "name": item["name"],
                                        "folders": ancestors + (parent,)})
                     if len(result) > 2000:

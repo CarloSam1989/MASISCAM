@@ -1,3 +1,4 @@
+from masiscam.test_utils import consumir_respuesta
 import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -111,7 +112,7 @@ class RegistroUploadTests(TestCase):
                 FILE_UPLOAD_TEMP_DIR=directory, FILE_UPLOAD_MAX_MEMORY_SIZE=1), patch("django.core.files.storage.FileSystemStorage.save") as save:
             response = self.crear([self.archivo(), self.archivo("dos.pdf", b"%PDF-1.7 dos")])
             self.assertEqual(response.status_code, 302)
-            response.close()
+            consumir_respuesta(response)
             self.assertEqual(list(Path(directory).rglob("*")), [])
             save.assert_not_called()
         registro = self.ultimo()
@@ -258,7 +259,7 @@ class RegistroUploadTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertTrue(response["Content-Disposition"].startswith("attachment;"))
                 self.assertEqual(b"".join(response.streaming_content), b"%PDF-1.7 uno")
-                response.close()
+                consumir_respuesta(response)
         self.equipo.cliente = self.otro_cliente
         self.equipo.save()
         self.assertEqual(self.client.get(url).status_code, 403)
