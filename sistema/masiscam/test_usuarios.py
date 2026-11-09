@@ -170,6 +170,36 @@ class UsuariosTests(TestCase):
                             ("usuario_clave", [self.rol_tecnico.pk]), ("usuario_estado", [self.rol_tecnico.pk])]:
             self.assertEqual(cliente.post(reverse("masiscam:" + vista, args=args)).status_code, 403)
 
+    def test_permisos_generales_visibles_sin_escalar_roles(self):
+        response = self.client.get(reverse("masiscam:usuarios"))
+        self.assertContains(response, "Permisos generales efectivos")
+        roles = {r.pk: r for r in response.context["roles"]}
+        self.assertNotIn("usuarios", roles[self.rol_tecnico.pk].permisos_efectivos)
+        self.assertContains(response, "no conceden aprobaciones")
+        self.rol_tecnico.activo = False
+        self.rol_tecnico.save(update_fields=["activo"])
+        response = self.client.get(reverse("masiscam:usuarios"))
+        roles = {r.pk: r for r in response.context["roles"]}
+        self.assertEqual(roles[self.rol_tecnico.pk].permisos_efectivos, [])
+
+    def test_frontera_rechaza_usuario_inactivo_y_empresa_inactiva(self):
+        from django.core.exceptions import PermissionDenied
+        from django.test import RequestFactory
+        from .access import masiscam_access_required, tiene_permiso
+        request = RequestFactory().get("/app/usuarios/")
+        request.user = self.admin
+        request.empresa_activa = self.empresa
+        view = masiscam_access_required(lambda request: None)
+        request.user.is_active = False
+        self.assertFalse(tiene_permiso(request, "usuarios"))
+        with self.assertRaises(PermissionDenied):
+            view(request)
+        request.user.is_active = True
+        request.user.is_superuser = True
+        request.empresa_activa.activa = False
+        with self.assertRaises(PermissionDenied):
+            view(request)
+
     def editar(self, asignacion, **changes):
         datos = {"username": asignacion.perfil.user.username, "first_name": "Nombre",
                  "email": "", "rol": asignacion.rol, "cliente": asignacion.cliente_id or ""}

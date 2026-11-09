@@ -21,7 +21,7 @@ class ClientesReductoresTests(TestCase):
         cls.otra = Empresa.objects.create(nombre="Empresa B", direccion="B")
         cls.usuario = Usuario.objects.create_user(username="cliente-test")
         perfil = Perfil.objects.create(user=cls.usuario, empresa=cls.empresa)
-        RolMasiscam.objects.create(perfil=perfil, rol=RolMasiscam.Rol.TECNICO)
+        RolMasiscam.objects.create(perfil=perfil, rol=RolMasiscam.Rol.ADMINISTRADOR)
         cls.cliente = Cliente.objects.create(empresa=cls.empresa, nombre_comercial="Camaronera Norte", ruc="0991234567001", razon_social="Cliente técnico S.A.", correo="cliente@example.com", telefono="0999999999")
         cls.ajeno = Cliente.objects.create(empresa=cls.otra, nombre_comercial="Ajeno", ruc=cls.cliente.ruc, razon_social="Otra empresa")
         cls.proyecto = Proyecto.objects.create(empresa=cls.empresa, codigo="ANTIGUO", nombre="Camaronera antigua", razon_social="Razón anterior", identificacion_cliente="0012345678001", cliente="Cliente anterior", responsable="R", fecha_inicio=date(2026, 1, 1), creado_por=cls.usuario)
@@ -251,3 +251,112 @@ class ClientesReductoresTests(TestCase):
                 self.assertEqual(precarga["camaronera"].value(), "LOS TIGRES 2")
                 # Limpiar los nombres para aislar cada variante sin modificar sus equipos.
                 Proyecto.objects.filter(empresa=self.empresa, nombre__in=["LOS TIGRES", "LOS TIGRES 2"]).delete()
+
+class ClientesRBACTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from .test_cliente_access import ClienteAccessTests
+        from .models import RegistroEquipo, ExpedienteMantenimiento, AsignacionTecnica
+        ClienteAccessTests.setUpTestData.__func__(cls)
+        cls.roles = {}
+        for codigo in ('OFICINA', 'TECNICO', 'PLANTA', 'GERENCIA', 'CONSULTA'):
+            user = Usuario.objects.create_user(username='rbac-' + codigo)
+            perfil = Perfil.objects.create(user=user, empresa=cls.empresa)
+            cls.roles[codigo] = RolMasiscam.objects.create(perfil=perfil, rol=codigo)
+        cls.roles['ADMIN'] = cls.admin.perfiles.get().rol_masiscam
+        cls.roles['CLIENTE'] = cls.cliente_user.perfiles.get().rol_masiscam
+        registro = RegistroEquipo.objects.create(equipo=cls.equipo, tipo='MANTENIMIENTO', fecha=date.today())
+        cls.exp = ExpedienteMantenimiento.objects.create(registro=registro, empresa=cls.empresa,
+            cliente_contractual=cls.cliente, correlativo=1, numero='EXP-RBAC-1',
+            huella_solicitud='a' * 64, creado_por=cls.admin)
+        cls.asignacion = AsignacionTecnica.objects.create(expediente=cls.exp,
+            tecnico=cls.roles['TECNICO'].perfil.user, asignado_por=cls.roles['PLANTA'].perfil.user, motivo='QA')
+        cls.externa = Empresa.objects.create(nombre='RBAC Externa')
+        cls.cliente_externo = Cliente.objects.create(empresa=cls.externa, nombre_comercial='Externo RBAC', ruc='1234567890001')
+
+    def login_rol(self, codigo):
+        self.client.force_login(self.roles[codigo].perfil.user)
+
+    def test_matriz_escritura_html_ajax_y_botones(self):
+        for codigo in self.roles:
+            with self.subTest(rol=codigo):
+                self.login_rol(codigo)
+                allowed = codigo in {'ADMIN', 'OFICINA'}
+                for vista, args in [('cliente_crear', []), ('cliente_editar', [self.cliente.pk])]:
+                    url = reverse('masiscam:' + vista, args=args)
+                    self.assertEqual(self.client.get(url).status_code, 200 if allowed else 403)
+                    self.assertEqual(self.client.post(url, {}, HTTP_ACCEPT='application/json').status_code, 400 if allowed else 403)
+                    self.assertEqual(self.client.post(url, {}, HTTP_X_REQUESTED_WITH='XMLHttpRequest').status_code, 400 if allowed else 403)
+                if codigo != 'CLIENTE':
+                    response = self.client.get(reverse('masiscam:clientes'))
+                    self.assertEqual(response.status_code, 200)
+                    url = reverse('masiscam:cliente_crear')
+                    (self.assertContains if allowed else self.assertNotContains)(response, 'href="' + url + '"')
+                    response = self.client.get(reverse('masiscam:cliente_detalle', args=[self.cliente.pk]))
+                    (self.assertContains if allowed else self.assertNotContains)(response, 'href="' + reverse('masiscam:cliente_editar', args=[self.cliente.pk]) + '"')
+
+    def test_oficina_alta_edicion_aislamiento_y_sin_privilegios_tecnicos(self):
+        self.login_rol('OFICINA')
+        data = dict(nombre_comercial='Alta oficina', ruc='1234567890002', razon_social='QA', correo='qa@example.com')
+        response = self.client.post(reverse('masiscam:cliente_crear'), dict(data, empresa=self.externa.pk), HTTP_ACCEPT='application/json')
+        self.assertEqual(response.status_code, 201)
+        nuevo = Cliente.objects.get(ruc=data['ruc'])
+        self.assertEqual(nuevo.empresa_id, self.empresa.pk)
+        data['nombre_comercial'] = 'Editado oficina'
+        self.assertEqual(self.client.post(reverse('masiscam:cliente_editar', args=[nuevo.pk]), data).status_code, 302)
+        for method in (self.client.get, self.client.post):
+            self.assertEqual(method(reverse('masiscam:cliente_editar', args=[self.cliente_externo.pk]), data).status_code, 404)
+        from .access import PERMISOS_ROL
+        self.assertEqual(PERMISOS_ROL['OFICINA'], {'ver', 'clientes_crear', 'clientes_editar'})
+        self.assertEqual(self.client.get(reverse('masiscam:usuario_crear')).status_code, 403)
+
+    def test_tecnico_lectura_asignada_ajax_selectores_y_revocacion(self):
+        from django.utils import timezone
+        from .forms import EquipoForm
+        self.login_rol('TECNICO')
+        url = reverse('masiscam:clientes')
+        response = self.client.get(url)
+        self.assertContains(response, self.cliente.nombre_comercial)
+        self.assertNotContains(response, self.otro_cliente.nombre_comercial)
+        response = self.client.get(url, {'formato': 'json', 'ruc': '099'})
+        self.assertEqual([c['id'] for c in response.json()['clientes']], [self.cliente.pk])
+        self.assertEqual(self.client.get(reverse('masiscam:cliente_detalle', args=[self.otro_cliente.pk])).status_code, 404)
+        self.assertEqual(self.client.get(reverse('masiscam:producto_listado', args=['reductor']), {'cliente': self.otro_cliente.pk}).status_code, 404)
+        for form in (FichaEquipoForm(empresa=self.empresa, usuario=self.roles['TECNICO'].perfil.user),
+                     EquipoForm(empresa=self.empresa, usuario=self.roles['TECNICO'].perfil.user)):
+            self.assertEqual(list(form.fields['cliente'].queryset), [self.cliente])
+        response = self.client.get(reverse('masiscam:ficha_crear'))
+        self.assertNotContains(response, 'id="cliente-modal"')
+        self.assertNotContains(response, 'id="cliente-crear"')
+        self.asignacion.fin = timezone.now()
+        self.asignacion.save(update_fields=['fin'])
+        self.assertEqual(self.client.get(url, {'formato': 'json', 'ruc': '099'}).json()['clientes'], [])
+        self.assertEqual(self.client.get(reverse('masiscam:cliente_detalle', args=[self.cliente.pk])).status_code, 404)
+
+    def test_sesion_rol_cambiado_y_post_no_modifican_clientes(self):
+        self.login_rol('OFICINA')
+        rol = self.roles['OFICINA']
+        rol.rol = 'TECNICO'
+        rol.save(update_fields=['rol'])
+        antes = Cliente.objects.count()
+        self.assertEqual(self.client.post(reverse('masiscam:cliente_crear'), {'nombre_comercial': 'No autorizado'}).status_code, 403)
+        self.assertEqual(Cliente.objects.count(), antes)
+        self.assertEqual(self.client.get(reverse('masiscam:cliente_detalle', args=[self.cliente.pk])).status_code, 404)
+
+
+    def test_admin_django_no_elude_permiso_tecnico(self):
+        from django.contrib.auth.models import Permission
+        user = self.roles['TECNICO'].perfil.user
+        user.is_staff = True
+        user.save(update_fields=['is_staff'])
+        user.user_permissions.add(*Permission.objects.filter(content_type__app_label='masiscam', content_type__model='cliente'))
+        self.client.force_login(user)
+        for vista, args in [('admin:masiscam_cliente_add', []),
+                            ('admin:masiscam_cliente_change', [self.cliente.pk]),
+                            ('admin:masiscam_cliente_delete', [self.cliente.pk])]:
+            url = reverse(vista, args=args)
+            self.assertRedirects(self.client.get(url), reverse('admin:login') + '?next=' + url, fetch_redirect_response=False)
+            self.assertRedirects(self.client.post(url, {'nombre_comercial': 'Bypass'}), reverse('admin:login') + '?next=' + url, fetch_redirect_response=False)
+        response = self.client.get(reverse('admin:masiscam_cliente_changelist'))
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse('admin:login')))

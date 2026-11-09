@@ -8,6 +8,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from .access import clientes_autorizados
 from .models import Cliente, Documento, Equipo, Proyecto, RegistroEquipo
 
 
@@ -143,7 +144,7 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
     observaciones = forms.CharField(label="Observaciones", required=False, widget=forms.Textarea(attrs={"rows": 4}))
     consulta_publica_activa = forms.BooleanField(label="Consulta pública activa", required=False)
 
-    def __init__(self, *args, empresa, equipo=None, tipo_producto=Equipo.TipoProducto.REDUCTOR, **kwargs):
+    def __init__(self, *args, empresa, usuario=None, equipo=None, tipo_producto=Equipo.TipoProducto.REDUCTOR, **kwargs):
         self.tipo_producto = equipo.tipo_producto if equipo else tipo_producto
         self.empresa = empresa
         self.equipo = equipo
@@ -173,7 +174,7 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
         super().__init__(*args, **kwargs)
         if equipo is None:
             self.fields["consulta_publica_activa"].initial = True
-        self.fields["cliente"].queryset = Cliente.objects.filter(empresa=empresa)
+        self.fields["cliente"].queryset = (clientes_autorizados(usuario=usuario, empresa=empresa) if usuario else Cliente.objects.filter(empresa=empresa))
         self.permite_sin_cliente = bool(equipo and not equipo.cliente_id)
         self.fields["cliente"].required = not self.permite_sin_cliente
         valor_cliente = self["cliente"].value()
@@ -300,12 +301,12 @@ class ProyectoForm(MasiscamImageFormMixin, forms.ModelForm):
 class EquipoForm(MasiscamImageFormMixin, forms.ModelForm):
     ruc = forms.CharField(label="RUC", max_length=20, required=False)
 
-    def __init__(self, *args, empresa=None, **kwargs):
+    def __init__(self, *args, empresa=None, usuario=None, **kwargs):
         super().__init__(*args, **kwargs)
         if self.instance.proyecto_id:
             empresa = empresa or self.instance.proyecto.empresa
             self.initial.setdefault("ruc", self.instance.ruc_cliente)
-        self.fields["cliente"].queryset = Cliente.objects.filter(empresa=empresa) if empresa else Cliente.objects.none()
+        self.fields["cliente"].queryset = (clientes_autorizados(usuario=usuario, empresa=empresa) if usuario else Cliente.objects.filter(empresa=empresa)) if empresa else Cliente.objects.none()
 
     def guardar_ruc(self):
         if not self.instance.cliente_id and "ruc" in self.changed_data:

@@ -17,7 +17,7 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 
 
 from .drive_documents import EquipoDriveDocuments, DocumentUnavailable
-from .access import EquipoNoAsignado, masiscam_access_required, permiso_masiscam_required, tiene_permiso
+from .access import clientes_autorizados, EquipoNoAsignado, masiscam_access_required, permiso_masiscam_required, tiene_permiso
 from .forms import ClienteForm, DocumentoForm, EquipoForm, FichaEquipoForm, ProyectoForm, VisibilidadProyectoForm, RegistroEquipoForm, RegistroArchivosForm, RegistroFechaForm, datos_cliente
 from .models import ArchivoRegistro, Cliente, Auditoria, Documento, Equipo, Proyecto, RegistroEquipo, RolMasiscam
 from .registro_archivos import registrar_archivos, subir_archivos, encolar_revision, sincronizar_archivo
@@ -37,7 +37,7 @@ def _proyecto(request, pk):
 
 
 def _contexto_permisos(request):
-    return {"puede_ver_carpeta_producto": not request.cliente_usuario and (request.user.is_superuser or request.rol_masiscam.rol == RolMasiscam.Rol.ADMINISTRADOR), **{f"puede_{p}": tiene_permiso(request, p) for p in ("crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios")}}
+    return {"puede_ver_carpeta_producto": not request.cliente_usuario and (request.user.is_superuser or request.rol_masiscam.rol == RolMasiscam.Rol.ADMINISTRADOR), **{f"puede_{p}": tiene_permiso(request, p) for p in ("crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios", "clientes_crear", "clientes_editar")}}
 
 
 def _equipos_autorizados(request):
@@ -136,7 +136,7 @@ def producto_listado(request, tipo):
         return redirect(request.get_full_path())
     cliente = None
     cliente_id = request.GET.get("cliente", "").strip()
-    clientes = Cliente.objects.filter(empresa=request.empresa_activa)
+    clientes = clientes_autorizados(usuario=request.user, empresa=request.empresa_activa)
     if cliente_id:
         if not cliente_id.isascii() or not cliente_id.isdecimal() or len(cliente_id) > 18:
             raise Http404
@@ -162,7 +162,7 @@ def producto_listado(request, tipo):
 @masiscam_access_required
 def clientes(request):
     q = request.GET.get("q", "").strip()
-    clientes_qs = Cliente.objects.filter(empresa=request.empresa_activa)
+    clientes_qs = clientes_autorizados(usuario=request.user, empresa=request.empresa_activa)
     if request.GET.get("formato") == "json":
         ruc = request.GET.get("ruc", "").strip()[:20]
         encontrados = clientes_qs.filter(ruc__startswith=ruc).order_by("ruc")[:10] if ruc else []
@@ -176,7 +176,7 @@ def clientes(request):
 
 @masiscam_access_required
 def cliente_detalle(request, pk):
-    cliente = get_object_or_404(Cliente, pk=pk, empresa=request.empresa_activa)
+    cliente = get_object_or_404(clientes_autorizados(usuario=request.user, empresa=request.empresa_activa), pk=pk)
     contexto = {"cliente": cliente, "productos": _productos(cliente.equipos.filter(proyecto__empresa=request.empresa_activa), cliente),
                 "acceso_cliente": RolMasiscam.objects.filter(cliente=cliente).select_related("perfil__user").first()}
     contexto.update(_contexto_permisos(request))
@@ -210,6 +210,8 @@ def cliente_usuario_crear(request, pk):
 
 
 def _cliente_formulario(request, cliente=None):
+    if not tiene_permiso(request, "clientes_editar" if cliente else "clientes_crear"):
+        raise PermissionDenied("El rol no permite modificar clientes.")
     modal = _es_modal(request)
     respuesta_json = "application/json" in request.headers.get("Accept", "") and not modal
     if respuesta_json and request.method == "POST" and cliente is None:
@@ -244,12 +246,12 @@ def _cliente_formulario(request, cliente=None):
     return render(request, "masiscam/cliente_form.html", {"form": form, "cliente": cliente, "titulo": "Editar cliente" if cliente else "Crear cliente"})
 
 
-@permiso_masiscam_required("crear")
+@permiso_masiscam_required("clientes_crear")
 def cliente_crear(request):
     return _cliente_formulario(request)
 
 
-@permiso_masiscam_required("editar")
+@permiso_masiscam_required("clientes_editar")
 def cliente_editar(request, pk):
     cliente = get_object_or_404(Cliente, pk=pk, empresa=request.empresa_activa)
     return _cliente_formulario(request, cliente)
@@ -286,11 +288,11 @@ def ficha_crear(request):
     if cliente_id:
         if not cliente_id.isdecimal() or len(cliente_id) > 18:
             raise Http404
-        inicial["cliente"] = get_object_or_404(Cliente, pk=cliente_id, empresa=request.empresa_activa).pk
+        inicial["cliente"] = get_object_or_404(clientes_autorizados(usuario=request.user, empresa=request.empresa_activa), pk=cliente_id).pk
     form = FichaEquipoForm(
         request.POST if request.method == "POST" else None,
         request.FILES if request.method == "POST" else None,
-        empresa=request.empresa_activa, tipo_producto=tipo, initial=inicial,
+        empresa=request.empresa_activa, usuario=request.user, tipo_producto=tipo, initial=inicial,
     )
     if request.method == "POST" and form.is_valid():
         try:
@@ -502,7 +504,7 @@ def ficha_editar(request, pk):
     form = FichaEquipoForm(
         request.POST if request.method == "POST" else None,
         request.FILES if request.method == "POST" else None,
-        empresa=request.empresa_activa,
+        empresa=request.empresa_activa, usuario=request.user,
         equipo=equipo,
     )
     if request.method == "POST" and form.is_valid():
@@ -764,7 +766,7 @@ def proyecto_crear(request):
 @masiscam_access_required
 def proyecto_detalle(request, pk):
     proyecto = _proyecto(request, pk)
-    contexto = {"proyecto": proyecto, "documento_form": DocumentoForm(proyecto=proyecto), "equipo_form": EquipoForm(empresa=request.empresa_activa)}
+    contexto = {"proyecto": proyecto, "documento_form": DocumentoForm(proyecto=proyecto), "equipo_form": EquipoForm(empresa=request.empresa_activa, usuario=request.user)}
     contexto.update(_contexto_permisos(request))
     return render(request, "masiscam/proyecto_detalle.html", contexto)
 
@@ -809,8 +811,8 @@ def proyecto_archivar(request, pk):
 def equipo_crear(request, pk):
     proyecto = _proyecto(request, pk)
     if request.method == "GET":
-        return render(request, "masiscam/_equipo_form.html", {"form": EquipoForm(empresa=request.empresa_activa), "proyecto": proyecto})
-    form = EquipoForm(request.POST, request.FILES, instance=Equipo(proyecto=proyecto), empresa=request.empresa_activa)
+        return render(request, "masiscam/_equipo_form.html", {"form": EquipoForm(empresa=request.empresa_activa, usuario=request.user), "proyecto": proyecto})
+    form = EquipoForm(request.POST, request.FILES, instance=Equipo(proyecto=proyecto), empresa=request.empresa_activa, usuario=request.user)
     if form.is_valid():
         equipo = form.save(commit=False)
         equipo.proyecto = proyecto
@@ -832,7 +834,7 @@ def equipo_crear(request, pk):
 def equipo_editar(request, pk, equipo_pk):
     proyecto = _proyecto(request, pk)
     equipo = get_object_or_404(proyecto.equipos, pk=equipo_pk)
-    form = EquipoForm(request.POST or None, request.FILES or None, instance=equipo, empresa=request.empresa_activa)
+    form = EquipoForm(request.POST or None, request.FILES or None, instance=equipo, empresa=request.empresa_activa, usuario=request.user)
     if request.method == "POST" and form.is_valid():
         form.save()
         auditar(empresa=request.empresa_activa, usuario=request.user, accion="EQUIPO_EDITADO", objeto=equipo, detalle={"campos": form.changed_data})

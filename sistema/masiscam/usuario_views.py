@@ -7,10 +7,21 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from accounts.models import Perfil
-from .access import permiso_masiscam_required
+from .access import PERMISOS_ROL, permiso_masiscam_required
 from .models import RolMasiscam
 from .services import auditar
 from .usuario_forms import AdministradorCrearForm, UsuarioClaveForm, UsuarioEditarForm
+
+
+ALCANCE_OPERATIVO = {
+    "ADMIN": "Lectura técnica de empresa; administración heredada. Sin decisiones técnicas o comerciales.",
+    "CONSULTA": "Lectura histórica de empresa. Sin modificaciones ni aprobaciones.",
+    "CLIENTE": "Solo productos propios y documentos autorizados. Sin biblioteca ni operaciones internas.",
+    "OFICINA": "Crear y editar clientes de la empresa; recepción, respaldos comerciales, recepción de repuestos y documentos operativos; solicitud de informes. Sin aprobación técnica o comercial.",
+    "TECNICO": "Consultar clientes de expedientes asignados, sin modificarlos; expedientes asignados y biblioteca aplicable; edición de sus borradores técnicos, reparación autorizada y calibración. Sin aprobar trabajos ni consultar respaldos comerciales.",
+    "PLANTA": "Asignación técnica, biblioteca, revisión técnica independiente, protocolos de calibración y recepción de repuestos. Sin decisión comercial ni cierre administrativo.",
+    "GERENCIA": "Propuestas y decisiones comerciales con respaldo y política válida; cierre administrativo con revisión técnica previa. Sin sustituir PLANTA.",
+}
 
 
 def _roles(request):
@@ -39,8 +50,13 @@ def usuarios(request):
     for rol in roles:
         rol.gestionable = _gestionable(request, rol)
         rol.acceso_activo = rol.activo and rol.perfil.activo and rol.perfil.user.is_active
+        rol.permisos_efectivos = sorted(PERMISOS_ROL.get(rol.rol, set())) if rol.acceso_activo else []
+        rol.privilegio_tecnico = rol.perfil.user.is_superuser
+        rol.alcance_operativo = ALCANCE_OPERATIVO.get(rol.rol, "Sin operaciones autorizadas.") if rol.acceso_activo else "Sin acceso."
     pendientes = len({rol.perfil.user_id for rol in roles if rol.rol == RolMasiscam.Rol.CONSULTA})
-    return render(request, "masiscam/usuarios.html", {"roles": roles, "consulta_pendientes": pendientes})
+    return render(request, "masiscam/usuarios.html", {
+        "roles": roles, "consulta_pendientes": pendientes, "empresa_usuarios": request.empresa_activa,
+    })
 
 
 @sensitive_post_parameters("password1", "password2")

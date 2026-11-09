@@ -2,10 +2,12 @@
 {% load static %}
 {% block content %}
 <div class="container py-4">
-  <div class="d-flex justify-content-between align-items-center gap-3 mb-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <h1 class="h3 mb-0">Usuarios</h1>
     <a class="btn btn-primary" href="{% url 'masiscam:usuario_crear' %}">+ Agregar usuario</a>
   </div>
+  <p>Empresa: <strong>{{ empresa_usuarios }}</strong>. Las altas se asignan a esta empresa.</p>
+  <p class="text-muted">Los permisos generales no conceden aprobaciones técnicas ni comerciales. Cada expediente y descarga valida además empresa, asignación, autoría, clasificación y estado. Las fases locales requieren estar habilitadas.</p>
   <div id="usuarios-controles" class="mb-3" hidden>
     <label class="form-label" for="usuarios-buscar">Buscar usuarios</label>
     <input type="search" id="usuarios-buscar" class="form-control" placeholder="Usuario, nombre, rol o estado" aria-controls="usuarios-tabla">
@@ -13,10 +15,14 @@
   {% if consulta_pendientes %}<p class="alert alert-warning" role="status">Usuarios con rol Consulta en esta empresa: {{ consulta_pendientes }}. Conservan su acceso actual; la conversión está pendiente de revisión y no se realizará automáticamente.</p>{% endif %}
   <div class="card masiscam-card table-responsive">
     <table id="usuarios-tabla" class="table table-hover align-middle mb-0 masiscam-table">
-      <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></thead>
+      <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th>Permisos generales efectivos</th><th>Acciones</th></tr></thead>
       <tbody>{% for rol in roles %}<tr>
         <td>{{ rol.perfil.user.username }}</td><td>{{ rol.perfil.user.get_full_name|default:"—" }}</td>
         <td>{{ rol.get_rol_display }}</td><td>{% if rol.acceso_activo %}Activo{% else %}Inactivo{% endif %}</td>
+        <td>{% if not rol.acceso_activo %}Sin acceso{% elif rol.privilegio_tecnico %}Superusuario técnico: permisos generales completos; sin sustitución de aprobaciones de negocio.{% else %}{{ rol.permisos_efectivos|join:", " }}{% endif %}
+          {% if rol.cliente_id %}<div>Solo cliente: {{ rol.cliente }}</div>{% endif %}
+          <details><summary>Alcance en expedientes</summary>{{ rol.alcance_operativo }}</details>
+        </td>
         <td>{% if rol.gestionable %}
           <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:usuario_editar' rol.pk %}">Editar</a>
           <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:usuario_clave' rol.pk %}">Cambiar clave</a>

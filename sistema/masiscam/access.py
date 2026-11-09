@@ -2,7 +2,7 @@ from functools import wraps
 
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
-from django.db.models import Q
+from django.db.models import F, Q
 from django.shortcuts import render
 
 from accounts.models import Perfil
@@ -14,14 +14,34 @@ class EquipoNoAsignado(PermissionDenied):
 
 
 PERMISOS_ROL = {
-    RolMasiscam.Rol.OFICINA: {"ver"},
+    RolMasiscam.Rol.OFICINA: {"ver", "clientes_crear", "clientes_editar"},
     RolMasiscam.Rol.PLANTA: {"ver"},
     RolMasiscam.Rol.GERENCIA: {"ver"},
-    RolMasiscam.Rol.ADMINISTRADOR: {"ver", "crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios"},
+    RolMasiscam.Rol.ADMINISTRADOR: {"ver", "crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios", "clientes_crear", "clientes_editar"},
     RolMasiscam.Rol.TECNICO: {"ver", "crear", "editar", "equipos", "documentos", "reemplazar", "qr", "historial"},
     RolMasiscam.Rol.CONSULTA: {"ver"},
     RolMasiscam.Rol.CLIENTE: {"ver"},
 }
+
+
+def clientes_autorizados(*, usuario, empresa):
+    """Customer boundary shared by HTML, AJAX and customer selectors."""
+    from .models import Cliente, ExpedienteMantenimiento
+    qs = Cliente.objects.filter(empresa=empresa)
+    if not usuario.is_authenticated or not usuario.is_active or not empresa or not empresa.activa:
+        return qs.none()
+    rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa)
+    if rol and rol.rol == RolMasiscam.Rol.TECNICO:
+        expedientes = ExpedienteMantenimiento.objects.filter(
+            empresa=empresa, asignaciones_tecnicas__tecnico=usuario,
+            asignaciones_tecnicas__fin__isnull=True,
+            registro__equipo__proyecto__empresa=empresa,
+            registro__equipo__cliente_id=F('cliente_contractual_id'),
+        )
+        return qs.filter(pk__in=expedientes.values('cliente_contractual_id'))
+    if rol and rol.rol == RolMasiscam.Rol.CLIENTE:
+        return qs.filter(pk=rol.cliente_id)
+    return qs if rol or usuario.is_superuser else qs.none()
 
 # Client roles are scoped globally to prevent changing the active company or
 # using another membership to escape the customer boundary.
@@ -50,7 +70,7 @@ VISTAS_CLIENTE = {
 
 
 def perfil_masiscam_usuario(*, usuario, empresa):
-    if not usuario.is_authenticated or empresa is None:
+    if not usuario.is_authenticated or not usuario.is_active or empresa is None:
         return None
     return Perfil.objects.filter(user=usuario, empresa=empresa, activo=True).select_related("empresa").first()
 
@@ -63,6 +83,8 @@ def rol_masiscam_usuario(*, usuario, empresa):
 
 
 def tiene_permiso(request, permiso):
+    if not request.user.is_authenticated or not request.user.is_active:
+        return False
     if getattr(request, "cliente_usuario", None):
         return permiso == "ver"
     if request.user.is_superuser:
@@ -76,6 +98,8 @@ def masiscam_access_required(view_func):
     def wrapped(request, *args, **kwargs):
         if not request.user.is_authenticated:
             return redirect_to_login(request.get_full_path())
+        if not request.user.is_active:
+            raise PermissionDenied("La cuenta no está activa.")
         acceso_cliente = acceso_cliente_usuario(request.user)
         request.cliente_usuario = acceso_cliente.cliente if acceso_cliente else None
         if acceso_cliente and (view_func.__name__ not in VISTAS_CLIENTE or request.method not in {"GET", "HEAD"}):
@@ -85,6 +109,8 @@ def masiscam_access_required(view_func):
             raise PermissionDenied("La empresa no corresponde al cliente.")
         if empresa is None:
             raise PermissionDenied("Debe seleccionar una empresa activa.")
+        if not empresa.activa:
+            raise PermissionDenied("La empresa no está activa.")
         perfil = perfil_masiscam_usuario(usuario=request.user, empresa=empresa)
         if not request.user.is_superuser and (perfil is None or not perfil.empresa.activa):
             raise PermissionDenied("El perfil no tiene acceso a MASISCAM.")
