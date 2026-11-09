@@ -19,6 +19,7 @@ def taller_inicio(request):
     return render(request, 'masiscam/taller_inicio.html', {
         'tipos': Equipo.TipoProducto.choices,
         'pagina': Paginator(equipos, 25).get_page(request.GET.get('page')),
+        'expedientes': estados_autorizados(request).order_by('-pk')[:10],
     })
 
 
@@ -26,7 +27,17 @@ def taller_inicio(request):
 @masiscam_access_required
 def taller_estado(request):
     autorizar_creacion_equipo(usuario=request.user, empresa=request.empresa_activa)
-    expedientes = expedientes_autorizados(request.user, request.empresa_activa).select_related(
+    expedientes = estados_autorizados(request)
+    numero = request.GET.get('numero', '').strip()[:80]
+    if numero:
+        expedientes = expedientes.filter(numero=numero)
+    return render(request, 'masiscam/taller_estado.html', {
+        'pagina': Paginator(expedientes, 25).get_page(request.GET.get('page')), 'numero': numero,
+    })
+
+
+def estados_autorizados(request):
+    return expedientes_autorizados(request.user, request.empresa_activa).select_related(
         'registro__equipo', 'recepcion__confirmacion').prefetch_related('etapas_tecnicas',
         Prefetch('calibraciones', queryset=Calibracion.objects.only('id', 'expediente_id', 'estado', 'revision').order_by('-revision'), to_attr='calibraciones_estado'),
         Prefetch('informes_finales', queryset=InformeFinal.objects.only('id', 'expediente_id', 'estado', 'version').order_by('-version'), to_attr='informes_estado'),
@@ -34,12 +45,6 @@ def taller_estado(request):
         cerrado=Exists(CierreExpediente.objects.filter(expediente_id=OuterRef('pk'))),
         tiene_reparacion=Exists(ActividadReparacion.objects.filter(expediente_id=OuterRef('pk'))),
     )
-    numero = request.GET.get('numero', '').strip()[:80]
-    if numero:
-        expedientes = expedientes.filter(numero=numero)
-    return render(request, 'masiscam/taller_estado.html', {
-        'pagina': Paginator(expedientes, 25).get_page(request.GET.get('page')), 'numero': numero,
-    })
 
 
 @require_GET

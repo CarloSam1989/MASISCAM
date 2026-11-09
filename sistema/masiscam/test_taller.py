@@ -44,6 +44,56 @@ class TallerTests(TestCase):
             numero_serie='TALLER-SER-' + sufijo, potencia='20 HP',
             consulta_publica_activa='on', registrado_por=self.root.pk, empresa='99999')
 
+    def test_menu_fuera_del_decorador_y_empresa_activa(self):
+        # This page shares base.html but does not use masiscam_access_required.
+        url = reverse('accounts:seleccionar_empresa')
+        response = self.client.get(url)
+        self.assertEqual(response.wsgi_request.rol_masiscam.rol, 'TALLER')
+        self.assertContains(response, '>Inicio</a>')
+        self.assertContains(response, 'Cerrar sesi&oacute;n')
+        self.assertNotContains(response, '>Clientes</a>')
+        self.assertNotContains(response, '>Proyectos</a>')
+        self.assertRedirects(self.client.post(url, {'empresa_id': self.empresa.pk}),
+            reverse('masiscam:taller_inicio'))
+        otra = Empresa.objects.create(nombre='Otra empresa de taller QA')
+        perfil = Perfil.objects.create(user=self.taller, empresa=otra)
+        RolMasiscam.objects.create(perfil=perfil, rol='OFICINA')
+        response = self.client.post(url, {'empresa_id': otra.pk})
+        self.assertEqual(response.url, reverse('masiscam:dashboard'))
+        response = self.client.get(url)
+        self.assertEqual(response.wsgi_request.rol_masiscam.rol, 'OFICINA')
+        self.assertContains(response, '>Clientes</a>')
+        self.assertNotContains(response, '>Mis expedientes</a>')
+        RolMasiscam.objects.filter(perfil=perfil).update(activo=False)
+        response = self.client.get(url)
+        self.assertIsNone(response.wsgi_request.rol_masiscam)
+        self.assertNotContains(response, '>Clientes</a>')
+
+    def test_navegacion_de_los_demas_roles_se_conserva(self):
+        for codigo, user in self.usuarios.items():
+            if codigo in {'TALLER', 'CLIENTE'}:
+                continue
+            self.client.force_login(user)
+            response = self.client.get(reverse('masiscam:dashboard'))
+            with self.subTest(rol=codigo):
+                self.assertEqual(response.status_code, 200)
+                for texto in ('Panel', 'Reductores', 'Bombas', 'Clientes', 'Proyectos'):
+                    self.assertContains(response, '>' + texto + '</a>')
+                self.assertNotContains(response, '>Mis expedientes</a>')
+        self.client.force_login(self.usuarios['CLIENTE'])
+        response = self.client.get(reverse('masiscam:cliente_productos'))
+        self.assertContains(response, '>Mis productos</a>')
+        self.assertNotContains(response, '>Proyectos</a>')
+
+    def test_panel_muestra_solo_equipos_y_pendientes_propios(self):
+        propio = self.crear('PANEL')
+        exp = self.recepcion(propio)
+        response = self.client.get(reverse('masiscam:taller_inicio'))
+        self.assertContains(response, '>Registrar equipo</a>')
+        self.assertContains(response, exp.numero)
+        self.assertContains(response, 'Actividad pendiente:')
+        self.assertNotContains(response, self.historico.numero_serie)
+
     def crear(self, sufijo='1', usuario=None, tipo='REDUCTOR'):
         self.client.force_login(usuario or self.taller)
         response = self.client.post(reverse('masiscam:ficha_crear') + '?tipo=' + tipo,

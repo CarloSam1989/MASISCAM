@@ -2,7 +2,18 @@
 {% block content %}<div class="container py-4">
   <h1 class="h3">Inicio de taller</h1>
   <p>Registre el equipo y complete su recepción. Las actividades técnicas y aprobaciones corresponden al personal autorizado.</p>
-  <div class="d-flex flex-wrap gap-2 mb-4">{% for codigo, nombre in tipos %}<a class="btn btn-primary" href="{% url 'masiscam:ficha_crear' %}?tipo={{ codigo }}">Registrar {{ nombre|lower }}</a>{% endfor %}</div>
+  <p><a class="btn btn-primary btn-lg" href="{% url 'masiscam:ficha_crear' %}">Registrar equipo</a></p>
+  <div class="d-flex flex-wrap gap-2 mb-4">{% for codigo, nombre in tipos %}<a class="btn btn-outline-primary" href="{% url 'masiscam:ficha_crear' %}?tipo={{ codigo }}">Registrar {{ nombre|lower }}</a>{% endfor %}</div>
+  <h2 class="h5">Mis expedientes y actividades pendientes</h2>
+  {% for exp in expedientes %}<section class="card card-body mb-3">
+    <h3 class="h6">{{ exp.numero }} · {{ exp.registro.equipo.nombre }}</h3>
+    {% if exp.recepcion.confirmacion %}<p>Recepción confirmada. Continúa el personal autorizado.</p>{% else %}<p>Actividad pendiente: completar y confirmar la recepción.</p><a href="{% url 'masiscam:expediente_detalle' exp.pk %}">Continuar recepción</a>{% endif %}
+    <ul>{% for etapa in exp.etapas_tecnicas.all %}<li>{{ etapa.get_codigo_display }}: {{ etapa.get_estado_display }}</li>{% empty %}<li>Sin etapas técnicas registradas.</li>{% endfor %}</ul>
+    {% if exp.calibraciones_estado %}<p>Calibración: {{ exp.calibraciones_estado.0.get_estado_display }}.</p>{% endif %}
+    {% if exp.informes_estado %}<p>Informe: {{ exp.informes_estado.0.get_estado_display }}.</p>{% endif %}
+    {% if exp.cerrado %}<p>Expediente cerrado.</p>{% endif %}
+  </section>{% empty %}<p>No hay expedientes asociados a su trabajo.</p>{% endfor %}
+  <p><a href="{% url 'masiscam:expedientes' %}">Ver mis expedientes</a> · <a href="{% url 'masiscam:taller_estado' %}">Estado del mantenimiento</a></p>
   <h2 class="h5">Mis equipos ingresados</h2>
   <div class="table-responsive"><table class="table"><thead><tr><th>Equipo</th><th>Serie</th><th>Ubicación</th><th>Continuar</th></tr></thead><tbody>
   {% for equipo in pagina %}<tr><td>{{ equipo.producto_singular }} · {{ equipo.nombre }}</td><td>{{ equipo.numero_serie }}</td><td>{{ equipo.ubicacion }}</td><td>{% if equipo.expediente_actual_id %}<a href="{% url 'masiscam:expediente_detalle' equipo.expediente_actual_id %}">Continuar / consultar recepción</a>{% else %}<a href="{% url 'masiscam:recepcion_crear' %}?equipo={{ equipo.pk }}">Registrar recepción</a>{% endif %}</td></tr>{% empty %}<tr><td colspan="4">Aún no ha registrado equipos.</td></tr>{% endfor %}

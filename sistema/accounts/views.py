@@ -66,6 +66,7 @@ class MasiscamLoginView(LoginView):
         rol_taller = rol_masiscam_usuario(usuario=self.request.user, empresa=empresa_taller)
         if rol_taller and rol_taller.rol == 'TALLER':
             self.request.session['empresa_activa_id'] = empresa_taller.pk
+            self.request.session.pop('masiscam_login_next', None)
             return reverse('masiscam:taller_inicio')
         redirect_url = self.get_redirect_url() or self.request.session.pop("masiscam_login_next", "")
         if redirect_url:
@@ -92,5 +93,9 @@ def seleccionar_empresa(request):
     if request.method == "POST":
         empresa = get_object_or_404(empresas, pk=request.POST.get("empresa_id"))
         request.session["empresa_activa_id"] = empresa.pk
+        from masiscam.access import rol_masiscam_usuario
+        rol = rol_masiscam_usuario(usuario=request.user, empresa=empresa)
+        if rol and rol.rol == 'TALLER':
+            return redirect('masiscam:taller_inicio')
         return redirect("masiscam:dashboard")
     return render(request, "accounts/seleccionar_empresa.html", {"empresas": empresas})
