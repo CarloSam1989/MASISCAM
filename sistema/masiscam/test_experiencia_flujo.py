@@ -9,7 +9,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from . import test_taller, test_tecnica as qa, flujo_services as flujo
+from . import test_taller, test_tecnica as qa, flujo_services as flujo, tecnica_services as tecnica
 from .models import AsignacionTecnica, EmisionGuiaIngreso, ConfirmacionRecepcion, Documento
 from .recepcion_services import abrir_recepcion, reservar_guia, generar_guia
 from .recepcion_confirmacion import confirmar_recepcion
@@ -92,6 +92,38 @@ class ExperienciaTests(TestCase):
         self.assertEqual(self.client.get(response.url).status_code,200)
         self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())
         self.assertContains(self.client.get(response.url),'Iniciar inspección')
+
+    def test_iniciar_inspeccion_crea_borradores_y_bloquea_envio_prematuro(self):
+        self.ingreso(fotos=False)
+        url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
+        clave=uuid.uuid4()
+        response=self.client.post(url,dict(op='inspeccion',clave=clave))
+        self.assertRedirects(response,url)
+        etapa_inspeccion=self.exp.etapas_tecnicas.get(codigo='INSPECCION')
+        etapa_diagnostico=self.exp.etapas_tecnicas.get(codigo='DIAGNOSTICO')
+        inspeccion=etapa_inspeccion.inspeccion
+        diagnostico=etapa_diagnostico.diagnostico
+        self.assertIsNotNone(inspeccion)
+        self.assertIsNotNone(diagnostico)
+        self.assertEqual(diagnostico.inspeccion_id,inspeccion.pk)
+        self.assertFalse(inspeccion.enviado_en)
+        self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=self.exp.recepcion).exists())
+        self.assertRedirects(self.client.post(url,dict(op='inspeccion',clave=clave)),url)
+        self.assertEqual(self.exp.etapas_tecnicas.get(codigo='INSPECCION').inspeccion_id,inspeccion.pk)
+        self.assertEqual(self.exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico_id,diagnostico.pk)
+        self.client.force_login(self.usuarios['PLANTA'])
+        planta=self.client.get(url)
+        self.assertContains(planta,'Gestionar planos técnicos')
+        self.assertContains(planta,reverse('masiscam:biblioteca'))
+        diagnostico=tecnica.guardar_revision(usuario=self.taller,empresa=self.empresa,tipo='DIAGNOSTICO',
+            revision_id=diagnostico.pk,version=diagnostico.version_edicion,clave=uuid.uuid4(),datos=dict(
+                fecha=timezone.localdate(),fallas='Desgaste QA',causas='Pendiente QA',
+                componentes_afectados='Componente QA',recomendaciones='Cotizar pieza QA',
+                conclusiones='Revisión independiente pendiente',observaciones='Solicitud QA',
+                motivo_sin_evidencia='Evidencia QA asociada a pieza',repuestos='SIN_REPUESTOS'))
+        with self.assertRaisesMessage(ValidationError,'Complete y envíe los detalles técnicos de inspección'):
+            tecnica.enviar_revision(usuario=self.taller,empresa=self.empresa,tipo='DIAGNOSTICO',
+                revision_id=diagnostico.pk,version=diagnostico.version_edicion,clave=uuid.uuid4())
 
     @override_settings(MASISCAM_TECNICA_LOCAL=False, MASISCAM_OPERACION_LOCAL=False)
     def test_recepcion_incompleta_sigue_accesible_sin_modulo_tecnico(self):

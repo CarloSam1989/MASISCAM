@@ -145,7 +145,8 @@ def vigente(obj):
 
 
 @transaction.atomic
-def crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo=''):
+def _crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo='',
+        permitir_inspeccion_pendiente=False):
     if tipo not in {'INSPECCION', 'DIAGNOSTICO'}:
         raise ValidationError('Tipo técnico inválido.')
     exp = expediente_autorizado(usuario, empresa, expediente_id, {'TECNICO','TALLER','PLANTA'}, True)
@@ -181,7 +182,11 @@ def crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo=''):
             data[field] = getattr(anterior, field)
     if tipo == 'DIAGNOSTICO':
         source = _etapa(exp, 'INSPECCION')
-        if not source or not source.inspeccion.enviado_en:
+        inspeccion_previa = bool(
+            permitir_inspeccion_pendiente and role == 'TALLER' and not anterior and source and source.inspeccion_id
+            and source.inspeccion.tecnico_id == usuario.pk and not source.inspeccion.enviado_en
+        )
+        if not source or not source.inspeccion_id or (not source.inspeccion.enviado_en and not inspeccion_previa):
             raise ValidationError('Envíe primero la inspección vigente.')
         data['inspeccion'] = source.inspeccion
     obj = _save(model(**data))
@@ -198,6 +203,22 @@ def crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo=''):
         defaults={field:obj,'estado':'EN_PROCESO','version':(etapa.version+1 if etapa else 1)})
     _event(exp, usuario, clave, action, payload, obj.pk)
     return obj
+
+
+def crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo=''):
+    return _crear_revision(usuario=usuario,empresa=empresa,expediente_id=expediente_id,
+        tipo=tipo,clave=clave,motivo=motivo)
+
+
+@transaction.atomic
+def iniciar_inspeccion(*, usuario, empresa, expediente_id, clave):
+    key = uuid.UUID(str(clave))
+    inspeccion = _crear_revision(usuario=usuario, empresa=empresa, expediente_id=expediente_id,
+        tipo='INSPECCION', clave=key)
+    diagnostico = _crear_revision(usuario=usuario, empresa=empresa, expediente_id=expediente_id,
+        tipo='DIAGNOSTICO', clave=uuid.uuid5(key, 'diagnostico-inicial'),
+        permitir_inspeccion_pendiente=True)
+    return inspeccion, diagnostico
 
 
 def _editable(usuario, empresa, obj, version):
@@ -377,6 +398,8 @@ def enviar_revision(*,usuario,empresa,tipo,revision_id,version,clave):
         if e.referencia_id and (e.referencia.estado!='PUBLICADA' or not AplicabilidadReferenciaEquipo.objects.filter(referencia=e.referencia,equipo=exp.registro.equipo,activa=True).exists()):
             raise ValidationError('Una referencia citada dejó de estar publicada o aplicable; revise el borrador.')
     if model is Diagnostico:
+        if not obj.inspeccion.enviado_en:
+            raise ValidationError('Complete y envíe los detalles técnicos de inspección antes de enviar el diagnóstico.')
         if obj.repuestos not in {'REQUERIDOS','SIN_REPUESTOS'} or (obj.repuestos=='REQUERIDOS') != obj.piezas.exists():
             errors['repuestos']='Registre piezas requeridas o declare que no se requieren; la lista debe coincidir.'
         for p in obj.piezas.all():

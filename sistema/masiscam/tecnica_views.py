@@ -149,9 +149,7 @@ def tecnica_revision(request,tipo,pk):
                 _error(form,exc)
             else:
                 if request.GET.get('flujo') == '1':
-                    if action in {'enviar','decision'}:
-                        return redirect('masiscam:flujo_detalle',pk=exp.pk)
-                    return redirect(reverse('masiscam:tecnica_revision',args=[tipo,pk])+'?flujo=1')
+                    return redirect('masiscam:flujo_detalle',pk=exp.pk)
                 if action == 'enviar' and request.rol_masiscam.rol == 'TALLER':
                     return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
                 return redirect('masiscam:tecnica_revision',tipo=tipo,pk=pk)
@@ -159,6 +157,13 @@ def tecnica_revision(request,tipo,pk):
     editable=role in svc.OPERADORES and obj.tecnico_id==request.user.pk and not obj.enviado_en and svc.vigente(obj)
     for f in forms['guardar'].fields.values():
         f.disabled=not editable
+    if request.GET.get('flujo') == '1' and tipo == 'INSPECCION':
+        from .flujo_views import contexto as contexto_flujo
+        error_key=({'guardar':'inspeccion','evidencia':'evidencia_inspeccion'}.get(action,'enviar_inspeccion')
+            if request.method=='POST' else 'evidencia_inspeccion')
+        return render(request,'masiscam/flujo_detalle.html',
+            contexto_flujo(request,exp,{error_key:form}) if request.method=='POST' else contexto_flujo(request,exp),
+            status=400 if request.method=='POST' else 200)
     return render(request,'masiscam/tecnica_revision.html',dict(revision=obj,tipo=tipo,expediente=exp,
         forms=forms,editable=editable,rol_tecnico=role,vigente=svc.vigente(obj),clave=uuid.uuid4(),
         planos=svc.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO').filter(

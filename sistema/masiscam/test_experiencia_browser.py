@@ -1,6 +1,5 @@
 """Responsive operational screens, with isolated PostgreSQL and no real Drive."""
 import os
-import re
 import uuid
 from pathlib import Path
 from unittest import skipUnless
@@ -147,10 +146,19 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
             finally:
                 browser.close()
 
-    def test_iniciar_inspeccion_postea_al_flujo_y_abre_revision(self):
+    def test_iniciar_inspeccion_abre_plano_y_envia_solicitud(self):
         from playwright.sync_api import sync_playwright, expect
+        from io import BytesIO
+        from PIL import Image
+        from . import plano_services
         equipo=self.crear('INSPECCION-POST')
         exp=self.recepcion(equipo)
+        self.exp=exp
+        self.planta=self.usuarios['PLANTA']
+        referencia,parte=qa.TecnicaTests.referencia(self)
+        plano_services.guardar_mapa(usuario=self.planta,empresa=self.empresa,referencia_id=referencia.pk,
+            clave=uuid.uuid4(),base_version=0,
+            posiciones=[dict(parte=parte.pk,pagina=1,x='.5',y='.4')])
         client=Client()
         client.force_login(self.taller)
         cookie=client.cookies[settings.SESSION_COOKIE_NAME].value
@@ -171,12 +179,76 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                     button.click()
                 self.assertEqual(post.value.status,302)
                 expect(page).to_have_url(flujo_url)
-                expect(page.get_by_role('link',name='Completar inspección',exact=True)).to_be_visible()
-                page.get_by_role('link',name='Completar inspección',exact=True).click()
-                expect(page).to_have_url(re.compile(r'.*/app/tecnica/INSPECCION/\d+/\?flujo=1'))
-                self.assertIn('INSPECCION',page.locator('body').inner_text())
+                plano_link=page.get_by_role('link',name='Abrir plano REF-QA · r1',exact=True).first
+                expect(plano_link).to_be_visible()
+                expect(page.locator('#detalles-tecnicos')).to_be_visible()
+                plano_link.click()
+                expect(page.locator('#pl-app')).to_have_attribute('data-ready','true',timeout=20000)
+                expect(page.locator('#pl-canvas')).to_be_visible()
+                page.locator('.pl-part').first.click()
+                page.get_by_role('button',name='Agregar al diagnóstico').click()
+                page.locator('#pl-quantity').fill('2')
+                page.locator('#pl-condition').fill('Desgaste observado en navegador QA')
+                page.locator('#pl-action').select_option('EVALUAR')
+                photo=BytesIO()
+                Image.new('RGB',(43,31),'purple').save(photo,'PNG')
+                page.locator('#pl-photos').set_input_files(dict(name='pieza-qa.png',mimeType='image/png',
+                    buffer=photo.getvalue()))
+                invalid=page.locator('#pl-piece-form').evaluate(
+                    "form => Array.from(form.elements).filter(field => !field.checkValidity()).map(field => `${field.name}: ${field.validationMessage}`)")
+                self.assertEqual(invalid,[])
+                piece_url=page.locator('#pl-app').get_attribute('data-pieza')
+                with page.expect_response(lambda response:response.url.endswith(piece_url),timeout=15000) as saved:
+                    page.get_by_role('button',name='Guardar pieza').click()
+                self.assertEqual(saved.value.status,200,saved.value.text())
+                self.assertEqual(page.locator('#pl-count').inner_text(),'1',
+                    page.locator('#pl-message').inner_text()+' '+page.locator('#pl-form-error').inner_text())
+                page.get_by_role('link',name='Volver al trabajo').click()
+                details=page.locator('#detalles-tecnicos')
+                details.locator('summary').click()
+                details.locator('[name=fecha]').fill(timezone.localdate().isoformat())
+                details.locator('[name=estado_fisico]').fill('Equipo inspeccionado en QA')
+                details.locator('[name=condiciones_generales]').fill('Condiciones registradas en QA')
+                details.locator('[name=hallazgos]').fill('Desgaste observado en componente QA')
+                details.locator('[name=motivo_sin_evidencia]').fill('La fotografía está asociada a la pieza seleccionada')
+                with page.expect_navigation(url=flujo_url) as saved_inspection:
+                    details.get_by_role('button',name='Guardar detalles técnicos').click()
+                self.assertEqual(saved_inspection.value.status,200)
+                expect(page).to_have_url(flujo_url)
+                page.locator('#detalles-tecnicos').locator('summary').click()
+                send_form_state=details.locator('form').nth(2).evaluate(
+                    "form => ({valid:form.checkValidity(),open:form.closest('details').open,buttonOwnsForm:form.querySelector('button').form===form,fields:Array.from(form.elements).map(field=>[field.name,field.value,field.validity.valid])})")
+                self.assertTrue(send_form_state['valid'],str(send_form_state))
+                self.assertTrue(send_form_state['open'],str(send_form_state))
+                self.assertTrue(send_form_state['buttonOwnsForm'],str(send_form_state))
+                with page.expect_navigation() as sent_inspection:
+                    details.get_by_role('button',name='Validar y enviar inspección').click()
+                    page.get_by_role('button',name='Sí, continuar',exact=True).click()
+                self.assertEqual(sent_inspection.value.status,200)
+                expect(page).to_have_url(flujo_url)
+                diagnosis=page.locator('#mf-diagnostico')
+                diagnosis.locator('[name=fecha]').fill(timezone.localdate().isoformat())
+                diagnosis.locator('[name=fallas]').fill('Desgaste por verificar')
+                diagnosis.locator('[name=causas]').fill('Pendiente de análisis técnico')
+                diagnosis.locator('[name=componentes_afectados]').fill('Componente QA')
+                diagnosis.locator('[name=recomendaciones]').fill('Solicitar cotización de la pieza')
+                diagnosis.locator('[name=conclusiones]').fill('Pendiente de aprobación independiente de PLANTA')
+                diagnosis.locator('[name=motivo_sin_evidencia]').fill('Fotografía adjunta a la pieza')
+                diagnosis.locator('[name=repuestos]').select_option('REQUERIDOS')
+                with page.expect_navigation(url=flujo_url) as sent_request:
+                    diagnosis.get_by_role('button',name='Enviar solicitud de repuestos a oficina').click()
+                    page.get_by_role('button',name='Sí, continuar',exact=True).click()
+                self.assertEqual(sent_request.value.status,200)
+                expect(page.get_by_text('Solicitud v1 enviada',exact=False)).to_be_visible()
                 context.close()
             finally:
                 browser.close()
-        self.assertTrue(Inspeccion.objects.filter(expediente=exp).exists())
+        diagnostico=exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
+        self.assertTrue(diagnostico.enviado_en)
+        self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())
+        self.assertFalse(qa.s._aprobado(diagnostico))
+        oficina=Client()
+        oficina.force_login(self.usuarios['OFICINA'])
+        self.assertContains(oficina.get(reverse('masiscam:flujo_detalle',args=[exp.pk])),'Componente QA')
+        self.assertTrue(Inspeccion.objects.filter(expediente=exp,enviado_en__isnull=False).exists())
         self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())

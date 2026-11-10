@@ -10,7 +10,7 @@ from django.views.decorators.http import require_GET,require_http_methods
 from .access import masiscam_access_required
 from . import flujo_services as s, tecnica_services as t, operacion_services as o
 from .flujo_forms import CotizacionForm,AdquisicionForm,EnvioForm,ConfirmarEnvioForm,PiezaManualForm
-from .tecnica_forms import BaseForm,RevisionForm
+from .tecnica_forms import BaseForm,RevisionForm,EvidenciaForm
 from .tecnica_views import _error,_archivo
 from .operacion_forms import OperacionForm
 from .models import SolicitudRepuestos,EnvioRepuestos,Documento
@@ -69,6 +69,11 @@ def contexto(request,exp,errores=None):
     if not historica and context['rol']=='TALLER' and diag and not diag.enviado_en and t.vigente(diag):
         forms['diagnostico']=RevisionForm(tipo='DIAGNOSTICO',revision=diag)
         forms['manual']=PiezaManualForm(initial={'version':diag.version_edicion})
+    ins=context['inspeccion']
+    if not historica and context['rol']=='TALLER' and ins and not ins.enviado_en and t.vigente(ins):
+        forms['inspeccion']=RevisionForm(tipo='INSPECCION',revision=ins)
+        forms['evidencia_inspeccion']=EvidenciaForm(expediente=exp,revision=ins,
+            usuario=request.user,empresa=request.empresa_activa)
     if not historica and sol and context['rol']=='OFICINA':
         forms['cotizar']=CotizacionForm()
         try:
@@ -91,15 +96,38 @@ def contexto(request,exp,errores=None):
     if errores: forms.update(errores)
     for nombre,form in forms.items(): form.auto_id=f'flujo_{nombre}_%s'
     form_action=context['accion']['op'] if context['accion'] else None
-    context.update(expediente=exp,equipo=exp.registro.equipo,forms=forms,envio=envio,
+    planos=(t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO',estado='PUBLICADA',
+        aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True)
+        .annotate(partes_count=Count('partes',distinct=True)).distinct() if diag else [])
+    if (context['rol']=='TALLER' and ins and not ins.enviado_en and diag and not diag.enviado_en):
+        plano=planos.first()
+        if plano:
+            context['accion']=dict(texto=f'Abrir plano {plano.codigo} · r{plano.revision}',
+                url=reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diag.pk}&flujo=1',op=None)
+            context['mensaje']='Selecciona en el plano los componentes que requieren atención. Zoom, listado y fotografías quedan asociados al diagnóstico; registra el detalle de inspección en “Detalles técnicos”.'
+        else:
+            context['accion']=None
+            context['mensaje']='No hay un plano publicado y aplicable a este equipo. PLANTA debe publicar el PDF y asignar su aplicabilidad. Puedes agregar piezas manualmente mientras se gestiona.'
+    elif (context['rol']=='PLANTA' and ins and not ins.enviado_en and diag and not diag.enviado_en):
+        plano=planos.first()
+        if not plano:
+            context['accion']=dict(texto='Gestionar planos técnicos',url=reverse('masiscam:biblioteca'),op=None)
+            context['mensaje']='No hay un plano publicado y aplicable a este equipo. Publica el documento de referencia y registra su aplicabilidad desde la biblioteca técnica.'
+        elif not plano.partes_count:
+            context['accion']=dict(texto='Completar componentes del plano',
+                url=reverse('masiscam:biblioteca_referencia',args=[plano.pk]),op=None)
+            context['mensaje']=f'El plano {plano.codigo} está publicado, pero todavía no tiene componentes. PLANTA debe registrar la lista de piezas para habilitar la selección por componente.'
+        else:
+            context['accion']=dict(texto=f'Revisar posiciones de {plano.codigo}',
+                url=reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diag.pk}&flujo=1',op=None)
+            context['mensaje']='La lista de componentes ya está disponible. PLANTA puede configurar las posiciones; TALLER puede seleccionar componentes desde el listado mientras tanto.'
+    context.update(expediente=exp,equipo=exp.registro.equipo,inspeccion=ins,forms=forms,envio=envio,
         mantenimientos=t.expedientes_operativos(request.user,request.empresa_activa).filter(registro__equipo=exp.registro.equipo).order_by('-correlativo') if context['rol']=='TALLER' else [],
         errores_generales=[str(error) for form in (errores or {}).values() for errors in form.errors.values() for error in errors],
         form_principal=forms.get(form_action),clave=uuid.uuid4(),
         envios=sol.envios.select_related('documento','confirmacion').order_by('-pk') if sol else [],
         piezas=diag.piezas.prefetch_related('fotografias__documento').order_by('pk') if diag and (context['rol']=='TALLER' or diag.enviado_en) else [],
-        planos=t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO',estado='PUBLICADA',
-            aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True)
-            .annotate(partes_count=Count('partes',distinct=True)).distinct() if diag else [],
+        planos=planos,
         adquisiciones=sol.adquisiciones.select_related('pieza','documento').order_by('pk') if sol else [])
     return context
 
@@ -126,12 +154,14 @@ def detalle(request,pk):
         form=ConfirmarEnvioForm(request.POST,envio=envio);nombre=op
     elif op in {'aceptacion','respaldo'} and sol:
         form=OperacionForm(request.POST,request.FILES,op='decision' if op=='aceptacion' else 'respaldo',exp=exp,politica=o.politica());nombre=op
-    else: form=BaseForm(request.POST);nombre=op
+    else: form=BaseForm(request.POST);nombre='inicio_inspeccion' if op=='inspeccion' else op
     if form.is_valid():
         data=dict(form.cleaned_data);key=data.pop('clave');common=dict(usuario=request.user,empresa=request.empresa_activa)
         try:
-            if op in {'inspeccion','diagnostico'}:
-                t.crear_revision(**common,expediente_id=exp.pk,tipo='INSPECCION' if op=='inspeccion' else 'DIAGNOSTICO',clave=key)
+            if op=='inspeccion':
+                t.iniciar_inspeccion(**common,expediente_id=exp.pk,clave=key)
+            elif op=='diagnostico':
+                t.crear_revision(**common,expediente_id=exp.pk,tipo='DIAGNOSTICO',clave=key)
             elif op=='guardar' and diag:
                 t.guardar_revision(**common,tipo='DIAGNOSTICO',revision_id=diag.pk,version=data.pop('version'),clave=key,datos=data)
             elif op=='solicitud' and diag:
