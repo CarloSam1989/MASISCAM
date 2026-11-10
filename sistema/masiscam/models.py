@@ -397,6 +397,23 @@ class FotoRecepcionClasificada(models.Model):
         constraints = [models.CheckConstraint(condition=models.Q(clase__in=["GENERAL", "PLACA"]), name="recepcion_clase_foto_valida")]
 
 
+class FotoRecepcionExistente(models.Model):
+    """Classification by reference: never copies bytes or changes source metadata."""
+    recepcion = models.ForeignKey(RecepcionEquipo, on_delete=models.PROTECT, related_name="fotos_existentes")
+    documento = models.ForeignKey(Documento, on_delete=models.PROTECT, null=True, blank=True)
+    archivo_registro = models.ForeignKey(ArchivoRegistro, on_delete=models.PROTECT, null=True, blank=True)
+    clase = models.CharField(max_length=10, choices=[("GENERAL", "General"), ("PLACA", "Placa")])
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=(models.Q(documento__isnull=False, archivo_registro__isnull=True) | models.Q(documento__isnull=True, archivo_registro__isnull=False)), name="recepcion_foto_un_origen"),
+            models.CheckConstraint(condition=models.Q(clase__in=["GENERAL", "PLACA"]), name="recepcion_foto_existente_clase"),
+            models.UniqueConstraint(fields=["recepcion", "clase"], name="recepcion_foto_existente_unica"),
+            models.UniqueConstraint(fields=["recepcion", "documento"], name="recepcion_foto_documento_unico"),
+            models.UniqueConstraint(fields=["recepcion", "archivo_registro"], name="recepcion_foto_archivo_unico"),
+        ]
+
+
 class ConfirmacionRecepcion(models.Model):
     recepcion = models.OneToOneField(RecepcionEquipo, on_delete=models.PROTECT, related_name="confirmacion")
     guia = models.OneToOneField("EmisionGuiaIngreso", on_delete=models.PROTECT, related_name="confirmacion")

@@ -170,6 +170,8 @@ def _construir_v2(snapshot, fotografias):
                                    img, Spacer(1, 12)]))
     for item in snapshot.get("evidencias", []):
         story.append(p(f"{item.get('clasificacion') or item['tipo']} | Documento {item['documento_id']} | SHA-256: {item['documento__hash_sha256']}", small))
+    for item in snapshot.get("fotos_existentes", []):
+        story.append(p(f"{item['clasificacion']} | Foto original: {item['nombre_original']} | SHA-256: {item['hash_sha256']}", small))
     # Blank signature spaces, never rasterized signatures or certified signing.
     signatures = Table([
         [p("ENTREGA", heading), p("RECEPCIÓN", heading)],

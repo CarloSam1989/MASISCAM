@@ -244,6 +244,12 @@ def generar_guia(guia_id):
         if hashlib.sha256(data).hexdigest() != item["documento__hash_sha256"]:
             raise ValidationError("Integridad de fotografía no verificable.")
         fotos.append(data)
+    for item in guia.snapshot.get('fotos_existentes', []):
+        from .recepcion_fotos import origen, leer
+        source = origen(guia.expediente.recepcion, item['token'])
+        if source.hash_sha256 != item['hash_sha256']:
+            raise ValidationError('Integridad de fotografía no verificable.')
+        fotos.append(leer(source))
     contenido = construir_guia(guia.snapshot, fotos)
     with transaction.atomic():
         guia = EmisionGuiaIngreso.objects.select_for_update().get(pk=guia_id)

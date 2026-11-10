@@ -39,8 +39,8 @@ def confirmar_recepcion(*, usuario, empresa, expediente_id, clave, placa,
     autorizar(usuario, empresa, escribir=True)
     try:
         clave = uuid.UUID(str(clave))
-        general_id = int(general_id) if general_id else None
-        placa_id = int(placa_id) if placa_id else None
+        general_id = str(general_id) if general_id and ':' in str(general_id) else (int(general_id) if general_id else None)
+        placa_id = str(placa_id) if placa_id and ':' in str(placa_id) else (int(placa_id) if placa_id else None)
     except (ValueError, TypeError):
         raise ValidationError("Clave o evidencia inválida.") from None
     motivo_sin_placa, motivo_sin_guia = motivo_sin_placa.strip(), motivo_sin_guia.strip()
@@ -83,12 +83,29 @@ def confirmar_recepcion(*, usuario, empresa, expediente_id, clave, placa,
         if exp.recepcion.guia_remision and motivo_sin_guia:
             raise ValidationError({"motivo_sin_guia": "Existe una guía registrada; no corresponde motivo de ausencia."})
         elegidas = []
+        referencias = []
+        hashes_elegidos = set()
         for clase, evidencia_id, archivo in (("GENERAL", general_id, foto_general), ("PLACA", placa_id, foto_placa)):
             if clase == "PLACA" and placa == "SIN_PLACA":
                 continue
             if bool(evidencia_id) == bool(archivo):
                 raise ValidationError({"general_id" if clase == "GENERAL" else "placa_id":
                     f"Seleccione una fotografía {clase} o cargue una nueva, sin combinar ambas opciones."})
+            if evidencia_id and ':' in str(evidencia_id):
+                from .recepcion_fotos import origen, leer
+                from .models import Documento, FotoRecepcionExistente
+                source = origen(exp.recepcion, evidencia_id, bloquear=True)
+                leer(source)
+                if source.hash_sha256 in hashes_elegidos:
+                    raise ValidationError('GENERAL y PLACA deben ser fotografías distintas.')
+                hashes_elegidos.add(source.hash_sha256)
+                ref = FotoRecepcionExistente.objects.create(recepcion=exp.recepcion, clase=clase,
+                    **({'documento': source} if isinstance(source, Documento) else {'archivo_registro': source}))
+                referencias.append(dict(referencia_id=ref.pk, token=str(evidencia_id),
+                    hash_sha256=source.hash_sha256, tipo='FOTO', clasificacion=clase,
+                    nombre_original=source.nombre_original if isinstance(source, Documento) else source.nombre))
+                evento(exp, usuario, 'FOTO_EXISTENTE_CLASIFICADA', origen=str(evidencia_id), clase=clase, hash=source.hash_sha256)
+                continue
             if archivo:
                 doc = _guardar_documento(exp, usuario, archivo, "FOTOGRAFIAS")
                 evidencia = EvidenciaRecepcion.objects.create(recepcion=exp.recepcion, documento=doc, tipo="FOTO")
@@ -101,8 +118,9 @@ def confirmar_recepcion(*, usuario, empresa, expediente_id, clave, placa,
             with doc.archivo.open("rb") as stream:
                 from django.core.files.uploadedfile import SimpleUploadedFile
                 validar_fotografias([SimpleUploadedFile(doc.nombre_original, stream.read(), content_type=doc.tipo_mime)])
-            if doc.pk in [e.documento_id for e, _ in elegidas]:
+            if doc.hash_sha256 in hashes_elegidos:
                 raise ValidationError("GENERAL y PLACA deben ser evidencias distintas.")
+            hashes_elegidos.add(doc.hash_sha256)
             clasificacion, _ = FotoRecepcionClasificada.objects.get_or_create(evidencia=evidencia, defaults={"clase": clase})
             if clasificacion.clase != clase:
                 raise ValidationError("La fotografía ya tiene otra clasificación.")
@@ -119,7 +137,7 @@ def confirmar_recepcion(*, usuario, empresa, expediente_id, clave, placa,
             "confirmado_en": ahora.isoformat(), "confirmado_por": usuario.get_full_name() or usuario.username,
             "evidencias": [{"documento_id": e.documento_id, "documento__hash_sha256": e.documento.hash_sha256,
                 "tipo": e.tipo, "clasificacion": next((c for elegido, c in elegidas if elegido.pk == e.pk), "")}
-                for e in evidencias]}
+                for e in evidencias], 'fotos_existentes': referencias}
         guia = EmisionGuiaIngreso.objects.create(expediente=exp, clave=clave, version=snapshot["version"],
             snapshot=snapshot, creado_por=usuario)
         evento(exp, usuario, "GUIA_RESERVADA", version=guia.version)

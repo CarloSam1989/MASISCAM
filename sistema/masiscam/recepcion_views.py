@@ -7,11 +7,15 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import FileResponse, HttpResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
+from django.utils.http import content_disposition_header
+import logging
 
 from .access import masiscam_access_required
 from .models import Documento, EmisionGuiaIngreso, ExpedienteMantenimiento
 from .recepcion_forms import RecepcionForm
 from .recepcion_services import autorizar, abrir_recepcion, reservar_guia, expedientes_autorizados
+
+logger = logging.getLogger(__name__)
 
 
 @require_GET
@@ -117,8 +121,6 @@ def recepcion_finalizar(request, pk):
     form = ConfirmacionRecepcionForm(request.POST, request.FILES, recepcion=exp.recepcion)
     if form.is_valid():
         data = form.cleaned_data.copy()
-        for name in ("general_id", "placa_id"):
-            data[name] = data[name].pk if data[name] else None
         try:
             confirmar_recepcion(usuario=request.user, empresa=request.empresa_activa, expediente_id=pk, **data)
         except ValidationError as exc:
@@ -190,6 +192,35 @@ def recepcion_documento(request, pk, documento_pk):
         return HttpResponse("Integridad documental no verificable.", status=503)
     archivo.seek(0)
     response = FileResponse(archivo, as_attachment=True, filename=doc.nombre_original, content_type=doc.tipo_mime)
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@require_GET
+@masiscam_access_required
+def recepcion_foto_previsualizar(request, pk):
+    autorizar(request.user, request.empresa_activa)
+    exp = get_object_or_404(expedientes_autorizados(request.user, request.empresa_activa), pk=pk)
+    from .recepcion_fotos import candidatos, leer, origen
+    token = request.GET.get("token", "")
+    if not token or len(token) > 40 or token not in {value for value, _ in candidatos(exp.recepcion)}:
+        raise Http404
+    try:
+        from io import BytesIO
+        from PIL import Image, ImageOps
+        from .drive_documents import DocumentUnavailable
+        image_data = leer(origen(exp.recepcion, token))
+        with Image.open(BytesIO(image_data)) as image:
+            image = ImageOps.exif_transpose(image)
+            image.thumbnail((360, 270))
+            preview = BytesIO()
+            image.convert("RGB").save(preview, format="JPEG", quality=82, optimize=True)
+    except (DocumentUnavailable, OSError, ValidationError):
+        logger.exception("No se pudo verificar una fotografía de recepción (expediente %s).", pk)
+        return HttpResponse("Fotografía no disponible; no se pudo verificar su integridad.", status=503)
+    response = HttpResponse(preview.getvalue(), content_type="image/jpeg")
+    response["Content-Disposition"] = content_disposition_header(False, "vista-previa.jpg")
     response["Cache-Control"] = "private, no-store"
     response["X-Content-Type-Options"] = "nosniff"
     return response

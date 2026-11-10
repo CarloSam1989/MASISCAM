@@ -17,11 +17,13 @@ from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 
 from accounts.models import Empresa
-from .models import (Auditoria, ConfirmacionRecepcion, ContadorExpediente, Documento,
-    EmisionGuiaIngreso, EvidenciaRecepcion, FotoRecepcionClasificada)
+from .models import (ArchivoRegistro, Auditoria, ConfirmacionRecepcion, ContadorExpediente, Documento,
+    EmisionGuiaIngreso, EvidenciaRecepcion, FotoRecepcionClasificada, FotoRecepcionExistente)
+from .recepcion_forms import ConfirmacionRecepcionForm
 from .recepcion_confirmacion import confirmar_recepcion
-from .recepcion_services import abrir_recepcion, generar_guia, reservar_guia
+from .recepcion_services import _guardar_documento, abrir_recepcion, generar_guia, reservar_guia
 from .test_recepcion import argumentos, fixtures, foto
+from .test_utils import consumir_respuesta
 
 
 def placa_foto():
@@ -110,6 +112,85 @@ class ConfirmacionTests(TestCase):
             confirmar_recepcion(**{**self.args, "expediente_id": exp.pk})
         with self.assertRaises(ValidationError):
             confirmar_recepcion(**{**self.args, "placa_id": self.general.pk})
+
+    def test_foto_existente_seleccionable_con_vista_previa_y_sin_duplicar_archivo(self):
+        source = _guardar_documento(self.exp, self.user,
+            SimpleUploadedFile("equipo-general.png", self._image("purple"), content_type="image/png"),
+            "FOTOGRAFIAS")
+        original = (source.archivo.name, source.hash_sha256, source.tamano)
+        drive_data = self._image("orange")
+        archived = ArchivoRegistro.objects.create(registro=self.exp.registro, nombre="equipo-placa.png",
+            tipo_mime="image/png", tamano=len(drive_data), hash_sha256=hashlib.sha256(drive_data).hexdigest(),
+            drive_file_id="drive-original-qa", estado="DISPONIBLE")
+        general_token, plate_token = f"d:{source.pk}", f"a:{archived.pk}"
+        form = ConfirmacionRecepcionForm(recepcion=self.exp.recepcion)
+        self.assertIn(general_token, [value for value, _ in form.fields["general_id"].choices])
+        self.assertIn(plate_token, [value for value, _ in form.fields["placa_id"].choices])
+
+        detalle = self.client.get(reverse("masiscam:expediente_detalle", args=[self.exp.pk]))
+        self.assertContains(detalle, "data-foto-selector")
+        self.assertContains(detalle, general_token)
+        self.assertContains(detalle, "recepcion_fotos.js")
+        with patch("masiscam.drive_documents.EquipoDriveDocuments.__init__", return_value=None), \
+             patch("masiscam.drive_documents.EquipoDriveDocuments.download",
+                   return_value=(BytesIO(drive_data), None, None)):
+            vista = self.client.get(reverse("masiscam:recepcion_foto_previsualizar", args=[self.exp.pk]),
+                {"token": plate_token})
+        self.assertEqual(vista.status_code, 200)
+        self.assertEqual(vista["Content-Type"], "image/jpeg")
+        self.assertEqual(vista["Cache-Control"], "private, no-store")
+        self.assertTrue(consumir_respuesta(vista).startswith(b"\xff\xd8"))
+
+        before = Documento.objects.count()
+        with patch("masiscam.drive_documents.EquipoDriveDocuments.__init__", return_value=None), \
+             patch("masiscam.drive_documents.EquipoDriveDocuments.download",
+                   side_effect=lambda *_: (BytesIO(drive_data), None, None)):
+            result = confirmar_recepcion(**{**self.args, "general_id": general_token, "placa_id": plate_token})
+        source.refresh_from_db()
+        self.assertEqual((source.archivo.name, source.hash_sha256, source.tamano), original)
+        self.assertEqual(Documento.objects.count(), before + 1)
+        refs = list(FotoRecepcionExistente.objects.filter(recepcion=self.exp.recepcion).order_by("clase"))
+        self.assertEqual([(ref.clase, ref.documento_id, ref.archivo_registro_id) for ref in refs], [
+            ("GENERAL", source.pk, None), ("PLACA", None, archived.pk)])
+        self.assertEqual((archived.drive_file_id, archived.hash_sha256, archived.tamano),
+            ("drive-original-qa", hashlib.sha256(drive_data).hexdigest(), len(drive_data)))
+        referencias = {item["clasificacion"]: item for item in result.guia.snapshot["fotos_existentes"]}
+        self.assertEqual(referencias["GENERAL"]["nombre_original"], "equipo-general.png")
+        self.assertEqual(referencias["PLACA"]["nombre_original"], "equipo-placa.png")
+        self.assertEqual(Auditoria.objects.filter(accion="FOTO_EXISTENTE_CLASIFICADA").count(), 2)
+        with result.guia.documento.archivo.open("rb") as stream:
+            self.assertTrue(stream.read().startswith(b"%PDF-"))
+        historial = self.client.get(reverse("masiscam:expediente_detalle", args=[self.exp.pk]))
+        self.assertContains(historial, "archivo original reutilizado")
+        self.assertContains(historial, "equipo-general.png")
+        self.assertContains(historial, "equipo-placa.png")
+
+    @skipUnless(connection.vendor == "postgresql", "Requiere PostgreSQL para validar los triggers de referencia.")
+    def test_guardas_postgres_protegen_referencias_y_originales(self):
+        source = _guardar_documento(self.exp, self.user,
+            SimpleUploadedFile("original-general.png", self._image("purple"), content_type="image/png"),
+            "FOTOGRAFIAS")
+        drive_data = self._image("orange")
+        archived = ArchivoRegistro.objects.create(registro=self.exp.registro, nombre="original-placa.png",
+            tipo_mime="image/png", tamano=len(drive_data), hash_sha256=hashlib.sha256(drive_data).hexdigest(),
+            drive_file_id="drive-original-guard-qa", estado="DISPONIBLE")
+        with patch("masiscam.drive_documents.EquipoDriveDocuments.__init__", return_value=None), \
+             patch("masiscam.drive_documents.EquipoDriveDocuments.download",
+                   side_effect=lambda *_: (BytesIO(drive_data), None, None)):
+            confirmar_recepcion(**{**self.args, "general_id": f"d:{source.pk}", "placa_id": f"a:{archived.pk}"})
+
+        with transaction.atomic():
+            Documento.objects.filter(pk=source.pk).update(estado_sincronizacion="ERROR")
+        for operation in (
+            lambda: Documento.objects.filter(pk=source.pk).update(titulo="Original modificado"),
+            lambda: Documento.objects.filter(pk=source.pk).update(estado_sincronizacion="ARCHIVADO"),
+            lambda: Documento.objects.filter(pk=source.pk).delete(),
+            lambda: ArchivoRegistro.objects.filter(pk=archived.pk).update(estado="ERROR"),
+            lambda: FotoRecepcionExistente.objects.filter(recepcion=self.exp.recepcion, clase="GENERAL").update(clase="PLACA"),
+            lambda: FotoRecepcionExistente.objects.filter(recepcion=self.exp.recepcion, clase="GENERAL").delete(),
+        ):
+            with self.assertRaises(IntegrityError), transaction.atomic():
+                operation()
 
     def test_idempotencia_conflicto_y_numeracion(self):
         first = confirmar_recepcion(**self.args)

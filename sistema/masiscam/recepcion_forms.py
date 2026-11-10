@@ -73,10 +73,11 @@ class ConfirmacionRecepcionForm(forms.Form):
     def __init__(self, *args, recepcion, **kwargs):
         super().__init__(*args, **kwargs)
         self.recepcion = recepcion
-        fotos = recepcion.evidencias.filter(tipo="FOTO").select_related("documento")
+        from .recepcion_fotos import candidatos
+        fotos = candidatos(recepcion)
         for name in ("general_id", "placa_id"):
-            self.fields[name].queryset = fotos
-            self.fields[name].label_from_instance = lambda e: e.documento.nombre_original
+            self.fields[name] = forms.ChoiceField(required=False,
+                label=self.fields[name].label, choices=[('', 'Seleccione una fotografía existente'), *fotos])
         for name, field in self.fields.items():
             field.widget.attrs.setdefault("class", "form-select" if isinstance(field.widget, forms.Select) else "form-control")
             if name in {"foto_general", "foto_placa"}:

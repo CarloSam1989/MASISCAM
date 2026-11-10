@@ -58,6 +58,7 @@ urlpatterns = [
     path("expedientes/<int:pk>/guia/", recepcion_views.guia_emitir, name="guia_emitir"),
     path("expedientes/<int:pk>/guia/<int:guia_pk>/reintentar/", recepcion_views.guia_reintentar, name="guia_reintentar"),
     path("expedientes/<int:pk>/documentos/<int:documento_pk>/", recepcion_views.recepcion_documento, name="recepcion_documento"),
+    path("expedientes/<int:pk>/recepcion/fotografias/", recepcion_views.recepcion_foto_previsualizar, name="recepcion_foto_previsualizar"),
     path("usuarios/", usuario_views.usuarios, name="usuarios"),
     path("usuarios/crear/", usuario_views.usuario_crear, name="usuario_crear"),
     path("usuarios/<int:pk>/editar/", usuario_views.usuario_editar, name="usuario_editar"),
