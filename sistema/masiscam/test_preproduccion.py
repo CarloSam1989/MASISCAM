@@ -89,6 +89,12 @@ class ConfiguracionProduccionTests(SimpleTestCase):
         self.assertTrue(self.config({'MASISCAM_RECEPCION_LOCAL':'true'},debug=True)['MASISCAM_RECEPCION_LOCAL'])
         self.assertFalse(self.config({'MASISCAM_RECEPCION_LOCAL':'true'})['MASISCAM_RECEPCION_LOCAL'])
 
+    def test_fase_tecnica_puede_habilitarse_sin_activar_reparaciones(self):
+        config=self.config({'MASISCAM_TECNICA_ENABLED':'true'})
+        self.assertTrue(config['MASISCAM_TECNICA_LOCAL'])
+        for phase in ('RECEPCION','OPERACION','CALIBRACION','CIERRE'):
+            self.assertFalse(config[f'MASISCAM_{phase}_LOCAL'])
+
     def test_fuentes_explicitas_y_configuracion_invalida_falla_cerrada(self):
         from .test_operacion import QA_POLICY
         with tempfile.TemporaryDirectory(prefix='masiscam-config-qa-') as temp:

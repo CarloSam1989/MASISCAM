@@ -96,6 +96,10 @@ def taller_equipo(request, pk):
     accion=reverse('masiscam:recepcion_crear')+f'?equipo={equipo.pk}' if not exp else None
     if exp:
         pasos[1]['estado']='Bloqueado'
-        mensaje='PLANTA debe asignar el responsable para continuar este expediente.' if not asignado else 'La selección de piezas requiere habilitar el módulo técnico. Comunícalo al responsable del sistema.'
+        if not asignado:
+            mensaje='PLANTA debe asignar el responsable para continuar este expediente.'
+        elif not settings.MASISCAM_TECNICA_LOCAL:
+            mensaje=('Fase técnica deshabilitada: el responsable de configuración debe activar '
+                'MASISCAM_TECNICA_ENABLED para habilitar inspección y selección de piezas.')
     return render(request,'masiscam/taller_equipo.html',dict(equipo=equipo,expediente=exp,mantenimientos=mantenimientos,
         pasos=pasos,paso=2,mensaje=mensaje,accion=accion))

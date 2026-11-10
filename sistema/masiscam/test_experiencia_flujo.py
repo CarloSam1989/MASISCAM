@@ -4,6 +4,7 @@ from io import StringIO
 from unittest.mock import patch
 
 from django.core.management import call_command
+from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -90,8 +91,59 @@ class ExperienciaTests(TestCase):
     def test_recepcion_incompleta_sigue_accesible_sin_modulo_tecnico(self):
         self.ingreso(fotos=False)
         response=self.client.get(reverse('masiscam:taller_equipo',args=[self.equipo.pk]))
-        self.assertContains(response,'requiere habilitar el módulo técnico')
+        self.assertContains(response,'MASISCAM_TECNICA_ENABLED')
         self.assertNotContains(response,'#confirmar-recepcion')
+
+    @override_settings(MASISCAM_RECEPCION_LOCAL=False, MASISCAM_OPERACION_LOCAL=False)
+    def test_taller_inspecciona_selecciona_en_plano_y_envia_a_oficina_sin_confirmar(self):
+        from . import plano_services as planos, tecnica_services as tecnica, operacion_services as operacion
+        self.ingreso(fotos=False)
+        self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=self.exp.recepcion).exists())
+        self.assertContains(self.client.get(reverse('masiscam:taller_equipo',args=[self.equipo.pk])),'Iniciar inspección')
+        qa.inspeccion_enviada(self.empresa,self.taller,self.exp)
+        self.planta=self.usuarios['PLANTA']
+        self.diag=tecnica.crear_revision(usuario=self.taller,empresa=self.empresa,
+            expediente_id=self.exp.pk,tipo='DIAGNOSTICO',clave=uuid.uuid4())
+        flujo_url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
+        faltantes=self.client.get(flujo_url)
+        self.assertContains(faltantes,'PLANTA debe publicar un plano y asignar su aplicabilidad al equipo')
+        self.assertContains(faltantes,reverse('masiscam:biblioteca'))
+
+        referencia,parte=qa.TecnicaTests.referencia(self)
+        mapa=planos.guardar_mapa(usuario=self.planta,empresa=self.empresa,referencia_id=referencia.pk,
+            clave=uuid.uuid4(),base_version=0,
+            posiciones=[dict(parte=parte.pk,pagina=1,x='.5',y='.4')])
+        plano_url=reverse('masiscam:plano',args=[referencia.pk])
+        self.assertEqual(self.client.get(f'{plano_url}?diagnostico={self.diag.pk}&flujo=1').status_code,200)
+        datos=self.client.get(reverse('masiscam:plano_datos',args=[referencia.pk]),
+            {'diagnostico':self.diag.pk}).json()
+        self.assertTrue(datos['seleccionable'])
+        self.assertEqual(datos['puntos'][0]['id'],mapa.posiciones.get().pk)
+        seleccion=self.client.post(reverse('masiscam:plano_pieza',args=[self.diag.pk]),dict(
+            version=self.diag.version_edicion,parte_id=parte.pk,posicion_plano_id=mapa.posiciones.get().pk,
+            cantidad='1',unidad='unidad',condicion='Desgaste observado QA',accion='EVALUAR',
+            observaciones='Verificar con OFICINA',clave=uuid.uuid4()))
+        self.assertEqual(seleccion.status_code,200,seleccion.content)
+        self.assertEqual(self.diag.piezas.count(),1)
+
+        self.diag.refresh_from_db()
+        solicitud=flujo.enviar_solicitud(usuario=self.taller,empresa=self.empresa,diagnostico_id=self.diag.pk,
+            version=self.diag.version_edicion,clave=uuid.uuid4(),datos=dict(
+                fecha=timezone.localdate(),fallas='Desgaste por verificar QA',causas='Pendiente de análisis QA',
+                componentes_afectados='Componente QA',recomendaciones='Cotizar la pieza seleccionada',
+                conclusiones='Revisión independiente pendiente',observaciones='Solicitud sintética QA',
+                motivo_sin_evidencia='Sin fotografías adicionales QA',repuestos='REQUERIDOS'))
+        self.assertEqual(solicitud.diagnostico_id,self.diag.pk)
+        self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=self.exp.recepcion).exists())
+        self.assertFalse(tecnica._aprobado(self.diag))
+        self.client.force_login(self.oficina)
+        oficina=self.client.get(flujo_url)
+        self.assertContains(oficina,'Componente QA')
+        with override_settings(MASISCAM_OPERACION_LOCAL=True):
+            with self.assertRaises(ValidationError):
+                operacion.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,
+                    clave=uuid.uuid4(),datos=dict(trabajo='Reparación QA',componentes='Componente QA',
+                        inicio=timezone.now(),observaciones='Sin autorización comercial'))
 
     def test_asignacion_pendiente_no_oculta_recepcion_ni_permite_trabajo(self):
         self.ingreso(confirmar=True)

@@ -26,7 +26,8 @@ def _read(path,expected):
 
 def configurar(env,debug):
     enabled=env.bool('MASISCAM_EXPEDIENTES_ENABLED',default=False)
-    result={f'MASISCAM_{phase}_LOCAL':enabled or (debug and env.bool(f'MASISCAM_{phase}_LOCAL',default=False))
+    result={f'MASISCAM_{phase}_LOCAL':enabled or env.bool(f'MASISCAM_{phase}_ENABLED',default=False)
+        or (debug and env.bool(f'MASISCAM_{phase}_LOCAL',default=False))
         for phase in ('RECEPCION','TECNICA','OPERACION','CALIBRACION','CIERRE')}
     policy=_read(env('MASISCAM_POLITICA_COMERCIAL_FILE',default=''),dict)
     protocols=_read(env('MASISCAM_PROTOCOLOS_CALIBRACION_FILE',default=''),list) or []

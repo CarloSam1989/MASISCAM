@@ -257,7 +257,9 @@ if (root) {
   async function load() {
     state.data = await request(root.dataset.datos);
     list(); selected();
-    $('#pl-map-label').textContent = state.data.mapa_version ? `Mapa v${state.data.mapa_version} · coordenadas normalizadas` : 'Sin posiciones configuradas · selección disponible por listado';
+    $('#pl-map-label').textContent = state.data.mapa_version
+      ? `Mapa v${state.data.mapa_version} · coordenadas normalizadas`
+      : 'Mapa sin configurar: PLANTA puede registrar posiciones; selección disponible por listado.';
   }
   async function start() {
     tab('plano'); await load();

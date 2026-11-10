@@ -2,7 +2,7 @@ import uuid
 from django.contrib import messages
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.db import IntegrityError
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import Http404
 from django.shortcuts import render,redirect,get_object_or_404
 from django.urls import reverse
@@ -95,10 +95,11 @@ def contexto(request,exp,errores=None):
         mantenimientos=t.expedientes_operativos(request.user,request.empresa_activa).filter(registro__equipo=exp.registro.equipo).order_by('-correlativo') if context['rol']=='TALLER' else [],
         errores_generales=[str(error) for form in (errores or {}).values() for errors in form.errors.values() for error in errors],
         form_principal=forms.get(form_action),clave=uuid.uuid4(),
-        planos=t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO',estado='PUBLICADA',
-            aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True).distinct() if diag else [],
         envios=sol.envios.select_related('documento','confirmacion').order_by('-pk') if sol else [],
         piezas=diag.piezas.prefetch_related('fotografias__documento').order_by('pk') if diag and (context['rol']=='TALLER' or diag.enviado_en) else [],
+        planos=t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO',estado='PUBLICADA',
+            aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True)
+            .annotate(partes_count=Count('partes',distinct=True)).distinct() if diag else [],
         adquisiciones=sol.adquisiciones.select_related('pieza','documento').order_by('pk') if sol else [])
     return context
 
