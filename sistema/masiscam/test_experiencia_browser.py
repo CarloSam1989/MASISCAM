@@ -1,5 +1,6 @@
 """Responsive operational screens, with isolated PostgreSQL and no real Drive."""
 import os
+import re
 import uuid
 from pathlib import Path
 from unittest import skipUnless
@@ -11,9 +12,10 @@ from django.urls import reverse
 from django.utils import timezone
 
 from . import test_taller, test_tecnica as qa
-from .models import AsignacionTecnica
+from .models import AsignacionTecnica, ConfirmacionRecepcion
 from .recepcion_services import abrir_recepcion
 from .recepcion_confirmacion import confirmar_recepcion
+from .tecnica_models import Inspeccion
 
 
 @skipUnless(os.environ.get('MASISCAM_BROWSER_TESTS')=='1','Activar navegador QA explícitamente')
@@ -100,7 +102,7 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                         for width in (1440,768,390):
                             page.set_viewport_size({'width':width,'height':1000})
                             for nombre,url,texto in [
-                                ('00-equipo-nuevo',reverse('masiscam:taller_equipo',args=[nuevo.pk]),'Registrar recepción'),
+                                ('00-equipo-nuevo',reverse('masiscam:taller_equipo',args=[nuevo.pk]),'Iniciar mantenimiento'),
                                 ('02-recepcion-confirmada',reverse('masiscam:expediente_detalle',args=[exp.pk]),'Continuar al mantenimiento'),
                                 ('03-sin-asignacion',reverse('masiscam:taller_equipo',args=[otro.pk]),'PLANTA debe asignar'),
                                 ('04-sin-plano',reverse('masiscam:flujo_detalle',args=[plano_exp.pk]),'No hay un plano publicado aplicable')]:
@@ -112,3 +114,69 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                                 page.screenshot(path=str(output/f'{nombre}-{width}.png'),full_page=True)
                     context.close()
             finally: browser.close()
+
+    def test_comenzar_taller_navega_por_get_y_formulario_usa_post(self):
+        from playwright.sync_api import sync_playwright, expect
+        equipo=self.crear('COMENZAR-GET')
+        client=Client()
+        client.force_login(self.taller)
+        cookie=client.cookies[settings.SESSION_COOKIE_NAME].value
+        inicio_url=self.live_server_url+reverse('masiscam:taller_inicio')
+        detalle_url=self.live_server_url+reverse('masiscam:taller_equipo',args=[equipo.pk])
+        recepcion_url=self.live_server_url+reverse('masiscam:recepcion_crear')+f'?equipo={equipo.pk}'
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                context=browser.new_context()
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookie,url=self.live_server_url)])
+                page=context.new_page()
+                requests=[]
+                page.on('request',lambda request:requests.append((request.method,request.url)))
+                self.assertEqual(page.goto(inicio_url).status,200)
+                page.get_by_role('link',name=f'Continuar con {equipo.nombre}').click()
+                expect(page).to_have_url(detalle_url)
+                self.assertIn(('GET',detalle_url),requests)
+                expect(page.get_by_role('link',name='Iniciar mantenimiento')).to_be_visible()
+                page.get_by_role('link',name='Iniciar mantenimiento').click()
+                expect(page).to_have_url(recepcion_url)
+                form=page.locator('form.mf-card')
+                self.assertEqual(form.evaluate('(element) => element.method'),'post')
+                self.assertEqual(form.locator('[name=csrfmiddlewaretoken]').count(),1)
+                expect(page.get_by_role('button',name='Continuar a inspección',exact=True)).to_be_visible()
+                context.close()
+            finally:
+                browser.close()
+
+    def test_iniciar_inspeccion_postea_al_flujo_y_abre_revision(self):
+        from playwright.sync_api import sync_playwright, expect
+        equipo=self.crear('INSPECCION-POST')
+        exp=self.recepcion(equipo)
+        client=Client()
+        client.force_login(self.taller)
+        cookie=client.cookies[settings.SESSION_COOKIE_NAME].value
+        detalle_url=self.live_server_url+reverse('masiscam:taller_equipo',args=[equipo.pk])+f'?expediente={exp.pk}'
+        flujo_url=self.live_server_url+reverse('masiscam:flujo_detalle',args=[exp.pk])
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                context=browser.new_context()
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookie,url=self.live_server_url)])
+                page=context.new_page()
+                self.assertEqual(page.goto(detalle_url).status,200)
+                button=page.get_by_role('button',name='Iniciar inspección',exact=True)
+                form=button.locator('xpath=ancestor::form')
+                self.assertEqual(form.get_attribute('action'),reverse('masiscam:flujo_detalle',args=[exp.pk]))
+                self.assertEqual(form.locator('[name=csrfmiddlewaretoken]').count(),1)
+                with page.expect_response(lambda response: response.url==flujo_url and response.request.method=='POST') as post:
+                    button.click()
+                self.assertEqual(post.value.status,302)
+                expect(page).to_have_url(flujo_url)
+                expect(page.get_by_role('link',name='Completar inspección',exact=True)).to_be_visible()
+                page.get_by_role('link',name='Completar inspección',exact=True).click()
+                expect(page).to_have_url(re.compile(r'.*/app/tecnica/INSPECCION/\d+/\?flujo=1'))
+                self.assertIn('INSPECCION',page.locator('body').inner_text())
+                context.close()
+            finally:
+                browser.close()
+        self.assertTrue(Inspeccion.objects.filter(expediente=exp).exists())
+        self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())

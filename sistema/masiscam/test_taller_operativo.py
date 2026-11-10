@@ -28,7 +28,7 @@ class TallerOperativoTests(TestCase):
     def ingreso(self):
         equipo = self.crear('OPERATIVO')
         self.assertFalse(ExpedienteMantenimiento.objects.filter(registro__equipo=equipo).exists())
-        self.assertContains(self.client.get(reverse('masiscam:taller_equipo', args=[equipo.pk])), 'Registrar recepción')
+        self.assertContains(self.client.get(reverse('masiscam:taller_equipo', args=[equipo.pk])), 'Iniciar mantenimiento')
         exp = self.recepcion(equipo)
         self.assertEqual(exp.asignaciones_tecnicas.get(fin__isnull=True).tecnico, self.taller)
         self.assertTrue(Auditoria.objects.filter(expediente=exp, accion='TALLER_ASIGNADO_INGRESO').exists())

@@ -78,12 +78,18 @@ class ExperienciaTests(TestCase):
 
     def test_inicio_mantenimiento_redirige_a_inspeccion_sin_fotografias_ni_confirmacion(self):
         equipo=self.crear('INICIO-SIMPLE')
+        detalle_url=reverse('masiscam:taller_equipo',args=[equipo.pk])
+        self.assertEqual(self.client.get(detalle_url).status_code,200)
+        self.assertEqual(self.client.post(detalle_url,{}).status_code,405)
+        inicio=self.client.get(reverse('masiscam:taller_inicio'))
+        self.assertContains(inicio,f'href="{detalle_url}"')
         response=self.client.post(reverse('masiscam:recepcion_crear'),dict(
             clave=uuid.uuid4(),equipo=equipo.pk,cliente=self.cliente.pk,tipo='MANTENIMIENTO',
             fecha=timezone.localtime().strftime('%Y-%m-%dT%H:%M'),condicion_ingreso='Pendiente de inspección QA'))
         from .models import ExpedienteMantenimiento
         exp=ExpedienteMantenimiento.objects.get(registro__equipo=equipo)
-        self.assertRedirects(response,reverse('masiscam:taller_equipo',args=[equipo.pk])+f'?expediente={exp.pk}')
+        self.assertRedirects(response,detalle_url+f'?expediente={exp.pk}')
+        self.assertEqual(self.client.get(response.url).status_code,200)
         self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())
         self.assertContains(self.client.get(response.url),'Iniciar inspección')
 
