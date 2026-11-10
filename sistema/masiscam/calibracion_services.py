@@ -229,7 +229,7 @@ def _dependencias(c):
 
 @transaction.atomic
 def iniciar(*,usuario,empresa,expediente_id,plantilla_id,clave,motivo=''):
-    exp=expediente(usuario,empresa,expediente_id,{'TECNICO','PLANTA'},True)
+    exp=expediente(usuario,empresa,expediente_id,{'TECNICO','TALLER','PLANTA'},True)
     payload=dict(plantilla=plantilla_id,motivo=motivo)
     old=t._retry(exp,clave,'CAL_INICIADA',payload)
     if old:
@@ -243,12 +243,12 @@ def iniciar(*,usuario,empresa,expediente_id,plantilla_id,clave,motivo=''):
     role=autorizar(usuario,empresa,exp=exp).rol
     if oldcal and (role!='PLANTA' or not motivo.strip()):
         raise PermissionDenied('PLANTA autoriza corrección con motivo; el técnico no sobrescribe revisiones previas.')
-    if not oldcal and role!='TECNICO':
+    if not oldcal and role not in t.OPERADORES:
         raise PermissionDenied('El técnico principal inicia la calibración.')
     assignment=exp.asignaciones_tecnicas.filter(fin__isnull=True).first()
     if not assignment:
         raise ValidationError('Asigne un técnico principal activo.')
-    t.autorizar_tecnica(assignment.tecnico,empresa,{'TECNICO'},exp)
+    t.autorizar_tecnica(assignment.tecnico,empresa,{'TECNICO','TALLER'},exp)
     c=t._save(Calibracion(expediente=exp,diagnostico=auth.propuesta.diagnostico,autorizacion=auth,plantilla=p,
         tecnico=assignment.tecnico,reparacion_snapshot=rep,revision=oldcal.revision+1 if oldcal else 1,sustituye=oldcal,motivo_revision=motivo,clave=clave))
     # Correction starts empty: no implicit reuse of measurements or instrument
@@ -278,7 +278,7 @@ def _bump(c):
 @transaction.atomic
 def guardar(*,usuario,empresa,calibracion_id,version,clave,datos):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO','TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,version=version,datos=datos)
     old=t._retry(exp,clave,'CAL_GUARDADA',payload)
     if old:
@@ -306,7 +306,7 @@ def guardar(*,usuario,empresa,calibracion_id,version,clave,datos):
 @transaction.atomic
 def medir(*,usuario,empresa,calibracion_id,version,clave,punto,valor,observaciones=''):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO','TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,version=version,punto=punto,valor=str(valor),observaciones=observaciones)
     old=t._retry(exp,clave,'CAL_MEDICION',payload)
     if old:
@@ -332,7 +332,7 @@ def medir(*,usuario,empresa,calibracion_id,version,clave,punto,valor,observacion
 @transaction.atomic
 def evidencia(*,usuario,empresa,calibracion_id,version,clave,clase,leyenda,archivo):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO','TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,version=version,clase=clase,leyenda=leyenda,hash=_hash(archivo) if archivo else None)
     old=t._retry(exp,clave,'CAL_EVIDENCIA',payload)
     if old:
@@ -361,7 +361,7 @@ def evidencia(*,usuario,empresa,calibracion_id,version,clave,clase,leyenda,archi
 @transaction.atomic
 def enviar(*,usuario,empresa,calibracion_id,version,clave):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO','TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,version=version)
     old=t._retry(exp,clave,'CAL_ENVIADA',payload)
     if old:
@@ -455,7 +455,7 @@ def snapshot(c):
 @transaction.atomic
 def reservar_informe(*,usuario,empresa,calibracion_id,clave,nueva_version=False,motivo=''):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'OFICINA','PLANTA','TECNICO'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'OFICINA','PLANTA','TECNICO','TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,nueva_version=bool(nueva_version),motivo=motivo)
     old=t._retry(exp,clave,'CAL_INFORME',payload)
     if old:

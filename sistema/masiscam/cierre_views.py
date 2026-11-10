@@ -116,7 +116,7 @@ def historial(request,pk):
     eq=get_object_or_404(Equipo,pk=pk,proyecto__empresa=request.empresa_activa)
     from django.db.models import prefetch_related_objects
     rows=resumen(request.user,request.empresa_activa,{'equipo':str(pk)},limite=None)['expedientes']
-    if s.autorizar(request.user,request.empresa_activa).rol=='TECNICO' and not rows:
+    if s.autorizar(request.user,request.empresa_activa).rol in s.t.OPERADORES and not rows:
         raise PermissionDenied('No hay expedientes asignados autorizados para este equipo.')
     prefetch_related_objects(rows,'informes_finales__documento','informes_finales__revision__responsable','calibraciones','asignaciones_tecnicas__tecnico','informes_tecnicos','emisionoperativa_set')
     return render(request,'masiscam/cierre_historial.html',dict(equipo=eq,expedientes=rows))

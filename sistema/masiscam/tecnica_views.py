@@ -1,3 +1,4 @@
+from django.urls import reverse
 import uuid
 from functools import wraps
 from django.contrib import messages
@@ -47,9 +48,7 @@ def _role(request):
 @masiscam_access_required
 def tecnica_inicio(request):
     role=_role(request)
-    qs=ExpedienteMantenimiento.objects.filter(empresa=request.empresa_activa)
-    if role=='TECNICO':
-        qs=qs.filter(asignaciones_tecnicas__tecnico=request.user,asignaciones_tecnicas__fin__isnull=True)
+    qs=svc.expedientes_operativos(request.user,request.empresa_activa)
     return render(request,'masiscam/tecnica_inicio.html',{'expedientes':qs.distinct(),'rol_tecnico':role})
 
 
@@ -149,9 +148,11 @@ def tecnica_revision(request,tipo,pk):
             except (ValidationError,IntegrityError,OSError,ValueError,ObjectDoesNotExist) as exc:
                 _error(form,exc)
             else:
+                if action == 'enviar' and request.rol_masiscam.rol == 'TALLER':
+                    return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
                 return redirect('masiscam:tecnica_revision',tipo=tipo,pk=pk)
     role=_role(request)
-    editable=role=='TECNICO' and obj.tecnico_id==request.user.pk and not obj.enviado_en and svc.vigente(obj)
+    editable=role in svc.OPERADORES and obj.tecnico_id==request.user.pk and not obj.enviado_en and svc.vigente(obj)
     for f in forms['guardar'].fields.values():
         f.disabled=not editable
     return render(request,'masiscam/tecnica_revision.html',dict(revision=obj,tipo=tipo,expediente=exp,

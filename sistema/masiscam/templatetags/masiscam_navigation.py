@@ -108,3 +108,11 @@ def breadcrumbs(context):
     privado = request.user.is_authenticated
     return [{"label": label, "url": url if privado and i < len(items) - 1 else None}
             for i, (label, url) in enumerate(items)]
+
+
+@register.simple_tag(takes_context=True)
+def puede_ver_planos_taller(context):
+    from django.conf import settings
+    request = context.get('request')
+    role = getattr(request, 'rol_masiscam', None)
+    return bool(getattr(settings, 'MASISCAM_TECNICA_LOCAL', False) and role and role.rol == 'TALLER')

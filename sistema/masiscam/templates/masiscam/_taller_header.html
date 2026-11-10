@@ -1,4 +1,4 @@
-{% load static %}
+{% load static masiscam_navigation %}{% puede_ver_planos_taller as tecnica_local %}
 <header class="tw-header">
   <div class="container tw-topbar">
     <a href="{% url 'masiscam:taller_inicio' %}" class="tw-brand" aria-label="MASISCAM · Inicio de taller"><img src="{% static 'masiscam/img/logo_transparente.png' %}" alt="MASISCAM" width="160"><span class="tw-mobile-module">Espacio de taller</span></a>
@@ -11,6 +11,7 @@
     <a href="{% url 'masiscam:ficha_crear' %}"{% if request.resolver_match.url_name == 'ficha_crear' %} aria-current="page"{% endif %}>{% include 'masiscam/_taller_icon.html' with icono='plus' %}Registrar equipo</a>
     <a href="{% url 'masiscam:expedientes' %}"{% if request.resolver_match.url_name == 'expedientes' %} aria-current="page"{% endif %}>{% include 'masiscam/_taller_icon.html' with icono='folder' %}Mis expedientes</a>
     <a href="{% url 'masiscam:taller_estado' %}"{% if request.resolver_match.url_name == 'taller_estado' %} aria-current="page"{% endif %}>{% include 'masiscam/_taller_icon.html' with icono='clock' %}Estado del mantenimiento</a>
+    {% if tecnica_local %}<a href="{% url 'masiscam:biblioteca' %}">Planos técnicos</a>{% endif %}
     <a href="{% url 'masiscam:taller_cuenta' %}"{% if request.resolver_match.url_name == 'taller_cuenta' %} aria-current="page"{% endif %}>{% include 'masiscam/_taller_icon.html' with icono='user' %}Mi cuenta</a>
     <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button class="btn tw-logout">{% include 'masiscam/_taller_icon.html' with icono='exit' %}Salir</button></form>
   </nav></div>

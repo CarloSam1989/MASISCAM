@@ -123,7 +123,7 @@ class PlanoTests(TestCase):
                 self.assertEqual(self.client.post(reverse('masiscam:plano_mapa', args=[self.ref.pk]), '{}', content_type='application/json').status_code, 403)
             if codigo == 'TALLER':
                 for name in ('plano', 'plano_datos'):
-                    self.assertEqual(self.client.get(reverse('masiscam:'+name, args=[self.ref.pk])).status_code, 403)
+                    self.assertIn(self.client.get(reverse('masiscam:'+name, args=[self.ref.pk])).status_code, (403,404))
         other = qa.usuario(self.empresa, 'tecnico-plano-no-asignado', 'TECNICO')
         self.client.force_login(other)
         self.assertIn(self.client.get(reverse('masiscam:plano_datos', args=[self.ref.pk]), {'diagnostico':self.diag.pk}).status_code, (403,404))

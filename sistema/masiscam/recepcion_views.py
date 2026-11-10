@@ -1,3 +1,4 @@
+from django.urls import reverse
 import hashlib
 import uuid
 
@@ -91,6 +92,8 @@ def recepcion_finalizar(request, pk):
             form.add_error(None, "No se pudo almacenar la guía o sus evidencias. Recepción sin finalizar; reintente.")
         else:
             messages.success(request, "Recepción confirmada con guía persistente. No constituye aprobación técnica ni comercial.")
+            if request.rol_masiscam.rol == "TALLER":
+                return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
             return redirect("masiscam:expediente_detalle", pk=pk)
     return _detalle(request, exp, form, status=400)
 

@@ -273,7 +273,7 @@ def verificar_presupuesto(propuesta):
 
 @transaction.atomic
 def recibir_repuesto(*, usuario, empresa, expediente_id, clave, datos, archivo=None, fotografia=None):
-    exp = expediente(usuario,empresa,expediente_id,{'OFICINA','PLANTA'},True)
+    exp = expediente(usuario,empresa,expediente_id,{'OFICINA','PLANTA','TALLER'},True)
     _datos(datos, ('pieza_id','procedencia','entregado_por','numero_parte','descripcion','cantidad','unidad','fecha','guia','discrepancia'))
     payload = dict(datos=datos,hash=_hash(archivo) if archivo else None,foto=_hash(fotografia) if fotografia else None)
     old = t._retry(exp,clave,'REPUESTO_RECIBIDO',payload)
@@ -301,7 +301,7 @@ def recibir_repuesto(*, usuario, empresa, expediente_id, clave, datos, archivo=N
 
 @transaction.atomic
 def iniciar_actividad(*, usuario, empresa, expediente_id, clave, datos):
-    exp = expediente(usuario,empresa,expediente_id,{'TECNICO'},True)
+    exp = expediente(usuario,empresa,expediente_id,{'TECNICO','TALLER'},True)
     _datos(datos, ('trabajo','componentes','inicio','observaciones'))
     old = t._retry(exp,clave,'REPARACION_INICIADA',datos)
     if old:
@@ -323,7 +323,7 @@ def iniciar_actividad(*, usuario, empresa, expediente_id, clave, datos):
 
 def _actividad(usuario, empresa, pk):
     act = ActividadReparacion.objects.get(pk=pk)
-    exp = expediente(usuario,empresa,act.expediente_id,{'TECNICO'},True)
+    exp = expediente(usuario,empresa,act.expediente_id,{'TECNICO','TALLER'},True)
     if act.autor_id!=usuario.pk or exigir_autorizacion(exp).pk!=act.autorizacion_id:
         raise PermissionDenied('Se requiere autor asignado y autorización vigente de la actividad.')
     return act,exp
@@ -438,7 +438,7 @@ def respaldo_propuesta(*, usuario, empresa, propuesta_id, clave, leyenda, archiv
 @transaction.atomic
 def evidencia_repuesto(*, usuario, empresa, recepcion_id, clave, leyenda, archivo):
     r=RecepcionRepuesto.objects.get(pk=recepcion_id)
-    exp=expediente(usuario,empresa,r.expediente_id,{'OFICINA','PLANTA'},True)
+    exp=expediente(usuario,empresa,r.expediente_id,{'OFICINA','PLANTA','TALLER'},True)
     payload=dict(recepcion=r.pk,leyenda=leyenda,hash=_hash(archivo) if archivo else None)
     old=t._retry(exp,clave,'REPUESTO_EVIDENCIA',payload)
     if old:

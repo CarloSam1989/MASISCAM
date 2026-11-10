@@ -52,7 +52,7 @@ def contexto(request, pk):
         if not (ref.aplicabilidades.filter(equipo=obj.expediente.registro.equipo, activa=True).exists()
                 or obj.piezas.filter(parte__referencia=ref).exists()):
             raise PermissionDenied('Plano sin aplicabilidad ni cita en este diagnóstico.')
-    editable = bool(obj and request.rol_masiscam.rol == 'TECNICO' and obj.tecnico_id == request.user.pk
+    editable = bool(obj and request.rol_masiscam.rol in tecnica.OPERADORES and obj.tecnico_id == request.user.pk
         and not obj.enviado_en and tecnica.vigente(obj))
     return ref, obj, editable
 
@@ -134,7 +134,7 @@ class SeleccionForm(BaseForm):
 @errores_api
 def plano_pieza(request, pk):
     obj = get_object_or_404(Diagnostico, pk=pk)
-    tecnica.expediente_autorizado(request.user, request.empresa_activa, obj.expediente_id, {'TECNICO'})
+    tecnica.expediente_autorizado(request.user, request.empresa_activa, obj.expediente_id, {'TECNICO','TALLER'})
     op = request.POST.get('operacion', 'guardar')
     form = SeleccionForm(request.POST) if op == 'guardar' else BaseForm(request.POST)
     if not form.is_valid():

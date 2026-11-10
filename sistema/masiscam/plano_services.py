@@ -78,7 +78,7 @@ def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, c
 def guardar_seleccion(*, usuario, empresa, diagnostico_id, version, clave, datos=None,
                       pieza_id=None, fotografias=(), operacion='guardar', evidencia_id=None):
     obj = Diagnostico.objects.get(pk=diagnostico_id)
-    exp = tecnica.expediente_autorizado(usuario, empresa, obj.expediente_id, {'TECNICO'}, True)
+    exp = tecnica.expediente_autorizado(usuario, empresa, obj.expediente_id, {'TECNICO','TALLER'}, True)
     obj.refresh_from_db()
     payload = dict(diagnostico=obj.pk, version=version, pieza=pieza_id, datos=datos,
         operacion=operacion, evidencia=evidencia_id, fotos=[_hash(f) for f in fotografias])

@@ -7,6 +7,7 @@ from . import cierre_views, taller_views
 app_name = "masiscam"
 
 urlpatterns = [
+    path('taller/equipos/<int:pk>/', taller_views.taller_equipo, name='taller_equipo'),
     path('taller/', taller_views.taller_inicio, name='taller_inicio'),
     path('taller/estado/', taller_views.taller_estado, name='taller_estado'),
     path('taller/cuenta/', taller_views.taller_cuenta, name='taller_cuenta'),

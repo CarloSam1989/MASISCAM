@@ -14,7 +14,7 @@ from .usuario_forms import AdministradorCrearForm, UsuarioClaveForm, UsuarioEdit
 
 
 ALCANCE_OPERATIVO = {
-    "TALLER": "Alta exclusiva de equipos, búsqueda de clientes existentes, recepción y guías de sus ingresos; estado de sus expedientes. Sin edición de clientes, ejecución técnica ni aprobaciones.",
+    "TALLER": "Alta exclusiva de equipos; recepción, planos aplicables, inspección, diagnóstico, repuestos, reparación comercialmente autorizada y calibración de sus equipos con asignación vigente. Sin editar clientes ni planos maestros, autorizar comercialmente, aprobar trabajos o cerrar expedientes.",
     "ADMIN": "Lectura técnica de empresa; administración heredada. Sin decisiones técnicas o comerciales.",
     "CONSULTA": "Lectura histórica de empresa. Sin modificaciones ni aprobaciones.",
     "CLIENTE": "Solo productos propios y documentos autorizados. Sin biblioteca ni operaciones internas.",

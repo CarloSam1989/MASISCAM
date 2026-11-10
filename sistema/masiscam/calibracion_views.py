@@ -1,3 +1,4 @@
+from django.urls import reverse
 from functools import wraps
 from django.conf import settings
 from django.core.exceptions import ValidationError,ObjectDoesNotExist,PermissionDenied
@@ -27,8 +28,8 @@ def local(view):
 @masiscam_access_required
 def inicio(request):
     role=s.autorizar(request.user,request.empresa_activa).rol
-    qs=ExpedienteMantenimiento.objects.filter(empresa=request.empresa_activa)
-    if role=='TECNICO': qs=qs.filter(asignaciones_tecnicas__tecnico=request.user,asignaciones_tecnicas__fin__isnull=True)
+    from .tecnica_services import expedientes_operativos
+    qs=expedientes_operativos(request.user,request.empresa_activa)
     return render(request,'masiscam/calibracion_inicio.html',dict(expedientes=qs.distinct(),rol=role))
 
 
@@ -55,7 +56,7 @@ def plantillas(request):
         except (ValidationError,IntegrityError,OSError) as exc: _error(form,exc)
         else: return redirect('masiscam:calibracion_plantilla',pk=result.pk)
     qs=PlantillaCalibracion.objects.filter(empresa=request.empresa_activa)
-    if role=='TECNICO':
+    if role in s.t.OPERADORES:
         qs=qs.filter(aplicabilidades__equipo__registros__expediente_mantenimiento__asignaciones_tecnicas__tecnico=request.user,
             aplicabilidades__equipo__registros__expediente_mantenimiento__asignaciones_tecnicas__fin__isnull=True).distinct()
     return render(request,'masiscam/calibracion_plantillas.html',dict(form=form,puntos=points,plantillas=qs,rol=role),status=400 if request.method=='POST' else 200)
@@ -65,8 +66,9 @@ def _p(request,pk):
     s.autorizar(request.user,request.empresa_activa)
     p=get_object_or_404(PlantillaCalibracion,pk=pk,empresa=request.empresa_activa)
     role=s.autorizar(request.user,request.empresa_activa).rol
-    if role=='TECNICO' and not p.aplicabilidades.filter(equipo__registros__expediente_mantenimiento__asignaciones_tecnicas__tecnico=request.user,
+    if role in s.t.OPERADORES and not p.aplicabilidades.filter(equipo__registros__expediente_mantenimiento__asignaciones_tecnicas__tecnico=request.user,
             equipo__registros__expediente_mantenimiento__asignaciones_tecnicas__fin__isnull=True).exists(): raise Http404
+    if role == 'TALLER' and not p.aplicabilidades.filter(equipo_id__in=s.t.expedientes_operativos(request.user,request.empresa_activa).values('registro__equipo_id')).exists(): raise Http404
     return p
 
 
@@ -140,7 +142,10 @@ def revision(request,pk):
                     from django.contrib import messages
                     messages.warning(request,'Reserva conservada. Cola no disponible; puede reintentar la misma emisión.')
         except (ValidationError,IntegrityError,OSError,ObjectDoesNotExist) as exc: _error(form,exc)
-        else: return redirect('masiscam:calibracion_revision',pk=pk)
+        else:
+            if role == 'TALLER' and op == 'enviar':
+                return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
+            return redirect('masiscam:calibracion_revision',pk=pk)
     snap=s.snapshot(c)
     operativa=True
     try:
@@ -149,7 +154,7 @@ def revision(request,pk):
         operativa=False
     return render(request,'masiscam/calibracion_revision.html',dict(calibracion=c,expediente=exp,rol=role,forms=forms,
         filas=snap['mediciones'],vigente=s.vigente(c),operativa=operativa,
-        editable=operativa and role=='TECNICO' and c.tecnico_id==request.user.pk and not c.enviado_en),status=400 if request.method=='POST' else 200)
+        editable=operativa and role in s.t.OPERADORES and c.tecnico_id==request.user.pk and not c.enviado_en),status=400 if request.method=='POST' else 200)
 
 
 @require_GET

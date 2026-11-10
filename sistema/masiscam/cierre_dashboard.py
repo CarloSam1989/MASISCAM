@@ -13,7 +13,7 @@ from . import cierre_services as s
 def listado(user,empresa,filters=None):
     role=s.autorizar(user,empresa).rol
     qs=ExpedienteMantenimiento.objects.filter(empresa=empresa,registro__equipo__proyecto__empresa=empresa)
-    if role=='TECNICO': qs=qs.filter(asignaciones_tecnicas__tecnico=user,asignaciones_tecnicas__fin__isnull=True)
+    if role in s.t.OPERADORES: qs=qs.filter(asignaciones_tecnicas__tecnico=user,asignaciones_tecnicas__fin__isnull=True)
     filters=filters or {}
     if filters.get('empresa') and str(filters['empresa'])!=str(empresa.pk):
         raise PermissionDenied('El filtro no permite cambiar la empresa activa.')
@@ -48,6 +48,7 @@ def listado(user,empresa,filters=None):
         requiere_piezas=Exists(PiezaRequerida.objects.filter(diagnostico__expediente_id=OuterRef('pk'))))
     # Independent subqueries reflect the latest proposal, not an old approval.
     qs=qs.annotate(comercial_estado=Subquery(DecisionComercial.objects.filter(propuesta_id=OuterRef('propuesta_id')).values('decision')[:1]))
+    if role == 'TALLER': qs=qs.filter(pk__in=s.t.expedientes_operativos(user,empresa).values('pk'))
     return qs.select_related('registro__equipo','cliente_contractual','empresa').distinct().order_by('-creado_en','-pk')
 
 

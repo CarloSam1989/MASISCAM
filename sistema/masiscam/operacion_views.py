@@ -1,3 +1,4 @@
+from django.urls import reverse
 import uuid
 from functools import wraps
 from django.conf import settings
@@ -28,9 +29,8 @@ def local(view):
 @masiscam_access_required
 def inicio(request):
     rol=svc.autorizar(request.user,request.empresa_activa).rol
-    qs=ExpedienteMantenimiento.objects.filter(empresa=request.empresa_activa)
-    if rol=='TECNICO':
-        qs=qs.filter(asignaciones_tecnicas__tecnico=request.user,asignaciones_tecnicas__fin__isnull=True)
+    from .tecnica_services import expedientes_operativos
+    qs=expedientes_operativos(request.user,request.empresa_activa)
     return render(request,'masiscam/operacion_inicio.html',dict(expedientes=qs.distinct()))
 
 
@@ -113,6 +113,8 @@ def operar(request,pk,op):
         except (ValidationError,IntegrityError,OSError,ObjectDoesNotExist) as exc:
             _error(form,exc)
         else:
+            if request.rol_masiscam.rol == 'TALLER' and op == 'resultado':
+                return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
             return redirect('masiscam:operacion_detalle',pk=pk)
     auth=DecisionComercial.objects.filter(expediente=exp,decision='APROBADO').order_by('-propuesta__version').first()
     return render(request,'masiscam/operacion_form.html',dict(form=form,operacion=LABELS[op],expediente=exp,politica=svc.politica(),

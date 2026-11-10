@@ -150,7 +150,7 @@ class TallerTests(TestCase):
             self.assertEqual(equipo.tipo_producto, codigo)
             self.assertFalse(equipo.consulta_publica_activa or equipo.visible_publico)
             self.assertTrue(equipo.fotografia_general)
-            self.assertEqual(response.url, reverse('masiscam:recepcion_crear') + '?equipo=' + str(equipo.pk))
+            self.assertEqual(response.url, reverse('masiscam:taller_equipo', args=[equipo.pk]))
         self.assertEqual(Equipo.objects.filter(pk=self.historico.pk).values().get(), antes)
         self.assertIsNone(self.historico.registrado_por_id)
 
@@ -176,8 +176,9 @@ class TallerTests(TestCase):
         from . import tecnica_services, operacion_services, calibracion_services, cierre_services
         for autorizar in (tecnica_services.autorizar_tecnica, operacion_services.autorizar,
                           calibracion_services.autorizar, cierre_services.autorizar):
+            self.assertEqual(autorizar(self.taller, self.empresa).rol, 'TALLER')
             with self.assertRaises(PermissionDenied):
-                autorizar(self.taller, self.empresa)
+                autorizar(self.taller, self.empresa, {'PLANTA'})
         for user in (self.root, self.oficina, self.usuarios['TECNICO']):
             with self.assertRaises(PermissionDenied):
                 autorizar_creacion_equipo(usuario=user, empresa=self.empresa)
@@ -197,9 +198,11 @@ class TallerTests(TestCase):
         response = self.client.get(reverse('masiscam:taller_inicio'))
         for vista in ('taller_inicio', 'ficha_crear', 'expedientes', 'taller_estado', 'taller_cuenta'):
             self.assertContains(response, 'href="' + reverse('masiscam:' + vista) + '"')
-        for vista in ('usuarios', 'clientes', 'proyectos', 'biblioteca', 'tecnica_inicio', 'operacion_inicio', 'calibracion_inicio', 'cierre_dashboard'):
+        for vista in ('usuarios', 'clientes', 'proyectos', 'cierre_dashboard'):
             self.assertNotContains(response, 'href="' + reverse('masiscam:' + vista) + '"')
             self.assertEqual(self.client.get(reverse('masiscam:' + vista)).status_code, 403)
+        for vista in ('biblioteca', 'tecnica_inicio', 'operacion_inicio', 'calibracion_inicio'):
+            self.assertEqual(self.client.get(reverse('masiscam:' + vista)).status_code, 200)
         from .models import Cliente
         otra = Empresa.objects.create(nombre='Ajena QA')
         externo = Cliente.objects.create(empresa=otra, nombre_comercial='No visible', ruc=self.cliente.ruc)

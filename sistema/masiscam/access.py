@@ -25,8 +25,13 @@ PERMISOS_ROL = {
 }
 
 VISTAS_TALLER = {
+    "masiscam.tecnica_views": {"tecnica_inicio", "tecnica_expediente", "tecnica_nueva_revision", "tecnica_revision", "tecnica_informe", "tecnica_documento", "biblioteca", "biblioteca_referencia", "biblioteca_documento"},
+    "masiscam.plano_views": {"plano", "plano_datos", "plano_pieza"},
+    "masiscam.operacion_views": {"inicio", "detalle", "operar", "documento"},
+    "masiscam.calibracion_views": {"inicio", "expediente", "revision", "documento", "fuente"},
+    "masiscam.cierre_views": {"detalle", "documento", "historial"},
     "masiscam.views": {"dashboard", "ficha_crear", "equipo_crear", "clientes", "equipo_foto_privada"},
-    "masiscam.taller_views": {"taller_inicio", "taller_estado", "taller_cuenta"},
+    "masiscam.taller_views": {"taller_inicio", "taller_estado", "taller_cuenta", "taller_equipo"},
     "masiscam.recepcion_views": {"expedientes", "recepcion_crear", "expediente_detalle",
         "recepcion_finalizar", "guia_emitir", "guia_reintentar", "recepcion_documento"},
 }
@@ -150,6 +155,10 @@ def masiscam_access_required(view_func):
         if request.rol_masiscam and request.rol_masiscam.rol == "TALLER":
             if view_func.__name__ not in VISTAS_TALLER.get(view_func.__module__, set()):
                 raise PermissionDenied("Esta ventana no está autorizada para TALLER.")
+            if (view_func.__module__ in {"masiscam.cierre_views", "masiscam.tecnica_views"}
+                    and view_func.__name__ in {"detalle", "biblioteca", "biblioteca_referencia", "biblioteca_documento"}
+                    and request.method not in {"GET", "HEAD"}):
+                raise PermissionDenied("Esta ventana es de consulta para TALLER.")
             if view_func.__name__ == "clientes" and (
                 request.method not in {"GET", "HEAD"} or request.GET.get("formato") != "json"
             ):

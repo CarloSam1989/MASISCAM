@@ -4,9 +4,9 @@ from .tecnica_forms import BaseForm
 from .models import (Diagnostico,PropuestaComercial,RecepcionRepuesto,PiezaRequerida,
     ActividadReparacion,ResultadoReparacion)
 
-AREAS={'propuesta':{'GERENCIA'},'decision':{'GERENCIA'},'repuesto':{'OFICINA','PLANTA'},
-    'actividad':{'TECNICO'},'uso':{'TECNICO'},'foto':{'TECNICO'},'resultado':{'TECNICO'},
-    'revision':{'PLANTA'},'documento':{'OFICINA','PLANTA'},'respaldo':{'OFICINA','GERENCIA'},'foto_repuesto':{'OFICINA','PLANTA'}}
+AREAS={'propuesta':{'GERENCIA'},'decision':{'GERENCIA'},'repuesto':{'OFICINA','PLANTA','TALLER'},
+    'actividad':{'TECNICO','TALLER'},'uso':{'TECNICO','TALLER'},'foto':{'TECNICO','TALLER'},'resultado':{'TECNICO','TALLER'},
+    'revision':{'PLANTA'},'documento':{'OFICINA','PLANTA'},'respaldo':{'OFICINA','GERENCIA'},'foto_repuesto':{'OFICINA','PLANTA','TALLER'}}
 LABELS={'propuesta':'Propuesta comercial','decision':'Decisión del cliente','repuesto':'Recepción de repuesto',
     'actividad':'Iniciar actividad','uso':'Repuesto utilizado','foto':'Fotografía de actividad',
     'resultado':'Resultado de actividad','revision':'Revisión de PLANTA','documento':'Emitir documento interno',

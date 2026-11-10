@@ -163,6 +163,11 @@ def abrir_recepcion(*, usuario, empresa, equipo_id, cliente_id, clave, tipo, fec
         exp = ExpedienteMantenimiento.objects.create(registro=registro, empresa=empresa,
             cliente_contractual=equipo.cliente, correlativo=contador.ultimo_numero,
             numero=f"EXP-E{empresa.pk}-{contador.ultimo_numero:08d}", huella_solicitud=huella, creado_por=usuario)
+        if rol_masiscam_usuario(usuario=usuario, empresa=empresa).rol == 'TALLER':
+            from .models import AsignacionTecnica
+            AsignacionTecnica.objects.create(expediente=exp, tecnico=usuario, asignado_por=usuario,
+                motivo='Responsable del ingreso de su equipo en TALLER', clave=uuid.uuid4())
+            evento(exp, usuario, 'TALLER_ASIGNADO_INGRESO', responsable=usuario.pk)
         snapshot = dict(numero=exp.numero, empresa=empresa.nombre, ruc=equipo.cliente.ruc,
             cliente=equipo.cliente.razon_social, equipo=equipo.nombre, tipo_producto=equipo.tipo_producto,
             marca=equipo.marca, modelo=equipo.modelo, serie=equipo.numero_serie,

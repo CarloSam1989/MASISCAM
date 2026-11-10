@@ -310,7 +310,7 @@ def ficha_crear(request):
                 messages.success(request, "Equipo registrado correctamente.")
                 return JsonResponse({"success": True, "id": equipo.pk})
             messages.success(request, "Ficha del equipo creada correctamente.")
-            return redirect(reverse("masiscam:recepcion_crear") + f"?equipo={equipo.pk}")
+            return redirect("masiscam:taller_equipo", pk=equipo.pk)
     contexto = _contexto_formulario_producto(request, form)
     if _es_modal(request) and request.method == "POST":
         return _respuesta_formulario_modal(request, "masiscam/ficha_form.html", contexto, form, status=400)
