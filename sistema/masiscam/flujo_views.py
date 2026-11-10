@@ -33,7 +33,10 @@ def bandeja(request):
 
 
 def contexto(request,exp,errores=None):
+    from django.conf import settings
     context=s.resumen(exp,request.user)
+    context['historial_disponible']=all(getattr(settings,'MASISCAM_'+fase+'_LOCAL',False)
+        for fase in ('OPERACION','CALIBRACION','CIERRE'))
     historica=False
     if request.GET.get('solicitud'):
         raw=request.GET['solicitud']

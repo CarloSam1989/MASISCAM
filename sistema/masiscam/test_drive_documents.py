@@ -342,6 +342,8 @@ class PublicDriveDocumentsTests(TestCase):
 
     def test_no_read_permission_hides_section_and_blocks_direct_url(self):
         from .models import RolMasiscam
+        # The shared fixture now creates ADMIN; revoke the effective tested role.
+        RolMasiscam.objects.filter(perfil__user=self.usuario,perfil__empresa=self.empresa).update(rol=RolMasiscam.Rol.TECNICO)
         self.login()
         with patch.dict("masiscam.access.PERMISOS_ROL", {RolMasiscam.Rol.TECNICO: set()}):
             response = self.client.get(reverse("masiscam:ficha_detalle", args=[self.antiguo.pk]))

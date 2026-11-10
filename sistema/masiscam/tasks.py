@@ -1,6 +1,7 @@
 from celery import shared_task
 from django.conf import settings
 from django.db import transaction
+import logging
 
 
 class DriveSyncError(Exception):
@@ -106,7 +107,17 @@ def sincronizar_documento(documento_id):
             documento.error_sincronizacion = ""
             documento.save(update_fields=["drive_file_id", "drive_view_url", "drive_download_url", "estado_sincronizacion", "error_sincronizacion"])
             return documento.drive_file_id
-    except Exception:
+    except Exception as exc:
+        # Never log provider bodies, credentials, URLs or local paths.
+        from pathlib import Path
+        if not settings.GOOGLE_DRIVE_CREDENTIALS_FILE or not settings.GOOGLE_DRIVE_ROOT_FOLDER_ID:
+            causa = 'CONFIGURACION_INCOMPLETA'
+        elif not Path(settings.GOOGLE_DRIVE_CREDENTIALS_FILE).is_file():
+            causa = 'CREDENCIAL_NO_ACCESIBLE'
+        else:
+            status = getattr(getattr(exc, 'resp', None), 'status', None)
+            causa = f'HTTP_{status}' if isinstance(status,int) else 'SERVICIO_NO_DISPONIBLE'
+        logging.getLogger(__name__).warning('Drive pendiente: documento=%s causa=%s', documento_id, causa)
         Documento.objects.filter(pk=documento_id).exclude(estado_sincronizacion=Documento.Sincronizacion.ARCHIVADO).update(
             estado_sincronizacion=Documento.Sincronizacion.ERROR,
             error_sincronizacion="No se pudo sincronizar con Drive. Reintente más tarde.")

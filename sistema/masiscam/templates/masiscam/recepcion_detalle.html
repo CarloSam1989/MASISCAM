@@ -1,32 +1,33 @@
-{% extends 'masiscam/base.html' %}{% block content %}<div class="container py-4" style="overflow-wrap:anywhere"><h1>{{ expediente.numero }}</h1>
-{% if confirmacion %}<div class="alert alert-success" role="status">Recepción confirmada por {{ confirmacion.responsable }} · {{ confirmacion.confirmado_en }}. Guía versión {{ confirmacion.guia.version }} almacenada y verificada. Etapas técnicas deshabilitadas.</div>
-{% else %}<div class="alert alert-warning" role="status">Recepción provisional · sin finalizar. Falta validación de evidencias y confirmación del servidor.</div>{% endif %}
-{% if puede_recepcion and not confirmacion %}{% if cierre_local %}
-<section class="card p-3 mb-4"><h2>Confirmar recepción local</h2>
-<p>Seleccione una fotografía GENERAL y, si existe, PLACA, o cargue archivos nuevos. SIN_PLACA exige justificación. Si no hay guía, indique el motivo. Los campos técnicos incompletos no se rellenarán automáticamente.</p>
-<p>El servidor verificará los archivos y almacenará la guía antes de confirmar. La sincronización con Drive puede completarse después.</p>
+{% extends 'masiscam/base.html' %}{% load static %}
+{% block title %}Recepción · {{ expediente.numero }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/flujo.css' %}">{% endblock %}
+{% block content %}<div class="container mf-app">
+<header class="mf-heading"><div><p class="mf-eyebrow">{{ expediente.numero }} · RECEPCIÓN</p><h1>{{ equipo.nombre }}</h1><p>{{ snapshot.cliente }} · RUC {{ snapshot.ruc }}</p><p>Serie {{ snapshot.serie|default:'Pendiente de identificación' }} · {{ equipo.marca }} {{ equipo.modelo }}</p></div><span class="mf-badge">{% if confirmacion %}Recepción confirmada{% else %}Recepción por completar{% endif %}</span></header>
+{% include 'masiscam/_flujo_pasos.html' %}
+<section class="mf-next"><h2>{% if confirmacion %}Recepción confirmada{% else %}Completar recepción{% endif %}</h2>
+{% if confirmacion %}<p>La recepción y su guía están guardadas. Continúa con las actividades asignadas; las aprobaciones técnicas y comerciales conservan sus responsables independientes.</p>{% else %}<p>Adjunta o selecciona las fotografías y confirma los datos de ingreso.</p>{% endif %}
+{% for requisito in pendientes %}<p role="status">{{ requisito }}</p>{% endfor %}
+{% if not confirmacion and puede_recepcion and cierre_local %}<a class="btn btn-outline-primary" href="#confirmar-recepcion">Completar recepción</a>{% endif %}
+{% if continuar %}<a class="btn btn-primary mf-main-action" href="{% url 'masiscam:flujo_detalle' expediente.pk %}">Continuar al mantenimiento</a>{% elif confirmacion and guia_principal %}<a class="btn btn-primary mf-main-action" href="{% url 'masiscam:recepcion_documento' expediente.pk guia_principal.documento_id %}">Descargar guía</a>{% endif %}
+</section>
+{% if puede_recepcion and not confirmacion and cierre_local %}
+<section id="confirmar-recepcion" class="mf-card"><h2>Fotografías y confirmación</h2><p>GENERAL muestra el equipo completo. PLACA identifica sus datos; si no existe, justifica su ausencia.</p>
 <form method="post" enctype="multipart/form-data" action="{% url 'masiscam:recepcion_finalizar' expediente.pk %}" class="row g-3">{% csrf_token %}
 {% if form_confirmacion.non_field_errors %}<div class="col-12 alert alert-danger" role="alert">{{ form_confirmacion.non_field_errors }}</div>{% endif %}
 {% for field in form_confirmacion %}{% if field.is_hidden %}{{ field }}{% else %}<div class="col-12 col-lg-6"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.errors %}<div class="text-danger" role="alert">{{ field.errors }}</div>{% endif %}</div>{% endif %}{% endfor %}
-<div class="col-12"><button class="btn btn-primary w-100" type="submit">Validar, generar guía y confirmar recepción</button></div></form></section>
-{% else %}<p>La confirmación requiere el entorno local autorizado.</p>{% endif %}{% endif %}
-<h2>Datos de recepción</h2><dl class="row">
-<dt class="col-sm-4">Cliente / RUC</dt><dd class="col-sm-8">{{ snapshot.cliente }} · {{ snapshot.ruc }}</dd>
-<dt class="col-sm-4">Equipo</dt><dd class="col-sm-8">{{ snapshot.equipo }} · {{ snapshot.marca }} · {{ snapshot.modelo }}</dd>
-<dt class="col-sm-4">Serie</dt><dd class="col-sm-8">{{ snapshot.serie|default:'Pendiente de identificación' }}</dd>
-<dt class="col-sm-4">Fecha de recepción</dt><dd class="col-sm-8">{{ expediente.recepcion.fecha }}</dd>
-<dt class="col-sm-4">Responsable</dt><dd class="col-sm-8">{{ snapshot.responsable }}</dd>
-<dt class="col-sm-4">Condición de ingreso</dt><dd class="col-sm-8">{{ snapshot.condicion|linebreaksbr }}</dd>
-<dt class="col-sm-4">Observaciones</dt><dd class="col-sm-8">{{ snapshot.observaciones|default:'Sin observaciones'|linebreaksbr }}</dd>
-<dt class="col-sm-4">Guía de remisión</dt><dd class="col-sm-8">{{ snapshot.guia|default:'No registrada' }}</dd>
-<dt class="col-sm-4">Ratio / potencia / RPM</dt><dd class="col-sm-8">{{ snapshot.ratio|default:'Pendiente' }} / {{ snapshot.potencia|default:'Pendiente' }} / {{ snapshot.rpm|default:'Pendiente' }}</dd></dl>
-{% if snapshot.datos_tecnicos_pendientes %}<p>Hay datos técnicos pendientes de identificación; no impiden confirmar la recepción.</p>{% endif %}
-{% if confirmacion %}<h2>Validación confirmada</h2><p>{{ confirmacion.get_placa_display }}</p>
-{% if confirmacion.motivo_sin_placa %}<p>Justificación sin placa: {{ confirmacion.motivo_sin_placa|linebreaksbr }}</p>{% endif %}
-{% if confirmacion.motivo_sin_guia %}<p>Motivo sin guía: {{ confirmacion.motivo_sin_guia|linebreaksbr }}</p>{% endif %}{% endif %}
-<h2>Evidencias</h2><ul>{% for e in expediente.recepcion.evidencias.all %}<li><a href="{% url 'masiscam:recepcion_documento' expediente.pk e.documento_id %}">{{ e.clasificacion.get_clase_display|default:e.get_tipo_display }} · {{ e.documento.nombre_original }}</a></li>{% empty %}<li>Sin evidencias adjuntas: se requiere fotografía GENERAL para confirmar.</li>{% endfor %}</ul>
-<h2>Guías de ingreso</h2>{% for g in expediente.guias.all %}<div class="card p-3 mb-2"><p>Versión {{ g.version }} · {{ g.get_estado_display }} · {{ g.error }}</p>
-{% if g.documento_id %}<a href="{% url 'masiscam:recepcion_documento' expediente.pk g.documento_id %}">Descargar guía</a><p>SHA-256: {{ g.hash_sha256 }} · Drive: {{ g.documento.get_estado_sincronizacion_display }}</p>{% endif %}
-{% if puede_recepcion %}<form method="post" action="{% url 'masiscam:guia_reintentar' expediente.pk g.pk %}">{% csrf_token %}<button class="btn btn-outline-primary">Reintentar generación / sincronización</button></form>{% endif %}</div>{% empty %}<p>Sin emisión reservada.</p>{% endfor %}
-{% if puede_recepcion and not confirmacion %}<form method="post" action="{% url 'masiscam:guia_emitir' expediente.pk %}">{% csrf_token %}<input type="hidden" name="clave" value="{{ clave_emision }}"><button class="btn btn-primary">Generar / recuperar guía provisional</button></form>
-{% if expediente.guias.exists %}<form class="mt-3" method="post" action="{% url 'masiscam:guia_emitir' expediente.pk %}">{% csrf_token %}<input type="hidden" name="clave" value="{{ clave_emision }}"><input type="hidden" name="nueva_version" value="1"><button class="btn btn-outline-primary">Solicitar nueva versión provisional</button></form>{% endif %}{% endif %}</div>{% endblock %}
+<div class="col-12"><button class="btn btn-primary mf-main-action" type="submit">Confirmar recepción</button></div></form></section>
+{% endif %}
+<section class="mf-card"><h2>Documentos disponibles</h2>
+{% for g in guias %}<article class="mf-delivery"><div><h3>Guía de ingreso · versión {{ g.version }}</h3>
+{% if g.disponible %}{% if g.documento.estado_sincronizacion != 'SINCRONIZADO' %}<p role="status">Documento guardado. Sincronización pendiente</p>{% else %}<p>Documento guardado.</p>{% endif %}
+{% if continuar or not confirmacion or g != guia_principal %}<a class="btn btn-outline-primary" href="{% url 'masiscam:recepcion_documento' expediente.pk g.documento_id %}">Descargar guía · v{{ g.version }}</a>{% endif %}
+{% else %}<p>Documento todavía no disponible. Comunícalo al responsable para su recuperación.</p>{% endif %}
+{% if not es_taller %}<details class="mf-details"><summary>Estado técnico del documento</summary><p>{{ g.get_estado_display }} · {{ g.error }}</p>{% if g.documento_id %}<p>SHA-256: {{ g.hash_sha256 }} · Drive: {{ g.documento.get_estado_sincronizacion_display }}</p>{% endif %}
+{% if puede_recepcion %}<form method="post" action="{% url 'masiscam:guia_reintentar' expediente.pk g.pk %}">{% csrf_token %}<button class="btn btn-outline-primary">Reintentar generación / sincronización</button></form>{% endif %}</details>{% endif %}
+</div></article>{% empty %}<p>La guía estará disponible al confirmar la recepción.</p>{% endfor %}
+<ul>{% for e in expediente.recepcion.evidencias.all %}<li><a href="{% url 'masiscam:recepcion_documento' expediente.pk e.documento_id %}">{{ e.clasificacion.get_clase_display|default:e.get_tipo_display }} · {{ e.documento.nombre_original }}</a></li>{% empty %}<li>Sin fotografías adjuntas. <a href="#id_foto_general">Adjuntar fotografía general</a></li>{% endfor %}</ul>
+</section>
+<details class="mf-card mf-details"><summary>Datos de ingreso e historial documental</summary><dl class="row mt-3"><dt class="col-sm-4">Fecha de recepción</dt><dd class="col-sm-8">{{ expediente.recepcion.fecha }}</dd><dt class="col-sm-4">Responsable</dt><dd class="col-sm-8">{{ snapshot.responsable }}</dd><dt class="col-sm-4">Condición de ingreso</dt><dd class="col-sm-8">{{ snapshot.condicion|linebreaksbr }}</dd><dt class="col-sm-4">Observaciones</dt><dd class="col-sm-8">{{ snapshot.observaciones|default:'Sin observaciones'|linebreaksbr }}</dd><dt class="col-sm-4">Guía de remisión</dt><dd class="col-sm-8">{{ snapshot.guia|default:'No registrada' }}</dd></dl>
+{% if confirmacion %}<p>{{ confirmacion.get_placa_display }} · Confirmada por {{ confirmacion.responsable }} · {{ confirmacion.confirmado_en }}</p>{% if confirmacion.motivo_sin_placa %}<p>{{ confirmacion.motivo_sin_placa }}</p>{% endif %}{% if confirmacion.motivo_sin_guia %}<p>{{ confirmacion.motivo_sin_guia }}</p>{% endif %}{% endif %}
+{% if not es_taller and puede_recepcion and not confirmacion %}<form method="post" action="{% url 'masiscam:guia_emitir' expediente.pk %}">{% csrf_token %}<input type="hidden" name="clave" value="{{ clave_emision }}"><button class="btn btn-outline-primary">Generar / recuperar guía provisional</button></form>{% if expediente.guias.exists %}<form class="mt-3" method="post" action="{% url 'masiscam:guia_emitir' expediente.pk %}">{% csrf_token %}<input type="hidden" name="clave" value="{{ clave_emision }}"><input type="hidden" name="nueva_version" value="1"><button class="btn btn-outline-primary">Solicitar nueva versión provisional</button></form>{% endif %}{% endif %}
+</details></div>{% endblock %}

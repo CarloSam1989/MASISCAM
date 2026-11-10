@@ -1,7 +1,10 @@
 {% load masiscam_navigation %}
 {% breadcrumbs as items %}
 <nav class="masiscam-breadcrumbs no-print" aria-label="Migas de pan">
-  <ol class="breadcrumb mb-0 small">
+  <ol class="breadcrumb breadcrumb-desktop mb-0 small">
     {% for item in items %}<li class="breadcrumb-item{% if forloop.last %} active{% endif %}"{% if forloop.last %} aria-current="page"{% endif %}>{% if item.url %}<a href="{{ item.url }}">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}</li>{% endfor %}
+  </ol>
+  <ol class="breadcrumb breadcrumb-mobile mb-0 small">
+    {% for item in items %}{% if forloop.first %}<li class="breadcrumb-item"{% if forloop.last %} aria-current="page"{% endif %}>{% if item.url %}<a href="{{ item.url }}">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}</li>{% elif forloop.last %}<li class="breadcrumb-item active" aria-current="page">{{ item.label }}</li>{% endif %}{% if forloop.first and items|length > 2 %}<li class="breadcrumb-item"><details class="breadcrumb-ancestors"><summary aria-label="Ver rutas anteriores">…</summary><ul>{% for parent in items %}{% if not forloop.first and not forloop.last %}<li>{% if parent.url %}<a href="{{ parent.url }}">{{ parent.label }}</a>{% else %}{{ parent.label }}{% endif %}</li>{% endif %}{% endfor %}</ul></details></li>{% endif %}{% endfor %}
   </ol>
 </nav>

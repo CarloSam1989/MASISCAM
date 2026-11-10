@@ -85,7 +85,7 @@ class ConfirmacionRecepcionForm(forms.Form):
     def clean(self):
         data = super().clean()
         if not data.get("general_id") and not data.get("foto_general"):
-            self.add_error("general_id", "Se requiere al menos una fotografía GENERAL.")
+            self.add_error("general_id", "Para confirmar la recepción, adjunta una fotografía general del equipo")
         if data.get("placa") == "CON_PLACA" and not data.get("placa_id") and not data.get("foto_placa"):
             self.add_error("placa_id", "El equipo tiene placa: adjunte su fotografía.")
         if data.get("placa") == "SIN_PLACA" and not (data.get("motivo_sin_placa") or "").strip():

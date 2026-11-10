@@ -87,7 +87,7 @@ def taller_equipo(request, pk):
     else:
         exp=mantenimientos.first()
     asignado=bool(exp and exp.asignaciones_tecnicas.filter(tecnico=request.user,fin__isnull=True).exists())
-    if exp and asignado and settings.MASISCAM_OPERACION_LOCAL:
+    if exp and asignado and settings.MASISCAM_TECNICA_LOCAL:
         from .flujo_views import contexto
         return render(request,'masiscam/flujo_detalle.html',contexto(request,exp))
     pasos=[dict(nombre=nombre,estado='Listo' if n==0 else 'Pendiente') for n,nombre in enumerate(
@@ -96,6 +96,9 @@ def taller_equipo(request, pk):
     accion=reverse('masiscam:recepcion_crear')+f'?equipo={equipo.pk}' if not exp else None
     if exp:
         pasos[1]['estado']='Bloqueado'
-        mensaje='PLANTA debe asignar el responsable para continuar este expediente.' if not asignado else 'El flujo operativo aún no está habilitado en este entorno.'
+        mensaje='PLANTA debe asignar el responsable para continuar este expediente.' if not asignado else 'La selección de piezas requiere habilitar el módulo técnico. Comunícalo al responsable del sistema.'
+        if not hasattr(exp.recepcion, 'confirmacion'):
+            mensaje='Completa las fotografías y confirma la recepción antes de iniciar la selección de piezas.'
+            accion=reverse('masiscam:expediente_detalle',args=[exp.pk])+'#confirmar-recepcion'
     return render(request,'masiscam/taller_equipo.html',dict(equipo=equipo,expediente=exp,mantenimientos=mantenimientos,
         pasos=pasos,paso=2,mensaje=mensaje,accion=accion))

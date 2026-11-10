@@ -115,6 +115,13 @@ class FlujoTests(TestCase):
                 c.decidir(usuario=self.usuarios['PLANTA'],empresa=self.empresa,calibracion_id=cal.pk,clave=uuid.uuid4(),decision='APROBADA',
                     motivo='Revisión independiente QA',evaluaciones={m['codigo']:'CONFORME' for m in definicion['mediciones']})
             informe=InformeFinal.objects.get(expediente=self.exp)
+            for flag in ('MASISCAM_CALIBRACION_LOCAL','MASISCAM_CIERRE_LOCAL'):
+                with override_settings(**{flag:False}):
+                    pendiente=s.resumen(self.exp,self.taller)
+                    self.assertTrue(pendiente['bloqueo'])
+                    self.assertIsNone(pendiente['accion'])
+                    self.assertIn('responsable del sistema',pendiente['mensaje'])
+            self.assertEqual(InformeFinal.objects.filter(expediente=self.exp).count(),1)
             self.assertTrue(informe.documento_id)
             self.assertEqual(informe.estado,'PENDIENTE_REVISION')
             evento_auto=Auditoria.objects.get(expediente=self.exp,accion='FINAL_GENERACION_AUTOMATICA')

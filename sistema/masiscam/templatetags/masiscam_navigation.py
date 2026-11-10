@@ -53,9 +53,59 @@ def breadcrumbs(context):
     request = context.get("request")
     if request is None:
         return []
-    if getattr(request, 'rol_masiscam', None) and request.rol_masiscam.rol == 'TALLER':
-        return [{'label': 'Inicio de taller', 'url': reverse('masiscam:taller_inicio')}]
     vista = request.resolver_match.url_name if request.resolver_match else ""
+    from django.conf import settings
+    role = getattr(getattr(request, 'rol_masiscam', None), 'rol', None)
+    exp = context.get('expediente')
+    revision = context.get('diagnostico') or context.get('revision') or context.get('calibracion')
+    if not exp and revision:
+        exp = getattr(revision, 'expediente', None)
+    equipo_operativo = context.get('equipo') or (exp.registro.equipo if exp else None)
+    labels = {
+        'dashboard':'Inicio', 'taller_inicio':'Mis equipos', 'taller_estado':'Estado del mantenimiento',
+        'taller_cuenta':'Mi cuenta', 'ficha_crear':'Registrar equipo', 'equipo_crear':'Registrar equipo',
+        'expedientes':'Mis expedientes' if role=='TALLER' else 'Expedientes',
+        'recepcion_crear':'Registrar recepción', 'expediente_detalle':'Recepción', 'recepcion_finalizar':'Recepción',
+        'flujo_detalle':'Etapas del mantenimiento', 'flujo_bandeja':'Solicitudes de taller',
+        'tecnica_inicio':'Trabajo técnico', 'tecnica_expediente':'Trabajo técnico',
+        'tecnica_revision':'Inspección' if context.get('tipo')=='INSPECCION' else 'Diagnóstico',
+        'operacion_inicio':'Gestión de operaciones', 'operacion_detalle':'Repuestos y reparación',
+        'operacion_operar':'Actividad de mantenimiento', 'calibracion_inicio':'Calibraciones',
+        'calibracion_expediente':'Calibración', 'calibracion_revision':'Mediciones y calibración',
+        'calibracion_plantillas':'Protocolos de calibración', 'calibracion_plantilla':'Protocolo de calibración',
+        'cierre_dashboard':'Seguimiento', 'cierre_detalle':'Informe final y cierre', 'cierre_historial':'Historial',
+        'biblioteca':'Planos técnicos' if role=='TALLER' else 'Biblioteca técnica',
+        'biblioteca_referencia':'Referencia técnica', 'biblioteca_referencia_crear':'Nueva referencia',
+        'biblioteca_referencia_editar':'Editar referencia', 'biblioteca_componentes':'Componentes',
+        'biblioteca_componente_editar':'Componente', 'plano':'Plano y componentes',
+        'plano_importar':'Importar plano', 'seleccionar_empresa':'Empresa activa',
+    }
+    if role == 'TALLER' or exp or vista in labels and vista not in {'dashboard','ficha_crear','equipo_crear'}:
+        home = 'taller_inicio' if role=='TALLER' else 'dashboard'
+        home_url = reverse('masiscam:'+home) if role or request.user.is_superuser else reverse('accounts:seleccionar_empresa')
+        trail = [('Inicio', home_url)]
+        if exp or equipo_operativo:
+            if role=='TALLER':
+                trail.append(('Mis equipos',reverse('masiscam:taller_inicio')+'#trabajos-titulo'))
+                trail.append((equipo_operativo.nombre,reverse('masiscam:taller_equipo',args=[equipo_operativo.pk])))
+            elif exp:
+                listing='tecnica_inicio' if role=='TECNICO' else 'expedientes'
+                trail.append(('Expedientes',reverse('masiscam:'+listing)))
+            if exp:
+                assigned = role!='TALLER' or exp.asignaciones_tecnicas.filter(tecnico=request.user,fin__isnull=True).exists()
+                target = 'tecnica_expediente' if role=='TECNICO' else 'flujo_detalle' if role in {'TALLER','OFICINA','PLANTA','GERENCIA'} and assigned and settings.MASISCAM_TECNICA_LOCAL else 'expediente_detalle'
+                trail.append((exp.numero,reverse('masiscam:'+target,args=[exp.pk])))
+        elif vista.startswith('biblioteca') or vista.startswith('plano'):
+            trail.append(('Planos técnicos' if role=='TALLER' else 'Biblioteca técnica',reverse('masiscam:biblioteca')))
+        label=labels.get(vista, context.get('titulo') or 'Detalle')
+        if vista=='taller_equipo':
+            if exp: trail.append(('Etapas del mantenimiento',None))
+        else:
+            trail.append((label,None))
+        # The current page is text; never offer a circular last breadcrumb.
+        if vista==home: trail=[('Inicio',None)]
+        return [{'label':label,'url':url if request.user.is_authenticated and i<len(trail)-1 else None}
+                for i,(label,url) in enumerate(trail)]
     items = [("Dashboard", reverse("masiscam:dashboard"))]
     equipo = context.get("equipo")
     cliente = context.get("cliente") or context.get("cliente_seleccionado")
@@ -104,6 +154,8 @@ def breadcrumbs(context):
             items.append((proyecto.nombre, reverse("masiscam:proyecto_detalle", args=[proyecto.pk])))
         if vista not in {"proyectos", "proyecto_detalle", "publico"}:
             items.append((context.get("titulo") or {"historial": "Historial", "etiqueta_qr": "Etiqueta QR"}.get(vista, "Crear"), None))
+    if len(items)==1 and vista!='dashboard':
+        items.append((context.get('titulo') or 'Detalle',None))
     # Anonymous reports expose no private navigation links.
     privado = request.user.is_authenticated
     return [{"label": label, "url": url if privado and i < len(items) - 1 else None}

@@ -3,7 +3,7 @@ import hashlib
 import uuid
 
 from django.contrib import messages
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import FileResponse, HttpResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
@@ -45,7 +45,8 @@ def recepcion_crear(request):
             form.add_error(None, exc)
         else:
             return redirect("masiscam:expediente_detalle", pk=exp.pk)
-    return render(request, "masiscam/recepcion_form.html", {"form": form}, status=400 if request.method == "POST" else 200)
+    equipo = form.fields['equipo'].queryset.filter(pk=form.initial.get('equipo')).first() if form.initial.get('equipo') else None
+    return render(request, "masiscam/recepcion_form.html", {"form": form,"equipo":equipo}, status=400 if request.method == "POST" else 200)
 
 
 @require_GET
@@ -57,11 +58,47 @@ def expediente_detalle(request, pk):
 
 
 def _detalle(request, exp, form=None, status=200):
+    from django.conf import settings
     from .recepcion_confirmacion import habilitada
     from .recepcion_forms import ConfirmacionRecepcionForm
+    from .recepcion_services import verificar_copia_persistente
+    confirmacion = getattr(exp.recepcion, 'confirmacion', None)
+    taller = request.rol_masiscam.rol == 'TALLER'
+    asignado = exp.asignaciones_tecnicas.filter(tecnico=request.user,fin__isnull=True).exists()
+    pendientes=[]
+    if not confirmacion:
+        if not exp.recepcion.evidencias.filter(tipo='FOTO',clasificacion__clase='GENERAL').exists():
+            pendientes.append('Para confirmar la recepción, adjunta una fotografía general del equipo')
+        pendientes.append('Adjunta o selecciona la fotografía de placa; si no existe, justifica su ausencia.')
+        if not exp.recepcion.guia_remision:
+            pendientes.append('Indica el motivo de ausencia de guía de remisión.')
+        if not habilitada(): pendientes.append('El responsable del sistema debe habilitar la confirmación de recepción.')
+    elif taller and not asignado:
+        pendientes.append('PLANTA debe asignar el responsable para continuar la inspección y selección de piezas.')
+    elif taller and not settings.MASISCAM_TECNICA_LOCAL:
+        pendientes.append('El responsable del sistema debe habilitar el módulo técnico para continuar.')
+    guias=list(exp.guias.select_related('documento').order_by('-version'))
+    for guia in guias:
+        guia.disponible=False
+        if guia.documento_id:
+            try: verificar_copia_persistente(guia.documento)
+            except (ValidationError,OSError): pass
+            else: guia.disponible=True
+    pasos=[dict(nombre=n,estado='Listo' if i==0 else 'Pendiente') for i,n in enumerate(
+        ['Registrar equipo','Seleccionar piezas','Oficina cotiza y envía','Taller repara','Generar informe'])]
+    paso=2
+    if settings.MASISCAM_TECNICA_LOCAL and request.rol_masiscam.rol in {'TALLER','OFICINA','PLANTA','GERENCIA'}:
+        from .flujo_services import resumen
+        try: estado=resumen(exp,request.user)
+        except (PermissionDenied,ValidationError): pass
+        else: pasos,paso=estado['pasos'],estado['paso']
+    continuar = bool(taller and confirmacion and asignado and settings.MASISCAM_TECNICA_LOCAL)
     return render(request, "masiscam/recepcion_detalle.html", {"expediente": exp,
+        "equipo":exp.registro.equipo,"es_taller":taller,"pendientes":pendientes,"navegacion_integrada":True,
+        "guias":guias,"pasos":pasos,"paso":paso,"continuar":continuar,
+        "guia_principal":next((g for g in guias if g.disponible),None),
         "snapshot": exp.recepcion.snapshot, "clave_emision": uuid.uuid4(),
-        "confirmacion": getattr(exp.recepcion, "confirmacion", None), "cierre_local": habilitada(),
+        "confirmacion": confirmacion, "cierre_local": habilitada(),
         "form_confirmacion": form if form is not None else ConfirmacionRecepcionForm(recepcion=exp.recepcion),
         "puede_recepcion": request.rol_masiscam and request.rol_masiscam.rol in {"OFICINA", "TALLER"}}, status=status)
 
