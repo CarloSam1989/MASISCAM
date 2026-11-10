@@ -152,7 +152,7 @@ def estado(exp):
 
 @transaction.atomic
 def proponer(*, usuario, empresa, expediente_id, diagnostico_id, clave, datos, archivo=None):
-    exp = expediente(usuario, empresa, expediente_id, {'GERENCIA'}, True)
+    exp = expediente(usuario, empresa, expediente_id, {'GERENCIA','OFICINA'}, True)
     _datos(datos, ('alcance','observaciones','presupuesto_referencia'))
     payload = dict(diagnostico=diagnostico_id, datos=datos, hash=_hash(archivo) if archivo else None)
     old = t._retry(exp, clave, 'COMERCIAL_PROPUESTA', payload)
@@ -184,7 +184,7 @@ def proponer(*, usuario, empresa, expediente_id, diagnostico_id, clave, datos, a
 @transaction.atomic
 def decidir_comercial(*, usuario, empresa, propuesta_id, clave, datos, archivo, archivo_facultad=None):
     p = PropuestaComercial.objects.get(pk=propuesta_id)
-    exp = expediente(usuario, empresa, p.expediente_id, {'GERENCIA'}, True)
+    exp = expediente(usuario, empresa, p.expediente_id, {'GERENCIA','OFICINA'}, True)
     basicos=('decision','fecha_cliente','representante_cliente','motivo')
     verificacion_campos=('identidad','calidad','calidad_representante','medio_verificacion','canal',
         'respaldo_verificacion','verificacion_confirmada','alcance_autorizado')
@@ -220,7 +220,7 @@ def decidir_comercial(*, usuario, empresa, propuesta_id, clave, datos, archivo, 
         if (datos.get('calidad') not in {'TITULAR','REPRESENTANTE'} or
                 datos.get('canal') not in {'PRESENCIAL_FIRMADA','ELECTRONICA_VERIFICABLE'} or
                 datos.get('verificacion_confirmada') is not True):
-            raise ValidationError('GERENCIA debe verificar identidad, facultades, canal y suficiencia del respaldo; no basta declarar aceptación.')
+            raise ValidationError('El responsable comercial debe verificar identidad, facultades, canal y suficiencia del respaldo; no basta declarar aceptación.')
         if datos['calidad']=='REPRESENTANTE':
             _texto(datos,('calidad_representante',))
             if not archivo_facultad:

@@ -100,7 +100,7 @@ def snapshot(exp):
         t.documento_valido(doc,exp.empresa)
         annexes.append(dict(titulo=title,documento=doc.pk,hash=doc.hash_sha256))
     confirmation=exp.recepcion.confirmacion
-    return dict(plantilla='final-v1',numero=exp.numero,empresa=exp.empresa_id,recepcion=exp.recepcion.snapshot,
+    result = dict(plantilla='final-v1',numero=exp.numero,empresa=exp.empresa_id,recepcion=exp.recepcion.snapshot,
         confirmacion=dict(placa=confirmation.placa,motivo_sin_placa=confirmation.motivo_sin_placa,
             motivo_sin_guia=confirmation.motivo_sin_guia,responsable=confirmation.responsable.username,
             fecha=confirmation.confirmado_en.isoformat(),politica=confirmation.politica),
@@ -110,6 +110,30 @@ def snapshot(exp):
         reparaciones=activities,calibracion=c.snapshot(cal),evidencias=evidence,anexos=annexes,
         fecha_finalizacion=cal.decision.creado_en.isoformat(),
         aviso='Informe técnico privado. No sustituye autorizaciones comerciales ni acredita aceptación del cliente. No contiene firma certificada.')
+
+    from .flujo_services import snapshot_final
+    flujo = snapshot_final(exp)
+    if flujo:
+        result['flujo_operativo'] = flujo
+        vistos={a['documento'] for a in result['anexos']}
+        for pieza in diag.piezas.select_related('parte__referencia__documento'):
+            if pieza.parte_id:
+                ref=pieza.parte.referencia
+                if ref.documento_id not in vistos:
+                    t.documento_valido(ref.documento,exp.empresa)
+                    result['anexos'].append(dict(titulo=f'Plano utilizado {ref.codigo} r{ref.revision}',
+                        documento=ref.documento_id,hash=ref.documento.hash_sha256))
+                    vistos.add(ref.documento_id)
+        result['cotizacion'] = dict(referencia=auth.propuesta.snapshot.get('presupuesto_referencia',''),
+            alcance=auth.propuesta.alcance, version=auth.propuesta.version, decision=auth.decision,
+            fecha_cliente=auth.fecha_cliente.isoformat(), responsable=auth.autor.username)
+        for evidencia in auth.propuesta.evidencias.all():
+            t.documento_valido(evidencia.documento,exp.empresa)
+            result['anexos'].append(dict(titulo='Presupuesto documentado',documento=evidencia.documento_id,hash=evidencia.documento.hash_sha256))
+        for evidencia in auth.evidencias.all():
+            t.documento_valido(evidencia.documento,exp.empresa)
+            result['anexos'].append(dict(titulo='Respaldo de la aceptaci?n',documento=evidencia.documento_id,hash=evidencia.documento.hash_sha256))
+    return result
 
 
 def vigente(informe):
@@ -121,7 +145,9 @@ def vigente(informe):
 
 @transaction.atomic
 def reservar(*,usuario,empresa,expediente_id,clave,nueva_version=False,motivo=''):
-    exp=expediente(usuario,empresa,expediente_id,{'OFICINA','TECNICO'},True)
+    exp=expediente(usuario,empresa,expediente_id,{'OFICINA','TECNICO','TALLER'},True)
+    if t.autorizar_tecnica(usuario,empresa).rol == 'TALLER' and not exp.solicitudrepuestos_set.exists():
+        raise PermissionDenied('La generaci?n operativa requiere una solicitud de taller.')
     payload=dict(nueva_version=bool(nueva_version),motivo=motivo)
     old=t._retry(exp,clave,'FINAL_RESERVADO',payload)
     if old: return InformeFinal.objects.get(pk=old)
@@ -143,7 +169,7 @@ def reservar(*,usuario,empresa,expediente_id,clave,nueva_version=False,motivo=''
 def generar(informe_id):
     from .cierre_pdf import construir_informe
     em=InformeFinal.objects.get(pk=informe_id)
-    autorizar(em.autor,em.expediente.empresa,{'OFICINA','TECNICO'},em.expediente)
+    autorizar(em.autor,em.expediente.empresa,{'OFICINA','TECNICO','TALLER'},em.expediente)
     if em.documento_id:
         verificar_copia_persistente(em.documento);return em.documento_id
     photos=[]

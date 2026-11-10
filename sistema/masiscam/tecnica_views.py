@@ -148,6 +148,10 @@ def tecnica_revision(request,tipo,pk):
             except (ValidationError,IntegrityError,OSError,ValueError,ObjectDoesNotExist) as exc:
                 _error(form,exc)
             else:
+                if request.GET.get('flujo') == '1':
+                    if action in {'enviar','decision'}:
+                        return redirect('masiscam:flujo_detalle',pk=exp.pk)
+                    return redirect(reverse('masiscam:tecnica_revision',args=[tipo,pk])+'?flujo=1')
                 if action == 'enviar' and request.rol_masiscam.rol == 'TALLER':
                     return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
                 return redirect('masiscam:tecnica_revision',tipo=tipo,pk=pk)

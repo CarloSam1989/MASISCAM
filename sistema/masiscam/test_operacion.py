@@ -123,7 +123,7 @@ class OperacionTests(TestCase):
         self.assertTrue(ActividadReparacion.objects.filter(pk=a.pk).exists())
 
     def test_permisos_comerciales_sin_bypass_admin(self):
-        for code in ('ADMIN','CONSULTA','CLIENTE','TECNICO','OFICINA','PLANTA'):
+        for code in ('ADMIN','CONSULTA','CLIENTE','TECNICO','PLANTA'):
             if code=='CLIENTE':
                 user=usuario(self.empresa,'rol-cliente','CONSULTA')
                 RolMasiscam.objects.filter(perfil__user=user).update(rol='CLIENTE',cliente=self.exp.cliente_contractual)
@@ -285,7 +285,7 @@ class OperacionTests(TestCase):
     def test_http_roles_y_local_desactivado(self):
         c=Client();c.force_login(self.oficina)
         self.assertEqual(c.get(reverse('masiscam:operacion_detalle',args=[self.exp.pk])).status_code,200)
-        self.assertEqual(c.get(reverse('masiscam:operacion_operar',args=[self.exp.pk,'propuesta'])).status_code,403)
+        self.assertEqual(c.get(reverse('masiscam:operacion_operar',args=[self.exp.pk,'propuesta'])).status_code,200)
         with override_settings(MASISCAM_OPERACION_LOCAL=False):
             self.assertEqual(c.get(reverse('masiscam:operacion_detalle',args=[self.exp.pk])).status_code,404)
             with self.assertRaises(PermissionDenied): self.recibir()

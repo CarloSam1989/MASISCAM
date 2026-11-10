@@ -58,13 +58,30 @@ def construir_informe(s,fotografias=()):
     photos('Inspección / diagnóstico')
     story.append(p('4. Planos y repuestos requeridos',head))
     parts=s['tecnico']['piezas']
+    def referencia(pieza):
+        fuente=pieza['referencia']
+        if not s.get('flujo_operativo'): return str(fuente)
+        if pieza.get('origen')=='MANUAL': return 'Registro manual documentado · '+str(fuente.get('contexto',''))
+        return f"{fuente.get('referencia','Referencia')} · revisión {fuente.get('revision','pendiente')} · posición {fuente.get('posicion','pendiente')} · mapa v{fuente.get('version','sin configurar')}"
     if parts:
-        story.append(table([['Pieza / parte','Cantidad / unidad','Condición / acción','Referencia']]+[[r['descripcion']+' / '+r['numero_parte'],r['cantidad']+' '+(r['unidad'] or 'Unidad pendiente justificada'),r['condicion']+' / '+r['accion'],str(r['referencia'])] for r in parts],[.27,.17,.26,.3]))
+        story.append(table([['Pieza / parte','Cantidad / unidad','Condición / acción','Referencia']]+[[r['descripcion']+' / '+r['numero_parte'],r['cantidad']+' '+(r['unidad'] or 'Unidad pendiente justificada'),r['condicion']+' / '+r['accion'],referencia(r)] for r in parts],[.27,.17,.26,.3]))
     else: story.append(p('Diagnóstico aprobado sin repuestos requeridos. No se simulan compras ni consumos.'))
     for e in s['tecnico']['evidencias']:
         if e.get('referencia'): facts(e['referencia'])
-    if not any(e.get('referencia') for e in s['tecnico']['evidencias']):
+    if not any(e.get('referencia') for e in s['tecnico']['evidencias']) and not (s.get('flujo_operativo') and any(r.get('origen')=='BIBLIOTECA' for r in parts)):
         story.append(p('No hay planos/manuales citados en esta revisión. No se presume su existencia ni aplicabilidad.'))
+    if s.get('flujo_operativo'):
+        story.append(p('Solicitud a OFICINA, cotización y entrega',head))
+        facts(s.get('cotizacion',{}))
+        for solicitud in s['flujo_operativo']:
+            story.append(p(f"Solicitud v{solicitud['version']} · SHA-256 {solicitud['huella']}",small))
+            for compra in solicitud['adquisiciones']:
+                story.append(p(f"Adquisición {compra['referencia']} · {compra['proveedor']} · {compra['cantidad']} {compra['unidad']} · Autorización {compra['autorizacion']}"))
+            for envio in solicitud['envios']:
+                story.append(p(f"Guía {envio['guia']} · Envío {envio['fecha']} · Recepción {envio['recibido'] or 'pendiente'} · SHA-256 {envio['hash']}",small))
+                story.append(table([['Pieza enviada','Cantidad / unidad']]+[[r['descripcion'],r['cantidad']+' '+r['unidad']] for r in envio['lineas']],[.7,.3]))
+                for diferencia in envio['diferencias']:
+                    story.append(p(f"Recibido: {diferencia['cantidad']} · Diferencias: {diferencia['discrepancia'] or 'Sin diferencias declaradas'}",small))
     story.append(p('5. Repuestos recibidos',head))
     if s['repuestos']:
         story.append(table([['Descripción / parte','Cantidad / unidad','Procedencia / guía','Observaciones']]+[[r['descripcion']+' / '+r['numero_parte'],r['cantidad']+' '+r['unidad'],r['procedencia']+' / '+(r['guia'] or 'Sin guía registrada'),r['discrepancia']] for r in s['repuestos']],[.3,.18,.27,.25]))

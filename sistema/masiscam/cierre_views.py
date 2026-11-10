@@ -76,7 +76,9 @@ def detalle(request,pk):
             else: raise ValidationError('Acción inválida.')
         except (ValidationError,IntegrityError,OSError) as exc:
             form.add_error(None,'; '.join(exc.messages) if isinstance(exc,ValidationError) else 'Operación no confirmada; revise copia persistente y vigencia.')
-        else: return redirect('masiscam:cierre_detalle',pk=pk)
+        else:
+            if request.GET.get('flujo') == '1': return redirect('masiscam:flujo_detalle',pk=pk)
+            return redirect('masiscam:cierre_detalle',pk=pk)
     blocked=''
     try: s.dependencias(exp)
     except (ValidationError,OSError) as exc: blocked='; '.join(exc.messages) if isinstance(exc,ValidationError) else 'Copia documental no verificable.'

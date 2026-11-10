@@ -101,7 +101,9 @@ def expediente(request,pk):
         try:
             c=s.iniciar(usuario=request.user,empresa=request.empresa_activa,expediente_id=pk,**data)
         except (ValidationError,IntegrityError,OSError) as exc: _error(form,exc)
-        else: return redirect('masiscam:calibracion_revision',pk=c.pk)
+        else:
+            url=reverse('masiscam:calibracion_revision',args=[c.pk])
+            return redirect(url+'?flujo=1' if request.GET.get('flujo') == '1' else url)
     return render(request,'masiscam/calibracion_expediente.html',dict(expediente=exp,form=form,rol=s.autorizar(request.user,request.empresa_activa).rol,
         estado_reparacion=s.o.estado(exp),politica_comercial=s.o.politica()),status=400 if request.method=='POST' else 200)
 
@@ -143,6 +145,10 @@ def revision(request,pk):
                     messages.warning(request,'Reserva conservada. Cola no disponible; puede reintentar la misma emisión.')
         except (ValidationError,IntegrityError,OSError,ObjectDoesNotExist) as exc: _error(form,exc)
         else:
+            if request.GET.get('flujo') == '1':
+                if op in {'enviar','decision'}:
+                    return redirect('masiscam:flujo_detalle',pk=exp.pk)
+                return redirect(reverse('masiscam:calibracion_revision',args=[pk])+'?flujo=1')
             if role == 'TALLER' and op == 'enviar':
                 return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
             return redirect('masiscam:calibracion_revision',pk=pk)

@@ -5,11 +5,10 @@ from django.shortcuts import get_object_or_404
 from django.http import Http404
 from django.urls import reverse
 from django.conf import settings
-import uuid
 from django.views.decorators.http import require_GET
 
 from .access import autorizar_creacion_equipo, equipos_taller, masiscam_access_required
-from .models import ActividadReparacion, Calibracion, CierreExpediente, Equipo, InformeFinal
+from .models import ActividadReparacion, Calibracion, CierreExpediente, Equipo, InformeFinal, EnvioRepuestos
 from .recepcion_services import expedientes_autorizados
 
 
@@ -64,6 +63,7 @@ def estados_autorizados(request):
     ).annotate(
         cerrado=Exists(CierreExpediente.objects.filter(expediente_id=OuterRef('pk'))),
         tiene_reparacion=Exists(ActividadReparacion.objects.filter(expediente_id=OuterRef('pk'))),
+        repuestos_enviados=Exists(EnvioRepuestos.objects.filter(expediente_id=OuterRef('pk'),confirmacion__isnull=True)),
     )
 
 
@@ -77,66 +77,25 @@ def taller_cuenta(request):
 @require_GET
 @masiscam_access_required
 def taller_equipo(request, pk):
-    equipo = get_object_or_404(equipos_taller(usuario=request.user, empresa=request.empresa_activa), pk=pk)
+    equipo = get_object_or_404(equipos_taller(usuario=request.user, empresa=request.empresa_activa).select_related('cliente'), pk=pk)
     mantenimientos = expedientes_autorizados(request.user, request.empresa_activa).filter(
         registro__equipo=equipo).order_by('-correlativo')
     if request.GET.get('expediente'):
-        try:
-            expediente_id = int(request.GET['expediente'])
-        except ValueError:
-            raise Http404 from None
-        exp = get_object_or_404(mantenimientos, pk=expediente_id)
+        raw=request.GET['expediente']
+        if not raw.isascii() or not raw.isdecimal() or len(raw)>18: raise Http404
+        exp=get_object_or_404(mantenimientos,pk=raw)
     else:
-        exp = mantenimientos.first()
-    asignado, cerrado = False, False
-    pasos = [('Registro', 'Completado', '', '')]
-    if not exp:
-        pasos.append(('Recepción', 'Pendiente', reverse('masiscam:recepcion_crear') + f'?equipo={pk}', 'Registrar recepción'))
-        pasos.extend((nombre, 'Pendiente de recepción', '', '') for nombre in (
-            'Inspección', 'Plano y piezas', 'Diagnóstico', 'Autorización comercial', 'Repuestos',
-            'Reparación y montaje', 'Calibración · 16 mediciones', 'Aprobación PLANTA', 'Informe final'))
-    else:
-        recibido = hasattr(exp.recepcion, 'confirmacion')
-        pasos.append(('Recepción', 'Completada' if recibido else 'Pendiente',
-                      reverse('masiscam:expediente_detalle', args=[exp.pk]), 'Ver recepción y guía'))
-        from . import operacion_services as o
-        asignado = exp.asignaciones_tecnicas.filter(tecnico=request.user, fin__isnull=True).exists()
-        cerrado = CierreExpediente.objects.filter(expediente=exp).exists()
-        habilitado = recibido and asignado and not cerrado
-        inspeccion = exp.inspeccion_set.order_by('-revision').first()
-        diagnostico = exp.diagnostico_set.order_by('-revision').first()
-        tecnica_url = reverse('masiscam:tecnica_expediente', args=[exp.pk])
-        for nombre, obj in [('Inspección', inspeccion), ('Diagnóstico', diagnostico)]:
-            url = reverse('masiscam:tecnica_revision', args=['INSPECCION' if nombre == 'Inspección' else 'DIAGNOSTICO', obj.pk]) if obj else tecnica_url
-            estado = obj.get_estado_display() if obj else 'Pendiente'
-            accion = ('Continuar borrador' if not obj.enviado_en else 'Consultar revisión') if obj else 'Iniciar etapa'
-            permitido = habilitado and (nombre == 'Inspección' or bool(inspeccion and inspeccion.enviado_en))
-            pasos.append((nombre, estado, url if permitido and settings.MASISCAM_TECNICA_LOCAL else '', accion))
-        pasos.insert(3, ('Plano y piezas', 'Borrador editable' if diagnostico and not diagnostico.enviado_en else 'Según diagnóstico',
-            reverse('masiscam:tecnica_revision', args=['DIAGNOSTICO', diagnostico.pk]) if habilitado and diagnostico and settings.MASISCAM_TECNICA_LOCAL else '', 'Seleccionar piezas'))
-        autorizado = False
-        operacion_url = reverse('masiscam:operacion_detalle', args=[exp.pk])
-        if settings.MASISCAM_OPERACION_LOCAL and asignado:
-            try:
-                o.exigir_autorizacion(exp)
-                autorizado = True
-            except (o.ValidationError, o.PermissionDenied):
-                pass
-        pasos.append(('Autorización comercial', 'Vigente' if autorizado else 'Pendiente de gestión comercial', '', ''))
-        reparacion = o.estado(exp) if settings.MASISCAM_OPERACION_LOCAL and asignado else 'Pendiente'
-        entregas = exp.recepcionrepuesto_set.count()
-        pasos.append(('Repuestos', f'{entregas} entregas registradas' if entregas else 'Sin entregas registradas',
-            operacion_url if autorizado and habilitado else '', 'Registrar repuestos'))
-        pasos.append(('Reparación y montaje', reparacion.replace('_', ' ').capitalize(),
-            operacion_url if autorizado and habilitado else '', 'Continuar trabajo'))
-        cal = exp.calibraciones.order_by('-revision').first()
-        cal_url = reverse('masiscam:calibracion_revision', args=[cal.pk]) if cal else reverse('masiscam:calibracion_expediente', args=[exp.pk])
-        pasos.append(('Calibración · 16 mediciones', cal.get_estado_display() if cal else 'Pendiente',
-            cal_url if habilitado and settings.MASISCAM_CALIBRACION_LOCAL and reparacion == 'REPARACION_FINALIZADA' else '', 'Continuar calibración'))
-        pasos.append(('Aprobación PLANTA', 'Aprobada' if cal and cal.estado == 'APROBADA' else 'Revisión independiente pendiente', '', ''))
-        pasos.append(('Informe final', 'Consultar versiones', reverse('masiscam:cierre_detalle', args=[exp.pk])
-            if asignado and settings.MASISCAM_CIERRE_LOCAL else '', 'Ver informe e historial'))
-    return render(request, 'masiscam/taller_equipo.html', {'equipo': equipo, 'expediente': exp, 'pasos': pasos,
-        'clave': uuid.uuid4(), 'asignado': asignado, 'cerrado': cerrado,
-        'mantenimientos': mantenimientos,
-        'ver_historial': bool(exp and asignado and settings.MASISCAM_CIERRE_LOCAL)})
+        exp=mantenimientos.first()
+    asignado=bool(exp and exp.asignaciones_tecnicas.filter(tecnico=request.user,fin__isnull=True).exists())
+    if exp and asignado and settings.MASISCAM_OPERACION_LOCAL:
+        from .flujo_views import contexto
+        return render(request,'masiscam/flujo_detalle.html',contexto(request,exp))
+    pasos=[dict(nombre=nombre,estado='Listo' if n==0 else 'Pendiente') for n,nombre in enumerate(
+        ['Registrar equipo','Seleccionar piezas','Oficina cotiza y envía','Taller repara','Generar informe'])]
+    mensaje='El equipo ya está registrado. Abre una recepción cuando vayas a iniciar su mantenimiento.'
+    accion=reverse('masiscam:recepcion_crear')+f'?equipo={equipo.pk}' if not exp else None
+    if exp:
+        pasos[1]['estado']='Bloqueado'
+        mensaje='PLANTA debe asignar el responsable para continuar este expediente.' if not asignado else 'El flujo operativo aún no está habilitado en este entorno.'
+    return render(request,'masiscam/taller_equipo.html',dict(equipo=equipo,expediente=exp,mantenimientos=mantenimientos,
+        pasos=pasos,paso=2,mensaje=mensaje,accion=accion))

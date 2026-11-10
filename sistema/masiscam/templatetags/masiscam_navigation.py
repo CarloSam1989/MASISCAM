@@ -116,3 +116,23 @@ def puede_ver_planos_taller(context):
     request = context.get('request')
     role = getattr(request, 'rol_masiscam', None)
     return bool(getattr(settings, 'MASISCAM_TECNICA_LOCAL', False) and role and role.rol == 'TALLER')
+
+
+@register.simple_tag(takes_context=True)
+def flujo_operativo(context):
+    request=context.get('request');exp=context.get('expediente')
+    if not request or request.GET.get('flujo')!='1' or not exp: return None
+    role=getattr(request,'rol_masiscam',None)
+    if not role or role.rol not in {'TALLER','OFICINA','PLANTA','GERENCIA'}: return None
+    from masiscam.flujo_services import resumen
+    from django.core.exceptions import PermissionDenied,ValidationError
+    try: return resumen(exp,request.user)
+    except (PermissionDenied,ValidationError): return None
+
+
+@register.simple_tag(takes_context=True)
+def puede_ver_solicitudes_taller(context):
+    from django.conf import settings
+    request=context.get('request');role=getattr(request,'rol_masiscam',None)
+    return bool(role and role.rol in {'OFICINA','PLANTA','GERENCIA'} and
+        getattr(settings,'MASISCAM_TECNICA_LOCAL',False) and getattr(settings,'MASISCAM_OPERACION_LOCAL',False))

@@ -18,7 +18,7 @@ ALCANCE_OPERATIVO = {
     "ADMIN": "Lectura técnica de empresa; administración heredada. Sin decisiones técnicas o comerciales.",
     "CONSULTA": "Lectura histórica de empresa. Sin modificaciones ni aprobaciones.",
     "CLIENTE": "Solo productos propios y documentos autorizados. Sin biblioteca ni operaciones internas.",
-    "OFICINA": "Crear y editar clientes de la empresa; recepción, respaldos comerciales, recepción de repuestos y documentos operativos; solicitud de informes. Sin aprobación técnica o comercial.",
+    "OFICINA": "Crear y editar clientes; recibir solicitudes de taller, cotizar y gestionar aceptación comercial documentada bajo la política vigente; registrar adquisición y envío de repuestos y preparar documentación. Sin aprobación técnica ni conformidad propia.",
     "TECNICO": "Consultar clientes de expedientes asignados, sin modificarlos; expedientes asignados y biblioteca aplicable; edición de sus borradores técnicos, reparación autorizada y calibración. Sin aprobar trabajos ni consultar respaldos comerciales.",
     "PLANTA": "Asignación técnica, biblioteca, revisión técnica independiente, protocolos de calibración y recepción de repuestos. Sin decisión comercial ni cierre administrativo.",
     "GERENCIA": "Propuestas y decisiones comerciales con respaldo y política válida; cierre administrativo con revisión técnica previa. Sin sustituir PLANTA.",

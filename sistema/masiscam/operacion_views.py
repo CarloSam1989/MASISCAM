@@ -113,6 +113,8 @@ def operar(request,pk,op):
         except (ValidationError,IntegrityError,OSError,ObjectDoesNotExist) as exc:
             _error(form,exc)
         else:
+            if request.GET.get('flujo') == '1':
+                return redirect('masiscam:flujo_detalle', pk=pk)
             if request.rol_masiscam.rol == 'TALLER' and op == 'resultado':
                 return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
             return redirect('masiscam:operacion_detalle',pk=pk)

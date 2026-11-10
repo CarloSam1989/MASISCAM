@@ -451,3 +451,5 @@ from .calibracion_models import (PlantillaCalibracion, ValidacionPlantillaCalibr
     DecisionCalibracion, EmisionCalibracion)
 from .cierre_models import InformeFinal, RevisionInformeFinal, CierreExpediente
 from .tecnica_models import MapaPlano, PosicionPlano
+from .flujo_models import (SolicitudRepuestos, AdquisicionRepuesto, EnvioRepuestos,
+    DetalleEnvio, ConfirmacionEnvio, RecepcionLineaEnvio)

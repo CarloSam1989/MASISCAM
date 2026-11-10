@@ -427,6 +427,9 @@ def decidir(*,usuario,empresa,calibracion_id,clave,decision,motivo,evaluaciones)
     obj=t._save(DecisionCalibracion(calibracion=c,decision=decision,motivo=motivo,evaluaciones=evaluaciones,responsable=usuario,clave=clave))
     c.estado=decision;c.save(update_fields=['estado'])
     t._event(exp,usuario,clave,'CAL_DECISION',payload,obj.pk)
+    if decision == 'APROBADA':
+        from .flujo_services import generar_final_automatico
+        transaction.on_commit(lambda: generar_final_automatico(c.pk))
     return obj
 
 

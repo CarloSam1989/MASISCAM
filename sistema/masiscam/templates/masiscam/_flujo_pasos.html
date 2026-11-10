@@ -1,0 +1,1 @@
+<ol class="mf-steps" aria-label="Proceso de mantenimiento">{% for p in pasos %}<li{% if forloop.counter == paso %} aria-current="step"{% endif %}><span class="mf-number" aria-hidden="true">{{ forloop.counter }}</span><div><strong>{{ p.nombre }}</strong><small>{{ p.estado }}</small></div></li>{% endfor %}</ol>

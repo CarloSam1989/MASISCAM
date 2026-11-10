@@ -1,4 +1,5 @@
 from django.urls import path
+from . import flujo_views
 from . import plano_views
 from . import usuario_views, views, recepcion_views, tecnica_views, operacion_views
 from . import calibracion_views
@@ -7,6 +8,9 @@ from . import cierre_views, taller_views
 app_name = "masiscam"
 
 urlpatterns = [
+    path('solicitudes-taller/', flujo_views.bandeja, name='flujo_bandeja'),
+    path('expedientes/<int:pk>/flujo/', flujo_views.detalle, name='flujo_detalle'),
+    path('expedientes/<int:pk>/flujo/documentos/<int:documento_pk>/', flujo_views.documento, name='flujo_documento'),
     path('taller/equipos/<int:pk>/', taller_views.taller_equipo, name='taller_equipo'),
     path('taller/', taller_views.taller_inicio, name='taller_inicio'),
     path('taller/estado/', taller_views.taller_estado, name='taller_estado'),
