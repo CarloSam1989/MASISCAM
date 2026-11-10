@@ -32,7 +32,10 @@ def _proyecto(request, pk):
         referencias_tecnicas__isnull=True, informe_tecnico__isnull=True,
         evidencias_operativas__isnull=True, emision_operativa__isnull=True,
         plantillas_calibracion__isnull=True,evidencias_calibracion__isnull=True,informe_calibracion__isnull=True,informe_final__isnull=True).distinct()
-    return get_object_or_404(Proyecto.objects.prefetch_related("equipos",
+    from .access import puede_auditar_inactivos
+    if not puede_auditar_inactivos(request):
+        documentos=documentos.exclude(equipo__estado='INACTIVO')
+    return get_object_or_404(Proyecto.objects.prefetch_related(Prefetch('equipos',queryset=_equipos_autorizados(request)),
         Prefetch("documentos", queryset=documentos)), pk=pk, empresa=request.empresa_activa)
 
 
@@ -42,6 +45,9 @@ def _contexto_permisos(request):
 
 def _equipos_autorizados(request):
     equipos = Equipo.objects.filter(proyecto__empresa=request.empresa_activa)
+    from .access import puede_auditar_inactivos
+    if not puede_auditar_inactivos(request):
+        equipos=equipos.exclude(estado='INACTIVO')
     if request.rol_masiscam and request.rol_masiscam.rol == "TALLER":
         from .access import equipos_taller
         equipos = equipos_taller(usuario=request.user, empresa=request.empresa_activa)
@@ -112,6 +118,8 @@ def _productos(equipos, cliente=None):
 
 @masiscam_access_required
 def dashboard(request):
+    if request.rol_masiscam and request.rol_masiscam.rol == 'OFICINA':
+        return redirect('masiscam:oficina_inicio')
     if request.rol_masiscam and request.rol_masiscam.rol == "TALLER":
         return redirect("masiscam:taller_inicio")
     if request.cliente_usuario:
@@ -129,6 +137,9 @@ def producto_listado(request, tipo):
     if request.cliente_usuario:
         return _listado_cliente(request, codigo)
     base = Equipo.objects.filter(proyecto__empresa=request.empresa_activa, tipo_producto=codigo)
+    from .access import puede_auditar_inactivos
+    if not puede_auditar_inactivos(request):
+        base=base.exclude(estado='INACTIVO')
     if request.method == "POST":
         if not tiene_permiso(request, "archivar"):
             raise PermissionDenied
@@ -136,8 +147,13 @@ def producto_listado(request, tipo):
         equipo_id = request.POST.get("equipo_id", "")
         if estado not in {Equipo.Estado.ACTIVO, Equipo.Estado.INACTIVO} or not equipo_id.isdecimal() or len(equipo_id) > 18:
             return HttpResponse("Solicitud no valida", status=400)
-        equipo = get_object_or_404(base, pk=int(equipo_id))
-        base.filter(pk=equipo.pk).update(estado=estado)
+        with transaction.atomic():
+            equipo = get_object_or_404(base.select_for_update(), pk=int(equipo_id))
+            anterior=equipo.estado
+            base.filter(pk=equipo.pk).update(estado=estado)
+            if anterior!=estado:
+                auditar(empresa=request.empresa_activa,usuario=request.user,accion='EQUIPO_ESTADO_CAMBIADO',
+                    objeto=equipo,proyecto=equipo.proyecto,detalle={'anterior':anterior,'estado':estado})
         return redirect(request.get_full_path())
     cliente = None
     cliente_id = request.GET.get("cliente", "").strip()
@@ -182,7 +198,7 @@ def clientes(request):
 @masiscam_access_required
 def cliente_detalle(request, pk):
     cliente = get_object_or_404(clientes_autorizados(usuario=request.user, empresa=request.empresa_activa), pk=pk)
-    contexto = {"cliente": cliente, "productos": _productos(cliente.equipos.filter(proyecto__empresa=request.empresa_activa), cliente),
+    contexto = {"cliente": cliente, "productos": _productos(_equipos_autorizados(request).filter(cliente=cliente), cliente),
                 "acceso_cliente": RolMasiscam.objects.filter(cliente=cliente).select_related("perfil__user").first()}
     contexto.update(_contexto_permisos(request))
     return render(request, "masiscam/cliente_detalle.html", contexto)
@@ -359,6 +375,11 @@ def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, st
                 "registro_form": registro_form if registro_form is not None else RegistroEquipoForm()}
     contexto.update(_contexto_permisos(request))
     contexto.update(_contexto_documentos_drive(equipo, request))
+    from .access import puede_auditar_inactivos
+    contexto['auditoria_inactivos']=puede_auditar_inactivos(request)
+    if equipo.estado=='INACTIVO':
+        for permiso in ('editar','archivar','documentos','reemplazar','qr','visibilidad'):
+            contexto['puede_'+permiso]=False
     contexto["privado"] = True
     if request.cliente_usuario and equipo.estado != Equipo.Estado.INACTIVO:
         contexto["documentos_cliente"] = _documentos_cliente(request).filter(equipo=equipo, proyecto=equipo.proyecto)
@@ -369,12 +390,15 @@ def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, st
 @permiso_masiscam_required("editar")
 def registro_crear(request, pk):
     equipo = _equipo(request, pk)
+    from .access import validar_equipo_operativo
+    validar_equipo_operativo(equipo)
     form = RegistroEquipoForm(request.POST, request.FILES)
     if not form.is_valid():
         return _render_ficha(request, equipo, registro_form=form, status=400)
     archivos = form.cleaned_data["archivos"]
     with transaction.atomic():
         Empresa.objects.select_for_update().order_by("pk").first()
+        validar_equipo_operativo(equipo,bloquear=True)
         registro, creado = RegistroEquipo.objects.get_or_create(
             equipo=equipo, clave_creacion=form.cleaned_data["clave_creacion"],
             defaults={campo: form.cleaned_data[campo] for campo in ("tipo", "fecha", "observacion")},
@@ -598,7 +622,9 @@ def equipo_publico(request, token):
 
 
 def _puede_ver_documentos(request, equipo):
-    return (request.user.is_authenticated and equipo.estado != Equipo.Estado.INACTIVO
+    from .access import puede_auditar_inactivos
+    auditor=puede_auditar_inactivos(request)
+    return (request.user.is_authenticated and (equipo.estado != Equipo.Estado.INACTIVO or auditor)
             and tiene_permiso(request, "ver")
             and equipo.proyecto.empresa_id == request.empresa_activa.pk
             and (not request.cliente_usuario or (
@@ -615,12 +641,12 @@ def _documentos_listado(request, equipos):
 
 def _contexto_documentos_drive(equipo, request=None, registros=True):
     es_cliente = bool(request and getattr(request, "cliente_usuario", None))
-    permitido = equipo.estado != Equipo.Estado.INACTIVO and (request is None or _puede_ver_documentos(request, equipo))
+    permitido = _puede_ver_documentos(request,equipo) if request else equipo.estado != Equipo.Estado.INACTIVO
     contexto = {"documentos_drive": [], "error_documentos": False,
                 "puede_ver_documentos": permitido, "es_cliente": es_cliente}
     if registros:
-        contexto["registros"] = list(equipo.registros.filter(expediente_mantenimiento__isnull=True).prefetch_related("archivos").order_by("fecha", "pk")) if equipo.estado != Equipo.Estado.INACTIVO else []
-        if permitido and not es_cliente and settings.GOOGLE_DRIVE_ENABLED:
+        contexto["registros"] = list(equipo.registros.filter(expediente_mantenimiento__isnull=True).prefetch_related("archivos").order_by("fecha", "pk")) if permitido else []
+        if permitido and equipo.estado!='INACTIVO' and not es_cliente and settings.GOOGLE_DRIVE_ENABLED:
             for registro in contexto["registros"]:
                 if not registro.drive_folder_id and not hasattr(registro, "expediente_mantenimiento"):
                     encolar_carpeta_registro(registro.pk)
@@ -983,7 +1009,7 @@ def proyecto_imagen_privada(request, pk):
 @masiscam_access_required
 def equipo_foto_privada(request, pk, tipo):
     equipo = _equipo(request, pk)
-    if equipo.estado == Equipo.Estado.INACTIVO or tipo not in {"equipo", "placa"}:
+    if tipo not in {"equipo", "placa"}:
         raise Http404
     return _archivo_protegido(equipo.fotografia_general if tipo == "equipo" else equipo.fotografia_placa)
 
@@ -995,7 +1021,10 @@ def documento_privado(request, pk, documento_pk):
     if documento_protegido(documento_pk):
         raise PermissionDenied("Consulte el documento desde su expediente.")
     proyecto = _proyecto(request, pk)
-    documentos = proyecto.documentos.exclude(estado_sincronizacion=Documento.Sincronizacion.ARCHIVADO).exclude(equipo__estado=Equipo.Estado.INACTIVO)
+    documentos = proyecto.documentos.exclude(estado_sincronizacion=Documento.Sincronizacion.ARCHIVADO)
+    from .access import puede_auditar_inactivos
+    if not puede_auditar_inactivos(request):
+        documentos=documentos.exclude(equipo__estado=Equipo.Estado.INACTIVO)
     if request.cliente_usuario:
         documentos = documentos.filter(equipo__in=_equipos_autorizados(request))
     documento = get_object_or_404(documentos, pk=documento_pk)

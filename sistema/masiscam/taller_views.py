@@ -92,13 +92,10 @@ def taller_equipo(request, pk):
         return render(request,'masiscam/flujo_detalle.html',contexto(request,exp))
     pasos=[dict(nombre=nombre,estado='Listo' if n==0 else 'Pendiente') for n,nombre in enumerate(
         ['Registrar equipo','Seleccionar piezas','Oficina cotiza y envía','Taller repara','Generar informe'])]
-    mensaje='El equipo ya está registrado. Abre una recepción cuando vayas a iniciar su mantenimiento.'
+    mensaje='Inicia un expediente de mantenimiento para inspeccionar y seleccionar piezas. No necesitas confirmar la recepción ni contar con autorización comercial para inspeccionar.'
     accion=reverse('masiscam:recepcion_crear')+f'?equipo={equipo.pk}' if not exp else None
     if exp:
         pasos[1]['estado']='Bloqueado'
         mensaje='PLANTA debe asignar el responsable para continuar este expediente.' if not asignado else 'La selección de piezas requiere habilitar el módulo técnico. Comunícalo al responsable del sistema.'
-        if not hasattr(exp.recepcion, 'confirmacion'):
-            mensaje='Completa las fotografías y confirma la recepción antes de iniciar la selección de piezas.'
-            accion=reverse('masiscam:expediente_detalle',args=[exp.pk])+'#confirmar-recepcion'
     return render(request,'masiscam/taller_equipo.html',dict(equipo=equipo,expediente=exp,mantenimientos=mantenimientos,
         pasos=pasos,paso=2,mensaje=mensaje,accion=accion))

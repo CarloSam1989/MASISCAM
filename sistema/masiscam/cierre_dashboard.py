@@ -13,6 +13,11 @@ from . import cierre_services as s
 def listado(user,empresa,filters=None):
     role=s.autorizar(user,empresa).rol
     qs=ExpedienteMantenimiento.objects.filter(empresa=empresa,registro__equipo__proyecto__empresa=empresa)
+    from .access import AUDITORES_INACTIVOS
+    if role not in AUDITORES_INACTIVOS: qs=qs.exclude(registro__equipo__estado='INACTIVO')
+    if role=='TALLER':
+        from .recepcion_services import expedientes_autorizados
+        qs=qs.filter(pk__in=expedientes_autorizados(user,empresa).values('pk'))
     if role in s.t.OPERADORES: qs=qs.filter(asignaciones_tecnicas__tecnico=user,asignaciones_tecnicas__fin__isnull=True)
     filters=filters or {}
     if filters.get('empresa') and str(filters['empresa'])!=str(empresa.pk):

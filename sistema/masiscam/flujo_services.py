@@ -291,7 +291,7 @@ def resumen(exp, usuario):
     pasos[0]['estado']='Listo'
     accion=None; mensaje=''; paso=2; bloqueo=False
     def action(texto,op=None,url=None): return dict(texto=texto,op=op,url=url)
-    if not hasattr(exp.recepcion,'confirmacion'):
+    if role != 'TALLER' and not hasattr(exp.recepcion,'confirmacion') and not sol:
         mensaje='Completa la recepción y la guía de ingreso para iniciar el trabajo técnico.'
         if not exp.recepcion.evidencias.filter(tipo='FOTO').exists():
             mensaje='Para confirmar la recepción, adjunta una fotografía general del equipo'

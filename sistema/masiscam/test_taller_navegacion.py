@@ -147,6 +147,8 @@ class TallerBrowserTests(StaticLiveServerTestCase):
                                     page.screenshot(path=str(output / f'taller-formulario-{width}.png'), full_page=True)
                             elif codigo == 'CLIENTE':
                                 expect(menu.locator('a')).to_have_text(['Mis productos'])
+                            elif codigo == 'OFICINA':
+                                expect(menu.locator('a')).to_have_text(['Inicio de oficina','Clientes','Solicitudes de taller','Cotizaciones','Compras','Ventas','Guías de envío','Documentación comercial autorizada','Mi cuenta'])
                             else:
                                 labels = menu.locator('a').all_text_contents()
                                 self.assertEqual(labels[:5], ['Panel', 'Reductores', 'Bombas', 'Clientes', 'Proyectos'])

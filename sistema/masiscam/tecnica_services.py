@@ -34,6 +34,8 @@ def autorizar_tecnica(usuario, empresa, roles=None, expediente=None):
     if not rol or rol.rol not in (roles or LECTORES):
         raise PermissionDenied('El rol no permite esta operación técnica.')
     if expediente:
+        from .access import validar_consulta_equipo
+        validar_consulta_equipo(expediente.registro.equipo, rol.rol)
         if expediente.empresa_id != empresa.pk or expediente.registro.equipo.proyecto.empresa_id != empresa.pk:
             raise PermissionDenied('Expediente de otra empresa.')
         if rol.rol == 'TALLER':
@@ -48,7 +50,7 @@ def autorizar_tecnica(usuario, empresa, roles=None, expediente=None):
 
 def expedientes_operativos(usuario, empresa):
     rol = autorizar_tecnica(usuario, empresa)
-    qs = ExpedienteMantenimiento.objects.filter(empresa=empresa)
+    qs = ExpedienteMantenimiento.objects.filter(empresa=empresa).exclude(registro__equipo__estado='INACTIVO')
     if rol.rol in OPERADORES:
         qs = qs.filter(asignaciones_tecnicas__tecnico=usuario, asignaciones_tecnicas__fin__isnull=True)
     if rol.rol == 'TALLER':
@@ -67,6 +69,8 @@ def expediente_autorizado(usuario, empresa, pk, roles=None, lock=False):
         raise PermissionDenied('Expediente no disponible.')
     autorizar_tecnica(usuario, empresa, roles, exp)
     if lock:
+        from .access import validar_equipo_operativo
+        validar_equipo_operativo(exp.registro.equipo,bloquear=True)
         from .cierre_services import abierto
         abierto(exp)
     return exp
@@ -152,9 +156,13 @@ def crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo=''):
     if old:
         return model.objects.get(pk=old)
     recepcion = ConfirmacionRecepcion.objects.filter(recepcion__expediente=exp).select_related('guia__documento').first()
-    if not recepcion:
+    role = rol_masiscam_usuario(usuario=usuario, empresa=empresa).rol
+    from .models import SolicitudRepuestos
+    solicitud_taller = SolicitudRepuestos.objects.filter(expediente=exp).exists()
+    if not recepcion and role != 'TALLER' and not (role == 'PLANTA' and solicitud_taller):
         raise ValidationError('Confirme la recepción antes de iniciar inspección.')
-    verificar_copia_persistente(recepcion.guia.documento)
+    if recepcion:
+        verificar_copia_persistente(recepcion.guia.documento)
     asignacion = exp.asignaciones_tecnicas.filter(fin__isnull=True).first()
     if not asignacion:
         raise ValidationError('PLANTA debe asignar un técnico principal.')
@@ -245,6 +253,9 @@ def documento_valido(doc, empresa):
 
 def guardar_archivo(*, usuario, empresa, proyecto, archivo, categoria, equipo=None):
     rol = autorizar_tecnica(usuario, empresa)
+    if equipo:
+        from .access import validar_equipo_operativo
+        validar_equipo_operativo(equipo)
     if proyecto.empresa_id != empresa.pk:
         raise PermissionDenied('Proyecto de otra empresa.')
     if rol and rol.rol == 'TALLER':

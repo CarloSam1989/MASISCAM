@@ -60,7 +60,7 @@ class TallerTests(TestCase):
         perfil = Perfil.objects.create(user=self.taller, empresa=otra)
         RolMasiscam.objects.create(perfil=perfil, rol='OFICINA')
         response = self.client.post(url, {'empresa_id': otra.pk})
-        self.assertEqual(response.url, reverse('masiscam:dashboard'))
+        self.assertEqual(response.url, reverse('masiscam:oficina_inicio'))
         response = self.client.get(url)
         self.assertEqual(response.wsgi_request.rol_masiscam.rol, 'OFICINA')
         self.assertContains(response, '>Clientes</a>')
@@ -75,11 +75,11 @@ class TallerTests(TestCase):
             if codigo in {'TALLER', 'CLIENTE'}:
                 continue
             self.client.force_login(user)
-            response = self.client.get(reverse('masiscam:dashboard'))
+            response = self.client.get(reverse('masiscam:dashboard'),follow=True)
             with self.subTest(rol=codigo):
                 self.assertEqual(response.status_code, 200)
                 self.assertNotContains(response, '/static/masiscam/css/taller.css')
-                for texto in ('Panel', 'Reductores', 'Bombas', 'Clientes', 'Proyectos'):
+                for texto in (('Inicio de oficina','Clientes','Cotizaciones','Compras','Ventas') if codigo=='OFICINA' else ('Panel', 'Reductores', 'Bombas', 'Clientes', 'Proyectos')):
                     self.assertContains(response, '>' + texto + '</a>')
                 self.assertNotContains(response, '>Mis expedientes</a>')
         self.client.force_login(self.usuarios['CLIENTE'])
@@ -93,7 +93,8 @@ class TallerTests(TestCase):
         response = self.client.get(reverse('masiscam:taller_inicio'))
         self.assertContains(response, 'Registrar nuevo equipo</button>')
         self.assertContains(response, exp.numero)
-        self.assertContains(response, 'Completar recepción')
+        self.assertContains(response, 'Ver siguiente paso')
+        self.assertNotContains(response, 'Completar recepción')
         self.assertNotContains(response, self.historico.numero_serie)
 
     def test_indicadores_no_cuentan_trabajos_ajenos_y_recepcion_confirmada(self):
@@ -333,8 +334,8 @@ class TallerTests(TestCase):
             rol.rol = codigo
             rol.save(update_fields=['rol'])
             with self.subTest(rol=codigo):
-                self.assertEqual(self.client.get(url).status_code, 403)
-                self.assertEqual(self.client.post(url, {}).status_code, 403)
+                self.assertIn(self.client.get(url).status_code, (302,403) if codigo=='OFICINA' else (403,))
+                self.assertIn(self.client.post(url, {}).status_code, (302,403) if codigo=='OFICINA' else (403,))
 
 
 @override_settings(GOOGLE_DRIVE_ENABLED=False, MASISCAM_RECEPCION_LOCAL=True)

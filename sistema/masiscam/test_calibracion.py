@@ -320,7 +320,7 @@ class CalibracionTests(TestCase):
         with em.documento.archivo.open('wb') as f: f.write(b'CORRUPTO QA')
         with self.assertRaises(ValidationError): s.generar_informe(em.pk)
         client=Client();client.force_login(self.oficina)
-        self.assertEqual(client.get(reverse('masiscam:calibracion_documento',args=[self.exp.pk,em.documento_id])).status_code,404)
+        self.assertEqual(client.get(reverse('masiscam:calibracion_documento',args=[self.exp.pk,em.documento_id])).status_code,403)
 
     def test_archivo_impostor_rechazado_sin_vinculos(self):
         c=self.iniciar()

@@ -31,7 +31,7 @@ def puede_ver_tecnica(context):
     request=context.get('request')
     role=getattr(request,'rol_masiscam',None)
     return bool(getattr(settings,'MASISCAM_TECNICA_LOCAL',False) and request and request.user.is_authenticated
-        and not getattr(request,'cliente_usuario',None) and role and role.rol in {'TECNICO','OFICINA','PLANTA','GERENCIA','ADMIN','CONSULTA'})
+        and not getattr(request,'cliente_usuario',None) and role and role.rol in {'TECNICO','PLANTA','GERENCIA','ADMIN','CONSULTA'})
 
 
 @register.simple_tag(takes_context=True)
@@ -56,6 +56,23 @@ def breadcrumbs(context):
     vista = request.resolver_match.url_name if request.resolver_match else ""
     from django.conf import settings
     role = getattr(getattr(request, 'rol_masiscam', None), 'rol', None)
+    if role=='OFICINA':
+        from masiscam.oficina_views import SECCIONES
+        trail=[('Inicio de oficina',reverse('masiscam:oficina_inicio'))]
+        seccion=context.get('seccion') or getattr(request.resolver_match,'kwargs',{}).get('seccion')
+        exp_oficina=context.get('expediente')
+        if vista.startswith('cliente'):
+            trail.append(('Clientes',reverse('masiscam:clientes')))
+            if vista!='clientes': trail.append((context.get('titulo') or 'Cliente',None))
+        elif exp_oficina:
+            trail.append(('Solicitudes',reverse('masiscam:oficina_seccion',args=['solicitudes'])))
+            accion=context.get('accion') or {}
+            label='Recepción' if vista in {'expediente_detalle','recepcion_finalizar'} else 'Cotización' if accion.get('op') in {'cotizar','aceptacion','respaldo'} else 'Gestión comercial'
+            trail.append((label,None))
+        elif seccion and seccion!='inicio': trail.append((SECCIONES.get(seccion,'Oficina'),None))
+        elif vista=='flujo_bandeja': trail.append(('Solicitudes',None))
+        elif vista not in {'dashboard','oficina_inicio'}: trail.append((context.get('titulo') or 'Consulta autorizada',None))
+        return [{'label':label,'url':url if i<len(trail)-1 else None} for i,(label,url) in enumerate(trail)]
     exp = context.get('expediente')
     revision = context.get('diagnostico') or context.get('revision') or context.get('calibracion')
     if not exp and revision:
@@ -83,7 +100,7 @@ def breadcrumbs(context):
     if role == 'TALLER' or exp or vista in labels and vista not in {'dashboard','ficha_crear','equipo_crear'}:
         home = 'taller_inicio' if role=='TALLER' else 'dashboard'
         home_url = reverse('masiscam:'+home) if role or request.user.is_superuser else reverse('accounts:seleccionar_empresa')
-        trail = [('Inicio', home_url)]
+        trail = [('Inicio de taller' if role=='TALLER' else 'Inicio', home_url)]
         if exp or equipo_operativo:
             if role=='TALLER':
                 trail.append(('Mis equipos',reverse('masiscam:taller_inicio')+'#trabajos-titulo'))
@@ -103,7 +120,7 @@ def breadcrumbs(context):
         else:
             trail.append((label,None))
         # The current page is text; never offer a circular last breadcrumb.
-        if vista==home: trail=[('Inicio',None)]
+        if vista==home: trail=[('Inicio de taller' if role=='TALLER' else 'Inicio',None)]
         return [{'label':label,'url':url if request.user.is_authenticated and i<len(trail)-1 else None}
                 for i,(label,url) in enumerate(trail)]
     items = [("Dashboard", reverse("masiscam:dashboard"))]

@@ -26,12 +26,13 @@ class FlujoTests(TestCase):
     crear=test_taller.TallerTests.crear
     recepcion=test_taller.TallerTests.recepcion
 
-    def preparar_solicitud(self,plano=False,enviar=True,con_piezas=True):
+    def preparar_solicitud(self,plano=False,enviar=True,con_piezas=True,confirmar=True):
         equipo=self.crear('RELEVO-'+str(Equipo.objects.count()))
         self.assertFalse(ExpedienteMantenimiento.objects.filter(registro__equipo=equipo).exists())
         exp=self.recepcion(equipo)
-        confirmar_recepcion(usuario=self.taller,empresa=self.empresa,expediente_id=exp.pk,clave=uuid.uuid4(),
-            placa='SIN_PLACA',motivo_sin_placa='QA',motivo_sin_guia='QA',general_id=exp.recepcion.evidencias.get().pk)
+        if confirmar:
+            confirmar_recepcion(usuario=self.taller,empresa=self.empresa,expediente_id=exp.pk,clave=uuid.uuid4(),
+                placa='SIN_PLACA',motivo_sin_placa='QA',motivo_sin_guia='QA',general_id=exp.recepcion.evidencias.get().pk)
         qa.inspeccion_enviada(self.empresa,self.taller,exp)
         diag=t.crear_revision(usuario=self.taller,empresa=self.empresa,expediente_id=exp.pk,tipo='DIAGNOSTICO',clave=uuid.uuid4())
         diag=t.guardar_revision(usuario=self.taller,empresa=self.empresa,tipo='DIAGNOSTICO',revision_id=diag.pk,
@@ -79,7 +80,8 @@ class FlujoTests(TestCase):
             lineas=[dict(detalle=envio.lineas.get().pk,cantidad=cantidad,discrepancia=discrepancia)],clave=clave or uuid.uuid4())
 
     def test_recorrido_completo_plano_oficina_reparacion_calibracion_pdf(self):
-        self.preparar_solicitud(plano=True)
+        self.preparar_solicitud(plano=True,confirmar=False)
+        self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=self.exp.recepcion).exists())
         self.assertEqual(len(self.sol.snapshot['piezas']),1)
         self.assertEqual(Diagnostico.objects.filter(expediente=self.exp).count(),1)
         self.client.force_login(self.oficina)
@@ -128,6 +130,7 @@ class FlujoTests(TestCase):
             self.assertEqual(evento_auto.usuario_id,self.usuarios['PLANTA'].pk)
             self.assertEqual(evento_auto.detalle['responsable_datos'],self.taller.pk)
             self.assertIn('flujo_operativo',informe.snapshot)
+            self.assertEqual(informe.snapshot['confirmacion']['estado'],'Recepción provisional sin confirmar')
             self.assertEqual(informe.snapshot['flujo_operativo'][0]['envios'][0]['guia'],'GUIA QA 001')
             self.assertEqual(informe.snapshot['cotizacion']['responsable'],self.oficina.username)
             with informe.documento.archivo.open('rb') as stream: data=stream.read()
@@ -168,6 +171,14 @@ class FlujoTests(TestCase):
         with self.assertRaises(ValidationError): s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),referencia='QA')
         self.assertFalse(PropuestaComercial.objects.exists())
 
+    def test_planta_puede_solicitar_revision_sin_confirmacion_de_recepcion(self):
+        self.preparar_solicitud(confirmar=False)
+        nueva=t.crear_revision(usuario=self.usuarios['PLANTA'],empresa=self.empresa,
+            expediente_id=self.exp.pk,tipo='DIAGNOSTICO',clave=uuid.uuid4(),motivo='Corrección independiente QA')
+        self.assertEqual(nueva.sustituye_id,self.diag.pk)
+        self.assertEqual(nueva.tecnico_id,self.taller.pk)
+        self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=self.exp.recepcion).exists())
+
     def test_compras_y_reparaciones_no_se_crean_sin_autorizacion(self):
         self.preparar_solicitud()
         with self.assertRaises(ValidationError): self.envio()
@@ -205,7 +216,7 @@ class FlujoTests(TestCase):
         self.assertEqual(csrf.post(url,{'op':'solicitud','clave':str(uuid.uuid4())}).status_code,403)
         foto=self.sol.snapshot['piezas'][0]['fotos'][0]['documento']
         self.client.force_login(self.oficina)
-        self.assertContains(self.client.get(reverse('masiscam:dashboard')),'Revisar solicitudes de taller')
+        self.assertContains(self.client.get(reverse('masiscam:dashboard'),follow=True),'Revisar solicitudes')
         response=self.client.get(reverse('masiscam:flujo_documento',args=[self.exp.pk,foto]),{'ver':'1'})
         self.assertEqual(response['Content-Type'],'image/png')
         self.assertTrue(response['Content-Disposition'].startswith('inline'))

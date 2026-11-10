@@ -3,7 +3,7 @@
 {% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/flujo.css' %}">{% endblock %}
 {% block content %}<div class="container mf-app">
 <header class="mf-heading"><div><p class="mf-eyebrow">{{ expediente.numero }} · RECEPCIÓN</p><h1>{{ equipo.nombre }}</h1><p>{{ snapshot.cliente }} · RUC {{ snapshot.ruc }}</p><p>Serie {{ snapshot.serie|default:'Pendiente de identificación' }} · {{ equipo.marca }} {{ equipo.modelo }}</p></div><span class="mf-badge">{% if confirmacion %}Recepción confirmada{% else %}Recepción por completar{% endif %}</span></header>
-{% include 'masiscam/_flujo_pasos.html' %}
+{% if not es_oficina %}{% include 'masiscam/_flujo_pasos.html' %}{% endif %}
 <section class="mf-next"><h2>{% if confirmacion %}Recepción confirmada{% else %}Completar recepción{% endif %}</h2>
 {% if confirmacion %}<p>La recepción y su guía están guardadas. Continúa con las actividades asignadas; las aprobaciones técnicas y comerciales conservan sus responsables independientes.</p>{% else %}<p>Adjunta o selecciona las fotografías y confirma los datos de ingreso.</p>{% endif %}
 {% for requisito in pendientes %}<p role="status">{{ requisito }}</p>{% endfor %}

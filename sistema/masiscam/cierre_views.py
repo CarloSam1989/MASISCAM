@@ -116,6 +116,8 @@ def documento(request,pk,informe_pk):
 def historial(request,pk):
     s.autorizar(request.user,request.empresa_activa)
     eq=get_object_or_404(Equipo,pk=pk,proyecto__empresa=request.empresa_activa)
+    from .access import validar_consulta_equipo
+    validar_consulta_equipo(eq,s.autorizar(request.user,request.empresa_activa).rol)
     from django.db.models import prefetch_related_objects
     rows=resumen(request.user,request.empresa_activa,{'equipo':str(pk)},limite=None)['expedientes']
     if s.autorizar(request.user,request.empresa_activa).rol in s.t.OPERADORES and not rows:

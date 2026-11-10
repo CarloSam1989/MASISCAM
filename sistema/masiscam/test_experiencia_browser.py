@@ -68,6 +68,7 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                     context=browser.new_context(viewport={'width':1440,'height':1000})
                     context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookies[role],url=self.live_server_url)])
                     page=context.new_page()
+                    page.add_locator_handler(page.locator('.swal2-confirm:visible:enabled'),lambda button:button.click(),no_wait_after=True)
                     for width in (1440,768,390):
                         page.set_viewport_size({'width':width,'height':1000})
                         url=self.live_server_url+reverse('masiscam:expediente_detalle',args=[exp.pk])
@@ -76,9 +77,10 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                         if width==390:
                             ancestors=page.locator('.breadcrumb-ancestors')
                             ancestors.locator('summary').click()
-                            expect(ancestors.get_by_role('link',name='Mis equipos',exact=True)).to_be_visible() if role=='TALLER' else expect(ancestors.get_by_role('link',name='Expedientes',exact=True)).to_be_visible()
+                            parent='Mis equipos' if role=='TALLER' else 'Solicitudes' if role=='OFICINA' else 'Expedientes'
+                            expect(ancestors.get_by_role('link',name=parent,exact=True)).to_be_visible()
                             ancestors.locator('summary').click()
-                            expect(page.locator('.breadcrumb-mobile [aria-current=page]')).to_have_text('Recepción')
+                            expect(page.locator('.masiscam-breadcrumbs [aria-current=page]')).to_have_text('Recepción')
                         self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth-innerWidth'),1)
                         self.assertEqual(page.locator('.mf-main-action:visible').count(),1)
                         if role=='TALLER':

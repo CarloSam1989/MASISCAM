@@ -64,10 +64,10 @@ class MasiscamLoginView(LoginView):
         if empresa_taller is None and empresas_taller.count() == 1:
             empresa_taller = empresas_taller.first()
         rol_taller = rol_masiscam_usuario(usuario=self.request.user, empresa=empresa_taller)
-        if rol_taller and rol_taller.rol == 'TALLER':
+        if rol_taller and rol_taller.rol in {'TALLER','OFICINA'}:
             self.request.session['empresa_activa_id'] = empresa_taller.pk
             self.request.session.pop('masiscam_login_next', None)
-            return reverse('masiscam:taller_inicio')
+            return reverse('masiscam:taller_inicio' if rol_taller.rol=='TALLER' else 'masiscam:oficina_inicio')
         redirect_url = self.get_redirect_url() or self.request.session.pop("masiscam_login_next", "")
         if redirect_url:
             logger.info("Login redirección username=%r url=%s", self.request.user.get_username(), redirect_url)
@@ -97,5 +97,7 @@ def seleccionar_empresa(request):
         rol = rol_masiscam_usuario(usuario=request.user, empresa=empresa)
         if rol and rol.rol == 'TALLER':
             return redirect('masiscam:taller_inicio')
+        if rol and rol.rol == 'OFICINA':
+            return redirect('masiscam:oficina_inicio')
         return redirect("masiscam:dashboard")
     return render(request, "accounts/seleccionar_empresa.html", {"empresas": empresas})

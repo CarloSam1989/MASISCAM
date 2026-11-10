@@ -26,7 +26,7 @@ class FlujoBrowserTests(StaticLiveServerTestCase):
     def test_cinco_pasos_hasta_informe_y_tres_resoluciones(self):
         import uuid
         from playwright.sync_api import sync_playwright,expect
-        self.preparar_solicitud(plano=True,enviar=False)
+        self.preparar_solicitud(plano=True,enviar=False,confirmar=False)
         definicion=cq.definicion_qa();definicion['aplicacion'].update(marca=self.equipo.marca,modelo=self.equipo.modelo)
         protocolo=cal.crear_plantilla(usuario=self.usuarios['PLANTA'],empresa=self.empresa,clave=uuid.uuid4(),archivo=cq.protocolo_pdf(),
             datos=dict(codigo='BROWSER-QA',titulo='PROTOCOLO FICTICIO QA',tipo_equipo=self.equipo.tipo_producto,definicion=definicion,proyecto_id=self.equipo.proyecto_id))
@@ -52,7 +52,8 @@ class FlujoBrowserTests(StaticLiveServerTestCase):
                 context=browser.new_context(viewport={'width':1440,'height':1000})
                 contexts.append(context)
                 context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookies[role],url=self.live_server_url)])
-                return context.new_page()
+                page=context.new_page()
+                return page
             def capturas(page,nombre,primary=1):
                 for width in (1440,768,390):
                     page.set_viewport_size({'width':width,'height':1000})
@@ -66,6 +67,10 @@ class FlujoBrowserTests(StaticLiveServerTestCase):
             def primero(form,name): form.locator(f'[name="{name}"]').select_option(index=1)
             def submit(form):
                 form.get_by_role('button').last.click()
+                confirm=form.page.locator('.swal2-confirm:visible:enabled')
+                if confirm.count():
+                    expect(form.page.locator('.swal2-title')).to_have_text('Confirmar acción')
+                    with form.page.expect_navigation(): confirm.click()
                 expect(form.page.locator('.mf-app')).to_be_visible()
             try:
                 taller=pagina('TALLER')
@@ -80,7 +85,7 @@ class FlujoBrowserTests(StaticLiveServerTestCase):
                 taller.locator('.pl-point').first.click()
                 expect(taller.locator('#pl-detail')).to_contain_text('QA-PARTE')
                 taller.get_by_role('link',name='← Volver al trabajo',exact=True).click()
-                taller.locator('.mf-main-action').click()
+                submit(taller.locator('#mf-diagnostico'))
                 expect(taller.locator('.mf-frozen').first).to_contain_text('Solicitud v1')
                 capturas(taller,'02-solicitud-enviada',primary=0)
                 planta=pagina('PLANTA');planta.goto(flujo)
@@ -140,7 +145,7 @@ class FlujoBrowserTests(StaticLiveServerTestCase):
                 for n in range(1,17):
                     medir=taller.locator('form:has(input[name=op][value=medir])')
                     medir.locator('[name=punto]').select_option(f'QA-{n:02}');fill(medir,dict(valor='0',observaciones='Medición ficticia QA'));submit(medir)
-                taller.get_by_role('button',name='Enviar 16 mediciones a revisión',exact=True).click()
+                submit(taller.locator('form:has(input[name=op][value=enviar])'))
                 planta.goto(flujo);planta.locator('.mf-main-action').click()
                 evaluar=planta.locator('form:has(input[name=op][value=decision])')
                 evaluar.locator('[name=decision]').select_option('APROBADA');fill(evaluar,dict(motivo='Evaluación humana ficticia QA, sin valor industrial'))

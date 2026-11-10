@@ -37,6 +37,18 @@ VISTAS_TALLER = {
         "recepcion_finalizar", "recepcion_documento"},
 }
 
+VISTAS_OFICINA = {
+    'masiscam.oficina_views': {'inicio'},
+    'masiscam.flujo_views': {'bandeja','detalle','documento'},
+    'masiscam.views': {'dashboard','clientes','cliente_detalle','cliente_crear','cliente_editar',
+        'producto_listado','ficha_detalle','equipo_informe','equipo_foto_privada','equipo_documento_privado'},
+    'masiscam.recepcion_views': {'expedientes','recepcion_crear','expediente_detalle','recepcion_finalizar',
+        'guia_emitir','guia_reintentar','recepcion_documento'},
+    'masiscam.tecnica_views': {'tecnica_informe','tecnica_documento','biblioteca_documento'},
+    'masiscam.operacion_views': {'inicio','detalle','operar','documento'},
+    'masiscam.cierre_views': {'detalle','documento'},
+}
+
 
 def autorizar_creacion_equipo(*, usuario, empresa):
     rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa) if usuario else None
@@ -49,8 +61,30 @@ def equipos_taller(*, usuario, empresa):
     from .models import Equipo
     rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa)
     qs = Equipo.objects.filter(proyecto__empresa=empresa, registrado_por=usuario,
-                               cliente__empresa=empresa)
+                               cliente__empresa=empresa).exclude(estado='INACTIVO')
     return qs if rol and rol.rol == "TALLER" and not acceso_cliente_usuario(usuario) else qs.none()
+
+
+AUDITORES_INACTIVOS = {'ADMIN', 'PLANTA', 'GERENCIA', 'CONSULTA'}
+
+
+def puede_auditar_inactivos(request):
+    rol=getattr(getattr(request,'rol_masiscam',None),'rol',None)
+    return bool(request.user.is_authenticated and request.user.is_active and
+        (rol in AUDITORES_INACTIVOS or (rol is None and request.user.is_superuser)))
+
+
+def validar_equipo_operativo(equipo, bloquear=False):
+    if bloquear:
+        from .models import Equipo
+        equipo=Equipo.objects.select_for_update().get(pk=equipo.pk)
+    if equipo.estado == 'INACTIVO':
+        raise PermissionDenied('Equipo inactivo: solo admite consulta histórica autorizada y reactivación administrativa.')
+
+
+def validar_consulta_equipo(equipo, rol):
+    if rol not in AUDITORES_INACTIVOS:
+        validar_equipo_operativo(equipo)
 
 
 def clientes_autorizados(*, usuario, empresa):
@@ -120,8 +154,8 @@ def tiene_permiso(request, permiso):
         rol = getattr(request, "rol_masiscam", None)
         return bool(rol and rol.rol == "TALLER" and rol.activo)
     asignacion = getattr(request, "rol_masiscam", None)
-    if asignacion and asignacion.rol == "TALLER":
-        return permiso in PERMISOS_ROL["TALLER"]
+    if asignacion and asignacion.rol in {"TALLER","OFICINA"}:
+        return permiso in PERMISOS_ROL[asignacion.rol]
     if request.user.is_superuser:
         return True
     asignacion = getattr(request, "rol_masiscam", None)
@@ -153,6 +187,9 @@ def masiscam_access_required(view_func):
         request.rol_masiscam = rol_masiscam_usuario(usuario=request.user, empresa=empresa)
         if not request.user.is_superuser and request.rol_masiscam is None:
             raise PermissionDenied("El perfil no tiene un rol MASISCAM activo.")
+        if request.rol_masiscam and request.rol_masiscam.rol=='OFICINA':
+            if view_func.__name__ not in VISTAS_OFICINA.get(view_func.__module__,set()):
+                raise PermissionDenied('Esta ventana no corresponde al trabajo autorizado de OFICINA.')
         if request.rol_masiscam and request.rol_masiscam.rol == "TALLER":
             if view_func.__name__ not in VISTAS_TALLER.get(view_func.__module__, set()):
                 raise PermissionDenied("Esta ventana no está autorizada para TALLER.")

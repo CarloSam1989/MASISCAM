@@ -44,6 +44,8 @@ def recepcion_crear(request):
         except ValidationError as exc:
             form.add_error(None, exc)
         else:
+            if request.rol_masiscam.rol == 'TALLER':
+                return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
             return redirect("masiscam:expediente_detalle", pk=exp.pk)
     equipo = form.fields['equipo'].queryset.filter(pk=form.initial.get('equipo')).first() if form.initial.get('equipo') else None
     return render(request, "masiscam/recepcion_form.html", {"form": form,"equipo":equipo}, status=400 if request.method == "POST" else 200)
@@ -92,9 +94,9 @@ def _detalle(request, exp, form=None, status=200):
         try: estado=resumen(exp,request.user)
         except (PermissionDenied,ValidationError): pass
         else: pasos,paso=estado['pasos'],estado['paso']
-    continuar = bool(taller and confirmacion and asignado and settings.MASISCAM_TECNICA_LOCAL)
+    continuar = bool(taller and asignado and settings.MASISCAM_TECNICA_LOCAL)
     return render(request, "masiscam/recepcion_detalle.html", {"expediente": exp,
-        "equipo":exp.registro.equipo,"es_taller":taller,"pendientes":pendientes,"navegacion_integrada":True,
+        "equipo":exp.registro.equipo,"es_taller":taller,"es_oficina":request.rol_masiscam.rol=='OFICINA',"pendientes":pendientes,"navegacion_integrada":True,
         "guias":guias,"pasos":pasos,"paso":paso,"continuar":continuar,
         "guia_principal":next((g for g in guias if g.disponible),None),
         "snapshot": exp.recepcion.snapshot, "clave_emision": uuid.uuid4(),

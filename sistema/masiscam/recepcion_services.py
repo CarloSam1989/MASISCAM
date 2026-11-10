@@ -30,6 +30,9 @@ def autorizar(usuario, empresa, escribir=False):
 def expedientes_autorizados(usuario, empresa):
     rol = autorizar(usuario, empresa)
     qs = ExpedienteMantenimiento.objects.filter(empresa=empresa)
+    from .access import AUDITORES_INACTIVOS
+    if rol.rol not in AUDITORES_INACTIVOS:
+        qs=qs.exclude(registro__equipo__estado='INACTIVO')
     if rol.rol == "TALLER":
         from .access import equipos_taller
         qs = qs.filter(registro__equipo__in=equipos_taller(usuario=usuario, empresa=empresa),
@@ -38,6 +41,8 @@ def expedientes_autorizados(usuario, empresa):
 
 
 def autorizar_expediente(usuario, empresa, exp):
+    from .access import validar_consulta_equipo
+    validar_consulta_equipo(exp.registro.equipo,autorizar(usuario,empresa).rol)
     if not expedientes_autorizados(usuario, empresa).filter(pk=exp.pk).exists():
         raise PermissionDenied("Expediente fuera del ámbito autorizado.")
 

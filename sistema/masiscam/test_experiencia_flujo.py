@@ -57,7 +57,8 @@ class ExperienciaTests(TestCase):
 
     @override_settings(MASISCAM_OPERACION_LOCAL=False)
     def test_fase_comercial_no_bloquea_inspeccion_piezas_ni_envio_solicitud(self):
-        self.ingreso(confirmar=True)
+        self.ingreso(fotos=False)
+        self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=self.exp.recepcion).exists())
         ficha=reverse('masiscam:taller_equipo',args=[self.equipo.pk])
         self.assertContains(self.client.get(ficha),'Iniciar inspección')
         qa.inspeccion_enviada(self.empresa,self.taller,self.exp)
@@ -74,12 +75,23 @@ class ExperienciaTests(TestCase):
         self.assertEqual(self.client.post(reverse('masiscam:operacion_operar',args=[self.exp.pk,'actividad']),
             dict(clave=uuid.uuid4())).status_code,404)
 
+    def test_inicio_mantenimiento_redirige_a_inspeccion_sin_fotografias_ni_confirmacion(self):
+        equipo=self.crear('INICIO-SIMPLE')
+        response=self.client.post(reverse('masiscam:recepcion_crear'),dict(
+            clave=uuid.uuid4(),equipo=equipo.pk,cliente=self.cliente.pk,tipo='MANTENIMIENTO',
+            fecha=timezone.localtime().strftime('%Y-%m-%dT%H:%M'),condicion_ingreso='Pendiente de inspección QA'))
+        from .models import ExpedienteMantenimiento
+        exp=ExpedienteMantenimiento.objects.get(registro__equipo=equipo)
+        self.assertRedirects(response,reverse('masiscam:taller_equipo',args=[equipo.pk])+f'?expediente={exp.pk}')
+        self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())
+        self.assertContains(self.client.get(response.url),'Iniciar inspección')
+
     @override_settings(MASISCAM_TECNICA_LOCAL=False, MASISCAM_OPERACION_LOCAL=False)
     def test_recepcion_incompleta_sigue_accesible_sin_modulo_tecnico(self):
         self.ingreso(fotos=False)
         response=self.client.get(reverse('masiscam:taller_equipo',args=[self.equipo.pk]))
-        self.assertContains(response,'Completar recepción')
-        self.assertContains(response,self.url+'#confirmar-recepcion')
+        self.assertContains(response,'requiere habilitar el módulo técnico')
+        self.assertNotContains(response,'#confirmar-recepcion')
 
     def test_asignacion_pendiente_no_oculta_recepcion_ni_permite_trabajo(self):
         self.ingreso(confirmar=True)
@@ -123,6 +135,9 @@ class ExperienciaTests(TestCase):
             for name,args in [('dashboard',[]),('expedientes',[]),('expediente_detalle',[self.exp.pk]),
                     ('flujo_detalle',[self.exp.pk]),('biblioteca',[]),('accounts:seleccionar_empresa',[])]:
                 url=reverse(name if ':' in name else 'masiscam:'+name,args=args)
+                if role=='OFICINA' and name=='biblioteca':
+                    self.assertEqual(self.client.get(url).status_code,403)
+                    url=reverse('masiscam:oficina_seccion',args=['documentos'])
                 response=self.client.get(url,follow=True)
                 with self.subTest(role=role,url=url):
                     self.assertEqual(response.status_code,200)

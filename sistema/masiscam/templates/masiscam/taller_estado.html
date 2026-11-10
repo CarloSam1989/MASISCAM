@@ -3,13 +3,13 @@
   <h1 class="h3">Estado de mis mantenimientos</h1>
   <form method="get" class="d-flex flex-wrap gap-2 mb-3"><label for="numero">Número de expediente</label><input id="numero" name="numero" value="{{ numero }}" class="form-control" maxlength="80"><button class="btn btn-primary">Consultar estado</button></form>
   {% for exp in pagina %}<section class="card card-body mb-3"><h2 class="h5">{{ exp.numero }} · {{ exp.registro.equipo.nombre }}</h2>
-    {% if exp.recepcion.confirmacion %}<p>Recepción confirmada. Continúa el personal autorizado.</p>{% else %}<p>Recepción pendiente de confirmar.</p><a href="{% url 'masiscam:expediente_detalle' exp.pk %}">Completar recepción</a>{% endif %}
+    <p><a class="btn btn-outline-primary" href="{% url 'masiscam:taller_equipo' exp.registro.equipo_id %}?expediente={{ exp.pk }}">Ver siguiente paso autorizado</a></p>
     <ul>{% for etapa in exp.etapas_tecnicas.all %}<li>{{ etapa.get_codigo_display }}: {{ etapa.get_estado_display }}</li>{% empty %}<li>Sin etapas técnicas registradas.</li>{% endfor %}</ul>
     {% if exp.tiene_reparacion %}<p>Reparación registrada.</p>{% endif %}
     {% if exp.calibraciones_estado %}<p>Calibración: {{ exp.calibraciones_estado.0.get_estado_display }}.</p>{% endif %}
     {% if exp.informes_estado %}<p>Informe final: {{ exp.informes_estado.0.get_estado_display }}.</p>{% endif %}
     {% if exp.cerrado %}<p>Expediente cerrado.</p>{% endif %}
-    <p class="text-muted">Este acceso permite consultar el estado; no permite ejecutar ni aprobar actividades técnicas o comerciales.</p>
+    <p class="text-muted">Las acciones del expediente respetan tu asignación y las aprobaciones independientes de PLANTA y del cliente.</p>
   </section>{% empty %}<p>No hay expedientes autorizados con estos criterios.</p>{% endfor %}
   {% if pagina.has_previous %}<a href="?page={{ pagina.previous_page_number }}&amp;numero={{ numero|urlencode }}">Anterior</a>{% endif %} {{ pagina.number }} / {{ pagina.paginator.num_pages }} {% if pagina.has_next %}<a href="?page={{ pagina.next_page_number }}&amp;numero={{ numero|urlencode }}">Siguiente</a>{% endif %}
 </div>{% endblock %}

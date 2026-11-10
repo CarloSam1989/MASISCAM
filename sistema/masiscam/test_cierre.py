@@ -212,6 +212,10 @@ class CierreTests(TestCase):
             list(data['actividades'])
         self.assertEqual(data['finalizados'],1);self.assertLess(len(queries),15)
         client=Client();client.force_login(self.oficina)
+        self.assertEqual(client.get(reverse('masiscam:cierre_dashboard')).status_code,403)
+        self.assertEqual(client.get(reverse('masiscam:cierre_historial',args=[self.exp.registro.equipo_id])).status_code,403)
+        self.assertEqual(client.get(reverse('masiscam:cierre_detalle',args=[self.exp.pk])).status_code,200)
+        client.force_login(self.planta)
         for name,args in [('cierre_dashboard',[]),('cierre_detalle',[self.exp.pk]),('cierre_historial',[self.exp.registro.equipo_id])]:
             r=client.get(reverse('masiscam:'+name,args=args));self.assertEqual(r.status_code,200)
         self.assertEqual(client.get(reverse('masiscam:cierre_dashboard')+'?desde=mal').status_code,400)

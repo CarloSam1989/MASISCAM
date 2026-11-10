@@ -422,11 +422,19 @@ class PublicDriveDocumentsTests(TestCase):
         response = self.client.get(reverse("masiscam:ficha_detalle", args=[self.antiguo.pk]))
         self.assertContains(response, self.antiguo.numero_serie)
         self.assertContains(response, "Inactivo")
-        for text in ("historial-registros", "registro-modal", "Pendiente", "informe.pdf", "Agregar registro"):
+        for text in ("registro-modal", "Agregar registro"):
             self.assertNotContains(response, text)
-        self.assertEqual(self.client.get(self.private_url()).status_code, 403)
+        self.assertContains(response,'historial-registros')
+        self.assertContains(response,'informe.pdf')
+        download=self.client.get(self.private_url())
+        self.assertEqual(download.status_code,200)
+        self.assertEqual(consumir_respuesta(download),self.content)
         self.assertEqual(self.client.get(self.url()).status_code, 404)
-        self.service_factory.assert_not_called()
+        self.api.files().create.assert_not_called()
+        self.api.files().update.assert_not_called()
+        from .models import RolMasiscam
+        RolMasiscam.objects.filter(perfil__user=self.usuario,perfil__empresa=self.empresa).update(rol='TECNICO')
+        self.assertIn(self.client.get(self.private_url()).status_code,(403,404))
         registro.refresh_from_db()
         self.assertEqual(registro.drive_folder_id, "internal")
         self.assertTrue(RegistroEquipo.objects.filter(pk=registro.pk).exists())
@@ -455,6 +463,7 @@ class PublicDriveDocumentsTests(TestCase):
         self.login()
         ficha = reverse("masiscam:ficha_detalle", args=[self.antiguo.pk])
         self.assertContains(self.client.get(ficha), self.antiguo.numero_serie)
+        self.service_factory.reset_mock()  # The preceding ADMIN audit read is authorized.
         RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="CLIENTE", cliente=self.cliente)
         for url in (ficha, ficha + "?foto=placa"):
             response = self.client.get(url)

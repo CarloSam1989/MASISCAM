@@ -22,6 +22,9 @@ def expediente(user,empresa,pk,roles=None,lock=False):
     qs=ExpedienteMantenimiento.objects.select_for_update() if lock else ExpedienteMantenimiento.objects.all()
     exp=qs.filter(pk=pk,empresa=empresa).first()
     if not exp: raise PermissionDenied('Expediente no disponible.')
+    if lock:
+        from .access import validar_equipo_operativo
+        validar_equipo_operativo(exp.registro.equipo,bloquear=True)
     autorizar(user,empresa,roles,exp)
     return exp
 
@@ -33,9 +36,13 @@ def abierto(exp):
 
 def dependencias(exp):
     confirmation=ConfirmacionRecepcion.objects.filter(recepcion__expediente=exp).first()
-    if not confirmation:
+    from .models import SolicitudRepuestos
+    # The workshop handoff records intake separately from technical approval.
+    # Legacy expedientes keep their original documentary prerequisite.
+    if not confirmation and not SolicitudRepuestos.objects.filter(expediente=exp).exists():
         raise ValidationError('Recepción pendiente de confirmación.')
-    verificar_copia_persistente(confirmation.guia.documento)
+    if confirmation:
+        verificar_copia_persistente(confirmation.guia.documento)
     auth,repair=c._reparacion(exp)
     cal=Calibracion.objects.filter(expediente=exp).order_by('-revision').first()
     if not cal:
@@ -87,7 +94,10 @@ def snapshot(exp):
     for e in cal.evidencias.select_related('documento').order_by('pk'):
         add(e.documento,'Calibración',e.leyenda,e.clase=='FOTO')
     annexes=[]
-    reports=[('Guía de ingreso',exp.recepcion.confirmacion.guia.documento),('Informe inicial',auth.propuesta.informe.documento),('Protocolo',cal.plantilla.documento)]
+    confirmation=ConfirmacionRecepcion.objects.filter(recepcion__expediente=exp).first()
+    reports=[('Informe inicial',auth.propuesta.informe.documento),('Protocolo',cal.plantilla.documento)]
+    if confirmation:
+        reports.insert(0,('Guía de ingreso',confirmation.guia.documento))
     for em in EmisionCalibracion.objects.filter(calibracion=cal,estado='GENERADA').select_related('documento').order_by('version'):
         reports.append((f'Calibración v{em.version}',em.documento))
     for em in EmisionOperativa.objects.filter(expediente=exp,estado='GENERADA').select_related('documento').order_by('tipo','version'):
@@ -99,11 +109,10 @@ def snapshot(exp):
     for title,doc in reports:
         t.documento_valido(doc,exp.empresa)
         annexes.append(dict(titulo=title,documento=doc.pk,hash=doc.hash_sha256))
-    confirmation=exp.recepcion.confirmacion
     result = dict(plantilla='final-v1',numero=exp.numero,empresa=exp.empresa_id,recepcion=exp.recepcion.snapshot,
         confirmacion=dict(placa=confirmation.placa,motivo_sin_placa=confirmation.motivo_sin_placa,
             motivo_sin_guia=confirmation.motivo_sin_guia,responsable=confirmation.responsable.username,
-            fecha=confirmation.confirmado_en.isoformat(),politica=confirmation.politica),
+            fecha=confirmation.confirmado_en.isoformat(),politica=confirmation.politica) if confirmation else dict(estado='Recepción provisional sin confirmar'),
         tecnico=tech,autorizacion=dict(id=auth.pk,fecha=auth.creado_en.isoformat(),responsable=auth.autor.username),
         repuestos=[dict(id=r.pk,pieza=r.pieza_id,descripcion=r.descripcion,numero_parte=r.numero_parte,cantidad=str(r.cantidad),
             unidad=r.unidad,fecha=r.fecha.isoformat(),procedencia=r.procedencia,guia=r.guia,discrepancia=r.discrepancia) for r in RecepcionRepuesto.objects.filter(expediente=exp).order_by('pk')],
