@@ -98,25 +98,31 @@ def contexto(request,exp,errores=None):
     form_action=context['accion']['op'] if context['accion'] else None
     planos=(t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO',estado='PUBLICADA',
         aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True)
-        .annotate(partes_count=Count('partes',distinct=True)).distinct() if diag else [])
+        .annotate(partes_count=Count('partes',distinct=True)).distinct().order_by('codigo','-revision') if diag else [])
     if (context['rol']=='TALLER' and ins and not ins.enviado_en and diag and not diag.enviado_en):
-        plano=planos.first()
+        plano=planos.filter(partes_count__gt=0).first()
         if plano:
             context['accion']=dict(texto=f'Abrir plano {plano.codigo} · r{plano.revision}',
                 url=reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diag.pk}&flujo=1',op=None)
             context['mensaje']='Selecciona en el plano los componentes que requieren atención. Zoom, listado y fotografías quedan asociados al diagnóstico; registra el detalle de inspección en “Detalles técnicos”.'
         else:
             context['accion']=None
-            context['mensaje']='No hay un plano publicado y aplicable a este equipo. PLANTA debe publicar el PDF y asignar su aplicabilidad. Puedes agregar piezas manualmente mientras se gestiona.'
+            plano=planos.first()
+            if plano:
+                context['mensaje']=f'El plano {plano.codigo} está publicado y aplicable, pero no tiene componentes registrados. PLANTA debe completar la lista en la biblioteca técnica; puedes agregar piezas manualmente mientras tanto.'
+            else:
+                context['mensaje']='No hay un plano publicado y aplicable a este equipo. PLANTA debe publicar el PDF y asignar su aplicabilidad. Puedes agregar piezas manualmente mientras se gestiona.'
     elif (context['rol']=='PLANTA' and ins and not ins.enviado_en and diag and not diag.enviado_en):
-        plano=planos.first()
+        plano=planos.filter(partes_count__gt=0).first()
         if not plano:
-            context['accion']=dict(texto='Gestionar planos técnicos',url=reverse('masiscam:biblioteca'),op=None)
-            context['mensaje']='No hay un plano publicado y aplicable a este equipo. Publica el documento de referencia y registra su aplicabilidad desde la biblioteca técnica.'
-        elif not plano.partes_count:
-            context['accion']=dict(texto='Completar componentes del plano',
-                url=reverse('masiscam:biblioteca_referencia',args=[plano.pk]),op=None)
-            context['mensaje']=f'El plano {plano.codigo} está publicado, pero todavía no tiene componentes. PLANTA debe registrar la lista de piezas para habilitar la selección por componente.'
+            plano=planos.first()
+            if plano:
+                context['accion']=dict(texto='Completar componentes del plano',
+                    url=reverse('masiscam:biblioteca_referencia',args=[plano.pk]),op=None)
+                context['mensaje']=f'El plano {plano.codigo} está publicado, pero todavía no tiene componentes. PLANTA debe registrar la lista de piezas para habilitar la selección por componente.'
+            else:
+                context['accion']=dict(texto='Gestionar planos técnicos',url=reverse('masiscam:biblioteca'),op=None)
+                context['mensaje']='No hay un plano publicado y aplicable a este equipo. Publica el documento de referencia y registra su aplicabilidad desde la biblioteca técnica.'
         else:
             context['accion']=dict(texto=f'Revisar posiciones de {plano.codigo}',
                 url=reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diag.pk}&flujo=1',op=None)
@@ -130,6 +136,15 @@ def contexto(request,exp,errores=None):
         planos=planos,
         adquisiciones=sol.adquisiciones.select_related('pieza','documento').order_by('pk') if sol else [])
     return context
+
+
+def plano_aplicable_url(request,exp,diagnostico):
+    plano=t.referencias_visibles(request.user,request.empresa_activa).filter(
+        tipo='PLANO',estado='PUBLICADA',aplicabilidades__equipo=exp.registro.equipo,
+        aplicabilidades__activa=True,partes__isnull=False).order_by('codigo','-revision').distinct().first()
+    if not plano:
+        return None
+    return reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diagnostico.pk}&flujo=1'
 
 
 @require_http_methods(['GET','POST'])
@@ -157,11 +172,15 @@ def detalle(request,pk):
     else: form=BaseForm(request.POST);nombre='inicio_inspeccion' if op=='inspeccion' else op
     if form.is_valid():
         data=dict(form.cleaned_data);key=data.pop('clave');common=dict(usuario=request.user,empresa=request.empresa_activa)
+        diagnostico_para_plano=None
         try:
             if op=='inspeccion':
-                t.iniciar_inspeccion(**common,expediente_id=exp.pk,clave=key)
+                _,diagnostico_para_plano=t.iniciar_inspeccion(**common,expediente_id=exp.pk,clave=key)
             elif op=='diagnostico':
-                t.crear_revision(**common,expediente_id=exp.pk,tipo='DIAGNOSTICO',clave=key)
+                if ctx['inspeccion'] and not ctx['inspeccion'].enviado_en:
+                    diagnostico_para_plano=t.preparar_diagnostico(**common,expediente_id=exp.pk,clave=key)
+                else:
+                    diagnostico_para_plano=t.crear_revision(**common,expediente_id=exp.pk,tipo='DIAGNOSTICO',clave=key)
             elif op=='guardar' and diag:
                 t.guardar_revision(**common,tipo='DIAGNOSTICO',revision_id=diag.pk,version=data.pop('version'),clave=key,datos=data)
             elif op=='solicitud' and diag:
@@ -198,6 +217,10 @@ def detalle(request,pk):
         except (ValidationError,IntegrityError,OSError,ValueError) as error: _error(form,error)
         else:
             messages.success(request,'Avance registrado. El siguiente paso está actualizado.')
+            if diagnostico_para_plano:
+                url_plano=plano_aplicable_url(request,exp,diagnostico_para_plano)
+                if url_plano:
+                    return redirect(url_plano)
             return redirect('masiscam:flujo_detalle',pk=exp.pk)
     return render(request,'masiscam/flujo_detalle.html',contexto(request,exp,{nombre:form}),status=400)
 

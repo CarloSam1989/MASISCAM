@@ -211,6 +211,17 @@ def crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo=''):
 
 
 @transaction.atomic
+def preparar_diagnostico(*, usuario, empresa, expediente_id, clave):
+    exp=expediente_autorizado(usuario,empresa,expediente_id,{'TALLER'},True)
+    etapa=_etapa(exp,'INSPECCION')
+    if (not etapa or not etapa.inspeccion_id or etapa.inspeccion.enviado_en
+            or etapa.inspeccion.tecnico_id!=usuario.pk or not vigente(etapa.inspeccion)):
+        raise ValidationError('Debe existir una inspección borrador vigente asignada a TALLER.')
+    return _crear_revision(usuario=usuario,empresa=empresa,expediente_id=exp.pk,
+        tipo='DIAGNOSTICO',clave=clave,permitir_inspeccion_pendiente=True)
+
+
+@transaction.atomic
 def iniciar_inspeccion(*, usuario, empresa, expediente_id, clave):
     key = uuid.UUID(str(clave))
     inspeccion = _crear_revision(usuario=usuario, empresa=empresa, expediente_id=expediente_id,

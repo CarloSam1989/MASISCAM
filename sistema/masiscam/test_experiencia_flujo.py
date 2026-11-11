@@ -125,6 +125,48 @@ class ExperienciaTests(TestCase):
             tecnica.enviar_revision(usuario=self.taller,empresa=self.empresa,tipo='DIAGNOSTICO',
                 revision_id=diagnostico.pk,version=diagnostico.version_edicion,clave=uuid.uuid4())
 
+    def test_taller_prepara_y_selecciona_con_inspeccion_borrador_sin_enviar_solicitud(self):
+        from . import plano_services as planos
+        self.ingreso(fotos=False)
+        inspeccion=tecnica.crear_revision(usuario=self.taller,empresa=self.empresa,
+            expediente_id=self.exp.pk,tipo='INSPECCION',clave=uuid.uuid4())
+        url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
+        self.assertContains(self.client.get(url),'Continuar a selección de piezas')
+        response=self.client.post(url,dict(op='diagnostico',clave=uuid.uuid4()))
+        self.assertRedirects(response,url)
+        diagnostico=self.exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
+        self.assertEqual(diagnostico.inspeccion_id,inspeccion.pk)
+        self.assertFalse(diagnostico.enviado_en)
+        sin_plano=self.client.get(url)
+        self.assertContains(sin_plano,'No hay un plano publicado y aplicable a este equipo')
+        self.assertContains(sin_plano,'Puedes agregar piezas manualmente mientras se gestiona')
+
+        self.planta=self.usuarios['PLANTA']
+        self.client.force_login(self.planta)
+        planta=self.client.get(url)
+        self.assertContains(planta,'Gestionar planos técnicos')
+        self.assertContains(planta,'Publica el documento de referencia y registra su aplicabilidad')
+        self.client.force_login(self.taller)
+        referencia,parte=qa.TecnicaTests.referencia(self)
+        mapa=planos.guardar_mapa(usuario=self.planta,empresa=self.empresa,
+            referencia_id=referencia.pk,clave=uuid.uuid4(),base_version=0,
+            posiciones=[dict(parte=parte.pk,pagina=1,x='.5',y='.4')])
+        plano_datos=self.client.get(reverse('masiscam:plano_datos',args=[referencia.pk]),
+            {'diagnostico':diagnostico.pk})
+        self.assertEqual(plano_datos.status_code,200)
+        self.assertTrue(plano_datos.json()['seleccionable'])
+        seleccion=self.client.post(reverse('masiscam:plano_pieza',args=[diagnostico.pk]),dict(
+            version=diagnostico.version_edicion,parte_id=parte.pk,posicion_plano_id=mapa.posiciones.get().pk,
+            cantidad='1',unidad='unidad',condicion='Desgaste observado QA',accion='EVALUAR',
+            observaciones='Selección durante inspección borrador QA',clave=uuid.uuid4()))
+        self.assertEqual(seleccion.status_code,200,seleccion.content)
+        self.assertEqual(diagnostico.piezas.count(),1)
+        diagnostico.refresh_from_db()
+        with self.assertRaisesMessage(ValidationError,
+                'Complete y envíe los detalles técnicos de inspección antes de enviar el diagnóstico.'):
+            tecnica.enviar_revision(usuario=self.taller,empresa=self.empresa,tipo='DIAGNOSTICO',
+                revision_id=diagnostico.pk,version=diagnostico.version_edicion,clave=uuid.uuid4())
+
     @override_settings(MASISCAM_TECNICA_LOCAL=False, MASISCAM_OPERACION_LOCAL=False)
     def test_recepcion_incompleta_sigue_accesible_sin_modulo_tecnico(self):
         self.ingreso(fotos=False)

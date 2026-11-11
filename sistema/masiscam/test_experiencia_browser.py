@@ -1,5 +1,6 @@
 """Responsive operational screens, with isolated PostgreSQL and no real Drive."""
 import os
+import re
 import uuid
 from pathlib import Path
 from unittest import skipUnless
@@ -178,11 +179,7 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                 with page.expect_response(lambda response: response.url==flujo_url and response.request.method=='POST') as post:
                     button.click()
                 self.assertEqual(post.value.status,302)
-                expect(page).to_have_url(flujo_url)
-                plano_link=page.get_by_role('link',name='Abrir plano REF-QA · r1',exact=True).first
-                expect(plano_link).to_be_visible()
-                expect(page.locator('#detalles-tecnicos')).to_be_visible()
-                plano_link.click()
+                expect(page).to_have_url(re.compile(r'.*/app/biblioteca-tecnica/\d+/plano/\?diagnostico=\d+&flujo=1'))
                 expect(page.locator('#pl-app')).to_have_attribute('data-ready','true',timeout=20000)
                 expect(page.locator('#pl-canvas')).to_be_visible()
                 page.locator('.pl-part').first.click()
@@ -204,6 +201,7 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                 self.assertEqual(page.locator('#pl-count').inner_text(),'1',
                     page.locator('#pl-message').inner_text()+' '+page.locator('#pl-form-error').inner_text())
                 page.get_by_role('link',name='Volver al trabajo').click()
+                expect(page).to_have_url(flujo_url)
                 details=page.locator('#detalles-tecnicos')
                 details.locator('summary').click()
                 details.locator('[name=fecha]').fill(timezone.localdate().isoformat())

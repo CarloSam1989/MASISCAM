@@ -300,8 +300,11 @@ def resumen(exp, usuario):
         mensaje='Registra la inspección inicial. No se solicitan reparaciones ni calibraciones en esta etapa.'
         if role=='TALLER': accion=action('Iniciar inspección',op='inspeccion')
     elif not ins.enviado_en:
-        mensaje='Guarda y envía los hallazgos de inspección antes de preparar las piezas.'
-        if role=='TALLER': accion=action('Completar inspección',url=reverse('masiscam:tecnica_revision',args=['INSPECCION',ins.pk])+'?flujo=1')
+        mensaje='Puedes seleccionar piezas en el plano y completar los detalles técnicos en paralelo. La inspección debe enviarse antes de remitir la solicitud a OFICINA.'
+        if role=='TALLER' and not diag:
+            accion=action('Continuar a selección de piezas',op='diagnostico')
+        elif role=='TALLER' and diag and not sol:
+            accion=action('Continuar a selección de piezas',op='diagnostico')
     elif not diag:
         mensaje='Prepara la selección de piezas sobre un plano aplicable o mediante registro manual.'
         if role=='TALLER': accion=action('Seleccionar piezas',op='diagnostico')
