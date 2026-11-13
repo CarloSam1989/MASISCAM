@@ -44,13 +44,15 @@ def _filas(diag):
 
 
 @transaction.atomic
-def enviar_solicitud(*, usuario, empresa, diagnostico_id, version, clave, datos=None):
+def enviar_solicitud(*, usuario, empresa, diagnostico_id, version, clave, datos=None, preliminar=False):
     diag = Diagnostico.objects.get(pk=diagnostico_id)
     exp = expediente(usuario, empresa, diag.expediente_id, {'TALLER'}, True)
     diag.refresh_from_db()
     try: version=int(version)
     except (ValueError,TypeError): raise ValidationError('Versión de borrador inválida.') from None
     payload = dict(diagnostico=diag.pk, version=version, datos=datos)
+    if preliminar:
+        payload['preliminar'] = True
     old = t._retry(exp, clave, 'SOLICITUD_OFICINA_ENVIADA', payload)
     if old:
         return SolicitudRepuestos.objects.get(pk=old)
@@ -64,7 +66,9 @@ def enviar_solicitud(*, usuario, empresa, diagnostico_id, version, clave, datos=
         return previa
     if not diag.piezas.exists() and diag.repuestos!='SIN_REPUESTOS' and (datos or {}).get('repuestos')!='SIN_REPUESTOS':
         raise ValidationError('Seleccione piezas o declare expresamente que no se requieren repuestos.')
-    if not diag.enviado_en:
+    if preliminar and not diag.enviado_en:
+        t._editable(usuario, empresa, diag, version)
+    if not diag.enviado_en and not preliminar:
         if datos is not None:
             diag=t.guardar_revision(usuario=usuario,empresa=empresa,tipo='DIAGNOSTICO',revision_id=diag.pk,
                 version=version,clave=uuid.uuid5(uuid.UUID(str(clave)),'guardar'),datos=datos)
@@ -72,6 +76,8 @@ def enviar_solicitud(*, usuario, empresa, diagnostico_id, version, clave, datos=
             version=diag.version_edicion, clave=uuid.uuid5(uuid.UUID(str(clave)), 'diagnostico'))
     snap = dict(expediente=exp.numero, cliente=exp.recepcion.snapshot,
         diagnostico=diag.pk, revision=diag.revision, responsable=usuario.username, piezas=_filas(diag))
+    if preliminar:
+        snap['preliminar'] = True
     obj = t._save(SolicitudRepuestos(expediente=exp, autor=usuario, clave=clave, diagnostico=diag,
         version=(exp.solicitudrepuestos_set.aggregate(n=Max('version'))['n'] or 0)+1,
         snapshot=snap, huella=t._digest(snap)))
@@ -299,8 +305,8 @@ def resumen(exp, usuario):
     elif not ins:
         mensaje='Registra la inspección inicial. No se solicitan reparaciones ni calibraciones en esta etapa.'
         if role=='TALLER': accion=action('Iniciar inspección',op='inspeccion')
-    elif not ins.enviado_en:
-        mensaje='Puedes seleccionar piezas en el plano y completar los detalles técnicos en paralelo. La inspección debe enviarse antes de remitir la solicitud a OFICINA.'
+    elif not ins.enviado_en and not sol:
+        mensaje='Puedes seleccionar piezas en el plano y enviarlas a OFICINA. Los detalles técnicos se completan para la aprobación posterior de PLANTA.'
         if role=='TALLER' and not diag:
             accion=action('Continuar a selección de piezas',op='diagnostico')
         elif role=='TALLER' and diag and not sol:

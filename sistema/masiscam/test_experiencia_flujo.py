@@ -142,7 +142,7 @@ class ExperienciaTests(TestCase):
         self.assertEqual(self.exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico_id,diagnostico.pk)
         sin_plano=self.client.get(url)
         self.assertContains(sin_plano,'No hay un plano publicado y aplicable a este equipo')
-        self.assertContains(sin_plano,'Puedes agregar piezas manualmente mientras se gestiona')
+        self.assertContains(sin_plano,'Puedes cargar tu PDF como borrador de trabajo')
 
         self.planta=self.usuarios['PLANTA']
         self.client.force_login(self.planta)
@@ -189,7 +189,7 @@ class ExperienciaTests(TestCase):
             expediente_id=self.exp.pk,tipo='DIAGNOSTICO',clave=uuid.uuid4())
         flujo_url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
         faltantes=self.client.get(flujo_url)
-        self.assertContains(faltantes,'PLANTA debe publicar un plano y asignar su aplicabilidad al equipo')
+        self.assertContains(faltantes,'Puedes cargar tu PDF como borrador de trabajo')
         self.assertContains(faltantes,reverse('masiscam:biblioteca'))
 
         referencia,parte=qa.TecnicaTests.referencia(self)

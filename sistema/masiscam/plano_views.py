@@ -47,13 +47,16 @@ def contexto(request, pk):
         obj = get_object_or_404(Diagnostico, pk=diagnostico_id)
         rol = tecnica.autorizar_tecnica(request.user, request.empresa_activa)
         tecnica.expediente_autorizado(request.user, request.empresa_activa, obj.expediente_id)
-        if rol.rol == 'OFICINA' and obj.estado not in {'APROBADO', 'FINALIZADO'}:
+        preliminar = getattr(obj, 'solicitud_repuestos', None)
+        if (rol.rol == 'OFICINA' and obj.estado not in {'APROBADO', 'FINALIZADO'}
+                and not (preliminar and preliminar.snapshot.get('preliminar'))):
             raise PermissionDenied('Oficina utiliza únicamente el listado aprobado.')
-        if not (ref.aplicabilidades.filter(equipo=obj.expediente.registro.equipo, activa=True).exists()
+        if not (tecnica.plano_de_trabajo(ref, obj.expediente)
+                or ref.aplicabilidades.filter(equipo=obj.expediente.registro.equipo, activa=True).exists()
                 or obj.piezas.filter(parte__referencia=ref).exists()):
             raise PermissionDenied('Plano sin aplicabilidad ni cita en este diagnóstico.')
     editable = bool(obj and request.rol_masiscam.rol in tecnica.OPERADORES and obj.tecnico_id == request.user.pk
-        and not obj.enviado_en and tecnica.vigente(obj))
+        and not obj.enviado_en and tecnica.vigente(obj) and not hasattr(obj, 'solicitud_repuestos'))
     return ref, obj, editable
 
 
@@ -74,8 +77,12 @@ def piezas_json(obj):
 @masiscam_access_required
 def plano(request, pk):
     ref, obj, editable = contexto(request, pk)
+    from .flujo_forms import ComponenteTrabajoForm
     return render(request, 'masiscam/plano.html', dict(referencia=ref, diagnostico=obj,
-        editable_plano=editable, configurar=request.rol_masiscam.rol == 'PLANTA' and ref.estado == 'PUBLICADA'))
+        componente_form=ComponenteTrabajoForm() if editable and tecnica.plano_de_trabajo(ref, obj.expediente) else None,
+        editable_plano=editable, configurar=(request.rol_masiscam.rol == 'PLANTA' and
+            (ref.estado == 'PUBLICADA' or ref.estado == 'BORRADOR' and ref.expediente_trabajo_id)
+            or editable and request.rol_masiscam.rol == 'TALLER' and tecnica.plano_de_trabajo(ref, obj.expediente))))
 
 
 @require_GET
@@ -88,8 +95,10 @@ def plano_datos(request, pk):
     mapa = ref.mapas.order_by('-version').first()
     vigente = mapa and mapa.hash_documento == ref.documento.hash_sha256
     return JsonResponse(dict(documento=info, editable=editable, version=obj.version_edicion if obj else None,
-        seleccionable=bool(editable and ref.estado == 'PUBLICADA' and ref.aplicabilidades.filter(equipo=obj.expediente.registro.equipo, activa=True).exists()),
+        seleccionable=bool(editable and (tecnica.plano_de_trabajo(ref, obj.expediente) or
+            ref.estado == 'PUBLICADA' and ref.aplicabilidades.filter(equipo=obj.expediente.registro.equipo, activa=True).exists())),
         estado=obj.estado if obj else None, mapa_version=mapa.version if mapa else 0,
+        mapa_provisional=mapa.provisional if mapa else ref.estado == 'BORRADOR',
         puntos=[dict(id=p.pk, parte=p.parte_id, numero=p.numero, pagina=p.pagina,
             x=str(p.x), y=str(p.y)) for p in mapa.posiciones.all()] if vigente else [],
         partes=[dict(id=p.pk, posicion=p.posicion, codigo=p.numero_parte, descripcion=p.descripcion,
@@ -100,9 +109,39 @@ def plano_datos(request, pk):
 @require_POST
 @local
 @masiscam_access_required
+def plano_componente(request, pk):
+    from .flujo_forms import ComponenteTrabajoForm
+    ref, obj, editable = contexto(request, pk)
+    if not editable or not obj:
+        raise PermissionDenied('Plano de solo lectura.')
+    form = ComponenteTrabajoForm(request.POST)
+    if form.is_valid():
+        data = dict(form.cleaned_data)
+        key = data.pop('clave')
+        try:
+            svc.registrar_componente_trabajo(usuario=request.user, empresa=request.empresa_activa,
+                referencia_id=ref.pk, diagnostico_id=obj.pk, clave=key, datos=data)
+        except (ValidationError, IntegrityError) as exc:
+            from .tecnica_views import _error
+            _error(form, exc)
+        else:
+            return redirect(reverse('masiscam:plano', args=[pk]) + f'?diagnostico={obj.pk}&flujo=1')
+    return render(request, 'masiscam/plano.html', dict(referencia=ref, diagnostico=obj,
+        editable_plano=editable, componente_form=form, configurar=False), status=400)
+
+
+@require_POST
+@local
+@masiscam_access_required
 @errores_api
 def plano_mapa(request, pk):
-    tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'PLANTA'})
+    rol = tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'PLANTA', 'TALLER'})
+    if rol.rol == 'TALLER':
+        ref = ReferenciaTecnica.objects.filter(pk=pk, empresa=request.empresa_activa,
+            tipo='PLANO', estado='BORRADOR', expediente_trabajo__isnull=False).first()
+        if not ref:
+            raise PermissionDenied('TALLER solo marca el plano provisional de su expediente.')
+        tecnica.expediente_autorizado(request.user, request.empresa_activa, ref.expediente_trabajo_id, {'TALLER'})
     if len(request.body) > 250000:
         raise ValidationError('La configuración excede el tamaño permitido.')
     try:
@@ -114,7 +153,8 @@ def plano_mapa(request, pk):
         raise ValidationError('Solicitud de mapa inválida.') from None
     mapa = svc.guardar_mapa(usuario=request.user, empresa=request.empresa_activa, referencia_id=pk,
         base_version=version, posiciones=posiciones, clave=key)
-    return JsonResponse({'version': mapa.version, 'mensaje': 'Nueva versión del mapa guardada.'})
+    return JsonResponse({'version': mapa.version, 'provisional': mapa.provisional,
+        'mensaje': 'Posiciones provisionales guardadas; pendientes de revisión de PLANTA.' if mapa.provisional else 'Posiciones revisadas y publicadas en una nueva versión.'})
 
 
 class SeleccionForm(BaseForm):

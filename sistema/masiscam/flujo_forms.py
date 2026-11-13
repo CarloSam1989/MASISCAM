@@ -6,6 +6,22 @@ from .flujo_services import disponible
 from .forms import ArchivosRegistroField
 
 
+class PlanoTrabajoForm(BaseForm):
+    archivo = forms.FileField(label='Plano PDF', widget=forms.ClearableFileInput(attrs={'accept': '.pdf,application/pdf'}))
+
+
+class ComponenteTrabajoForm(BaseForm):
+    posicion = forms.CharField(max_length=80, label='Número o posición en el plano')
+    numero_parte = forms.CharField(max_length=120, required=False, label='Código, si figura en el plano')
+    descripcion = forms.CharField(max_length=20000, label='Descripción del componente')
+    unidad = forms.CharField(max_length=80, required=False, label='Unidad, si figura en el plano')
+    pagina = forms.CharField(max_length=40, required=False, label='Página')
+
+
+class EnviarPiezasForm(BaseForm):
+    version = forms.IntegerField(min_value=1, widget=forms.HiddenInput)
+
+
 class CotizacionForm(BaseForm):
     referencia=forms.CharField(max_length=200,label='Número y versión del presupuesto')
     archivo=forms.FileField(required=False,label='Presupuesto PDF (puede adjuntarse antes de la aceptación)')

@@ -43,6 +43,7 @@ urlpatterns = [
     path('biblioteca-tecnica/importar-m20/',plano_views.plano_importar,name='plano_importar'),
     path('biblioteca-tecnica/<int:pk>/plano/',plano_views.plano,name='plano'),
     path('biblioteca-tecnica/<int:pk>/plano/datos/',plano_views.plano_datos,name='plano_datos'),
+    path('biblioteca-tecnica/<int:pk>/plano/componentes/',plano_views.plano_componente,name='plano_componente'),
     path('biblioteca-tecnica/<int:pk>/plano/mapa/',plano_views.plano_mapa,name='plano_mapa'),
     path('tecnica/diagnostico/<int:pk>/piezas-plano/',plano_views.plano_pieza,name='plano_pieza'),
     path('biblioteca-tecnica/nueva/',tecnica_views.biblioteca_referencia_form,name='biblioteca_referencia_crear'),

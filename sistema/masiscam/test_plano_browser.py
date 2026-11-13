@@ -157,7 +157,7 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                 page.get_by_role('button',name='Configurar posiciones',exact=True).click()
                 page.locator('.pl-part').click()
                 page.locator('#pl-canvas').click(position={'x':200,'y':250})
-                page.get_by_role('button',name='Guardar nueva versión del mapa',exact=True).click()
+                page.locator('#pl-save-map').click()
                 expect(page.locator('#pl-map-label')).to_contain_text('v2')
                 if actual:
                     page.goto(self.live_server_url+reverse('masiscam:plano',args=[actual.pk]))

@@ -99,6 +99,8 @@ class DecisionTecnica(models.Model):
 
 
 class ReferenciaTecnica(models.Model):
+    expediente_trabajo = models.ForeignKey('ExpedienteMantenimiento', on_delete=PROTECT,
+        null=True, blank=True, related_name='planos_trabajo')
     empresa = models.ForeignKey('accounts.Empresa', on_delete=PROTECT)
     documento = models.ForeignKey('Documento', on_delete=PROTECT, related_name='referencias_tecnicas')
     codigo = models.CharField(max_length=80)
@@ -169,6 +171,7 @@ class AplicabilidadReferenciaEquipo(models.Model):
 
 
 class MapaPlano(models.Model):
+    provisional = models.BooleanField(default=False)
     referencia = models.ForeignKey(ReferenciaTecnica, on_delete=PROTECT, related_name='mapas')
     version = models.PositiveIntegerField()
     hash_documento = models.CharField(max_length=64)

@@ -27,7 +27,7 @@ PERMISOS_ROL = {
 VISTAS_TALLER = {
     "masiscam.flujo_views": {"detalle", "documento"},
     "masiscam.tecnica_views": {"tecnica_inicio", "tecnica_expediente", "tecnica_nueva_revision", "tecnica_revision", "tecnica_informe", "tecnica_documento", "biblioteca", "biblioteca_referencia", "biblioteca_documento"},
-    "masiscam.plano_views": {"plano", "plano_datos", "plano_pieza"},
+    "masiscam.plano_views": {"plano", "plano_datos", "plano_pieza", "plano_componente", "plano_mapa"},
     "masiscam.operacion_views": {"inicio", "detalle", "operar", "documento"},
     "masiscam.calibracion_views": {"inicio", "expediente", "revision", "documento", "fuente"},
     "masiscam.cierre_views": {"detalle", "documento", "historial"},
@@ -38,6 +38,7 @@ VISTAS_TALLER = {
 }
 
 VISTAS_OFICINA = {
+    'masiscam.plano_views': {'plano', 'plano_datos'},
     'masiscam.oficina_views': {'inicio'},
     'masiscam.flujo_views': {'bandeja','detalle','documento'},
     'masiscam.views': {'dashboard','clientes','cliente_detalle','cliente_crear','cliente_editar',

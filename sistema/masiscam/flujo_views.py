@@ -10,6 +10,7 @@ from django.views.decorators.http import require_GET,require_http_methods
 from .access import masiscam_access_required
 from . import flujo_services as s, tecnica_services as t, operacion_services as o
 from .flujo_forms import CotizacionForm,AdquisicionForm,EnvioForm,ConfirmarEnvioForm,PiezaManualForm
+from .flujo_forms import PlanoTrabajoForm, EnviarPiezasForm
 from .tecnica_forms import BaseForm,RevisionForm,EvidenciaForm
 from .tecnica_views import _error,_archivo
 from .operacion_forms import OperacionForm
@@ -68,7 +69,11 @@ def contexto(request,exp,errores=None):
     forms={}
     if not historica and context['rol']=='TALLER' and diag and not diag.enviado_en and t.vigente(diag):
         forms['diagnostico']=RevisionForm(tipo='DIAGNOSTICO',revision=diag)
-        forms['manual']=PiezaManualForm(initial={'version':diag.version_edicion})
+        if not sol:
+            forms['manual']=PiezaManualForm(initial={'version':diag.version_edicion})
+            forms['enviar_piezas']=EnviarPiezasForm(initial={'version':diag.version_edicion})
+    if not historica and context['rol']=='TALLER' and not sol:
+        forms['plano_trabajo']=PlanoTrabajoForm()
     ins=context['inspeccion']
     if not historica and context['rol']=='TALLER' and ins and not ins.enviado_en and t.vigente(ins):
         forms['inspeccion']=RevisionForm(tipo='INSPECCION',revision=ins)
@@ -96,10 +101,11 @@ def contexto(request,exp,errores=None):
     if errores: forms.update(errores)
     for nombre,form in forms.items(): form.auto_id=f'flujo_{nombre}_%s'
     form_action=context['accion']['op'] if context['accion'] else None
-    planos=(t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO',estado='PUBLICADA',
-        aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True)
+    planos=(t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO').filter(
+        Q(estado='PUBLICADA',aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True) |
+        Q(estado='BORRADOR',expediente_trabajo=exp))
         .annotate(partes_count=Count('partes',distinct=True)).distinct().order_by('codigo','-revision') if diag else [])
-    if (context['rol']=='TALLER' and ins and not ins.enviado_en and diag and not diag.enviado_en):
+    if (context['rol']=='TALLER' and not sol and ins and not ins.enviado_en and diag and not diag.enviado_en):
         plano=planos.filter(partes_count__gt=0).first()
         if plano:
             context['accion']=dict(texto=f'Abrir plano {plano.codigo} · r{plano.revision}',
@@ -132,16 +138,16 @@ def contexto(request,exp,errores=None):
         errores_generales=[str(error) for form in (errores or {}).values() for errors in form.errors.values() for error in errors],
         form_principal=forms.get(form_action),clave=uuid.uuid4(),
         envios=sol.envios.select_related('documento','confirmacion').order_by('-pk') if sol else [],
-        piezas=diag.piezas.prefetch_related('fotografias__documento').order_by('pk') if diag and (context['rol']=='TALLER' or diag.enviado_en) else [],
+        piezas=diag.piezas.prefetch_related('fotografias__documento').order_by('pk') if diag and (context['rol']=='TALLER' or diag.enviado_en or sol) else [],
         planos=planos,
         adquisiciones=sol.adquisiciones.select_related('pieza','documento').order_by('pk') if sol else [])
     return context
 
 
 def plano_aplicable_url(request,exp,diagnostico):
-    plano=t.referencias_visibles(request.user,request.empresa_activa).filter(
-        tipo='PLANO',estado='PUBLICADA',aplicabilidades__equipo=exp.registro.equipo,
-        aplicabilidades__activa=True,partes__isnull=False).order_by('codigo','-revision').distinct().first()
+    plano=t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO').filter(
+        Q(estado='PUBLICADA',aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True,partes__isnull=False) |
+        Q(estado='BORRADOR',expediente_trabajo=exp)).order_by('codigo','-revision').distinct().first()
     if not plano:
         return None
     return reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diagnostico.pk}&flujo=1'
@@ -155,7 +161,11 @@ def detalle(request,pk):
     op=request.POST.get('op','');ctx=s.resumen(exp,request.user);diag=ctx['diagnostico'];sol=ctx['solicitud']
     if request.GET.get('solicitud') and (not sol or request.GET['solicitud']!=str(sol.pk)):
         raise PermissionDenied('La solicitud histórica es de solo lectura.')
-    if op in {'guardar','solicitud'} and diag and (not diag.enviado_en or 'fallas' in request.POST):
+    if op=='plano_trabajo':
+        form=PlanoTrabajoForm(request.POST,request.FILES);nombre=op
+    elif op=='enviar_piezas' and diag:
+        form=EnviarPiezasForm(request.POST);nombre=op
+    elif op in {'guardar','solicitud'} and diag and (not diag.enviado_en or 'fallas' in request.POST):
         form=RevisionForm(request.POST,tipo='DIAGNOSTICO',revision=diag);nombre='diagnostico'
     elif op=='manual' and diag:
         form=PiezaManualForm(request.POST,request.FILES);nombre='manual'
@@ -174,7 +184,14 @@ def detalle(request,pk):
         data=dict(form.cleaned_data);key=data.pop('clave');common=dict(usuario=request.user,empresa=request.empresa_activa)
         diagnostico_para_plano=None
         try:
-            if op=='inspeccion':
+            if op=='plano_trabajo':
+                from .plano_services import cargar_plano_trabajo
+                ref=cargar_plano_trabajo(**common,expediente_id=exp.pk,clave=key,**data)
+                diag=exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
+                return redirect(reverse('masiscam:plano',args=[ref.pk])+f'?diagnostico={diag.pk}&flujo=1')
+            elif op=='enviar_piezas' and diag:
+                s.enviar_solicitud(**common,diagnostico_id=diag.pk,clave=key,preliminar=True,**data)
+            elif op=='inspeccion':
                 _,diagnostico_para_plano=t.iniciar_inspeccion(**common,expediente_id=exp.pk,clave=key)
             elif op=='diagnostico':
                 if ctx['inspeccion'] and not ctx['inspeccion'].enviado_en:

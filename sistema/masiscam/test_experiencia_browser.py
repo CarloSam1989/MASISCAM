@@ -224,6 +224,7 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                     page.get_by_role('button',name='Sí, continuar',exact=True).click()
                 self.assertEqual(sent_inspection.value.status,200)
                 expect(page).to_have_url(flujo_url)
+                page.locator('#diagnostico-tecnico > summary').click()
                 diagnosis=page.locator('#mf-diagnostico')
                 diagnosis.locator('[name=fecha]').fill(timezone.localdate().isoformat())
                 diagnosis.locator('[name=fallas]').fill('Desgaste por verificar')

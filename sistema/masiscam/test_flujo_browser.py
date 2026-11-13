@@ -85,6 +85,7 @@ class FlujoBrowserTests(StaticLiveServerTestCase):
                 taller.locator('.pl-point').first.click()
                 expect(taller.locator('#pl-detail')).to_contain_text('QA-PARTE')
                 taller.get_by_role('link',name='← Volver al trabajo',exact=True).click()
+                taller.locator('#diagnostico-tecnico > summary').click()
                 submit(taller.locator('#mf-diagnostico'))
                 expect(taller.locator('.mf-frozen').first).to_contain_text('Solicitud v1')
                 capturas(taller,'02-solicitud-enviada',primary=0)

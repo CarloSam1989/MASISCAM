@@ -384,6 +384,8 @@ def quitar_hijo(*,usuario,empresa,tipo,revision_id,version,clave,hijo_id,pieza=F
         return old
     _editable(usuario,empresa,obj,version)
     manager=obj.piezas if pieza and isinstance(obj,Diagnostico) else obj.evidencias
+    if isinstance(obj, Diagnostico) and (pieza or manager.filter(pk=hijo_id, pieza__isnull=False).exists()):
+        seleccion_editable(obj)
     if pieza and isinstance(obj,Diagnostico):
         manager.get(pk=hijo_id).fotografias.update(pieza=None)
     manager.get(pk=hijo_id).delete()  # Only draft relation, never deletes Documento.
@@ -497,11 +499,29 @@ def referencias_visibles(usuario,empresa):
         qs = qs.filter(Q(estado='PUBLICADA', aplicabilidades__activa=True, aplicabilidades__equipo_id__in=scope.values('registro__equipo_id')) |
             Q(partes__piezarequerida__diagnostico__expediente__in=scope) |
             Q(citas_tecnicas__diagnostico__expediente__in=scope) | Q(citas_tecnicas__inspeccion__expediente__in=scope))
+    if rol.rol in {'TALLER', 'PLANTA'}:
+        provisionales = ReferenciaTecnica.objects.filter(empresa=empresa, estado='BORRADOR',
+            expediente_trabajo__in=expedientes_operativos(usuario, empresa))
+        qs = qs | provisionales
+    elif rol.rol == 'OFICINA':
+        qs = qs | ReferenciaTecnica.objects.filter(empresa=empresa, estado='BORRADOR',
+            expediente_trabajo__solicitudrepuestos__snapshot__preliminar=True)
     return qs.distinct()
 
 
 def _parte_aplicable(parte,exp):
     return parte.referencia.empresa_id==exp.empresa_id and parte.referencia.estado=='PUBLICADA' and parte.referencia.tipo=='PLANO' and AplicabilidadReferenciaEquipo.objects.filter(referencia=parte.referencia,equipo=exp.registro.equipo,activa=True).exists()
+
+
+def plano_de_trabajo(ref, exp):
+    return (ref.empresa_id == exp.empresa_id and ref.tipo == 'PLANO'
+        and ref.estado == 'BORRADOR' and ref.expediente_trabajo_id == exp.pk)
+
+
+def seleccion_editable(obj):
+    from .models import SolicitudRepuestos
+    if SolicitudRepuestos.objects.filter(diagnostico=obj).exists():
+        raise ValidationError('Las piezas enviadas a OFICINA están congeladas. PLANTA debe abrir una nueva revisión.')
 
 
 def _validar_pieza(p):
@@ -533,6 +553,7 @@ def agregar_pieza(*,usuario,empresa,diagnostico_id,version,clave,datos,pieza_id=
     if old:
         return PiezaRequerida.objects.get(pk=old)
     _editable(usuario,empresa,obj,version)
+    seleccion_editable(obj)
     allowed={'origen','parte_id','descripcion','numero_parte','cantidad','unidad','motivo_unidad_pendiente','condicion','accion','motivo_manual','posicion_plano_id','observaciones'}
     if set(datos)-allowed:
         raise ValidationError('Campos de repuesto no permitidos.')
@@ -552,17 +573,20 @@ def agregar_pieza(*,usuario,empresa,diagnostico_id,version,clave,datos,pieza_id=
         if not punto or punto.mapa.referencia_id!=p.parte.referencia_id or punto.mapa.hash_documento!=p.parte.referencia.documento.hash_sha256:
             raise ValidationError('La posición no corresponde a la parte y versión documental seleccionadas.')
     if p.origen=='BIBLIOTECA':
-        if not p.parte_id or not _parte_aplicable(p.parte,exp):
+        if not p.parte_id or not (_parte_aplicable(p.parte,exp) or plano_de_trabajo(p.parte.referencia, exp)):
             raise PermissionDenied('Parte no publicada, no aplicable o de otra empresa.')
         p.descripcion,p.numero_parte=p.parte.descripcion,p.parte.numero_parte
         p.unidad=p.parte.unidad or p.unidad
         p.snapshot=dict(referencia=p.parte.referencia.codigo,revision=p.parte.referencia.revision,
             posicion=p.parte.posicion,documento=p.parte.referencia.documento_id,
             hash=p.parte.referencia.documento.hash_sha256,version_fabricante=p.parte.referencia.version_fabricante)
+        if plano_de_trabajo(p.parte.referencia, exp):
+            p.snapshot['provisional'] = True
         documento_valido(p.parte.referencia.documento,empresa)
         if p.posicion_plano_id:
             p.snapshot['plano']=dict(posicion_id=punto.pk,mapa_id=punto.mapa_id,version=punto.mapa.version,
-                pagina=punto.pagina,x=str(punto.x),y=str(punto.y),numero=punto.numero)
+                pagina=punto.pagina,x=str(punto.x),y=str(punto.y),numero=punto.numero,
+                provisional=punto.mapa.provisional)
     else:
         p.snapshot=dict(origen='MANUAL',contexto=p.motivo_manual,
             identificacion_pendiente=not bool(p.numero_parte),unidad_pendiente=not bool(p.unidad))

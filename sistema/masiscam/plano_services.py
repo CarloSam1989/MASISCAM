@@ -13,6 +13,81 @@ from .models import Diagnostico, MapaPlano, PosicionPlano, ReferenciaTecnica
 from .recepcion_services import _hash, validar_fotografias
 
 
+@transaction.atomic
+def cargar_plano_trabajo(*, usuario, empresa, expediente_id, clave, archivo):
+    exp = tecnica.expediente_autorizado(usuario, empresa, expediente_id, {'TALLER'}, True)
+    digest = _hash(archivo)
+    payload = dict(hash=digest)
+    old = tecnica._retry(exp, clave, 'PLANO_TRABAJO_CARGADO', payload)
+    if old:
+        return ReferenciaTecnica.objects.get(pk=old)
+    etapa = tecnica._etapa(exp, 'DIAGNOSTICO')
+    if etapa and etapa.diagnostico_id:
+        diag = etapa.diagnostico
+    else:
+        ins = tecnica._etapa(exp, 'INSPECCION')
+        if not ins:
+            _, diag = tecnica.iniciar_inspeccion(usuario=usuario, empresa=empresa,
+                expediente_id=exp.pk, clave=uuid.uuid5(uuid.UUID(str(clave)), 'inspeccion'))
+        elif ins.inspeccion.enviado_en:
+            diag = tecnica.crear_revision(usuario=usuario, empresa=empresa, expediente_id=exp.pk,
+                tipo='DIAGNOSTICO', clave=uuid.uuid5(uuid.UUID(str(clave)), 'diagnostico'))
+        else:
+            diag = tecnica.preparar_diagnostico(usuario=usuario, empresa=empresa, expediente_id=exp.pk,
+                clave=uuid.uuid5(uuid.UUID(str(clave)), 'diagnostico'))
+    tecnica._editable(usuario, empresa, diag, diag.version_edicion)
+    tecnica.seleccion_editable(diag)
+    from pypdf import PdfReader
+    try:
+        archivo.seek(0)
+        reader = PdfReader(archivo)
+        if reader.is_encrypted or not 1 <= len(reader.pages) <= 200:
+            raise ValueError()
+    except Exception as exc:
+        raise ValidationError('Seleccione un PDF legible, sin contraseña y de hasta 200 páginas.') from exc
+    finally:
+        archivo.seek(0)
+    ref = exp.planos_trabajo.filter(documento__hash_sha256=digest).first()
+    if not ref:
+        doc = tecnica.guardar_archivo(usuario=usuario, empresa=empresa,
+            proyecto=exp.registro.equipo.proyecto, equipo=exp.registro.equipo,
+            archivo=archivo, categoria='PLANOS')
+        if doc.tipo_mime != 'application/pdf' or doc.categoria != 'PLANOS':
+            raise ValidationError('El documento debe ser un plano PDF.')
+        ref = tecnica._save(ReferenciaTecnica(empresa=empresa, documento=doc,
+            expediente_trabajo=exp, codigo=f'TRABAJO-{exp.pk}-{digest[:16]}', revision=1,
+            tipo='PLANO', titulo=archivo.name[:200], autor=usuario,
+            procedencia=f'Cargado por TALLER desde {exp.numero}',
+            autorizacion_uso='Borrador de trabajo privado; pendiente de revisión y aplicabilidad por PLANTA.'))
+    tecnica.documento_valido(ref.documento, empresa)
+    tecnica._event(exp, usuario, clave, 'PLANO_TRABAJO_CARGADO', payload, ref.pk)
+    return ref
+
+
+@transaction.atomic
+def registrar_componente_trabajo(*, usuario, empresa, referencia_id, diagnostico_id, clave, datos):
+    from .models import ParteReferenciaTecnica
+    diag = Diagnostico.objects.get(pk=diagnostico_id)
+    exp = tecnica.expediente_autorizado(usuario, empresa, diag.expediente_id, {'TALLER'}, True)
+    diag.refresh_from_db()
+    ref = ReferenciaTecnica.objects.get(pk=referencia_id)
+    payload = dict(referencia=ref.pk, diagnostico=diag.pk, datos=datos)
+    old = tecnica._retry(exp, clave, 'COMPONENTE_TRABAJO_REGISTRADO', payload)
+    if old:
+        return ParteReferenciaTecnica.objects.get(pk=old)
+    tecnica._editable(usuario, empresa, diag, diag.version_edicion)
+    tecnica.seleccion_editable(diag)
+    if not tecnica.plano_de_trabajo(ref, exp):
+        raise PermissionDenied('Solo se registran componentes del plano borrador de este expediente.')
+    if set(datos) - {'posicion', 'numero_parte', 'descripcion', 'unidad', 'pagina'}:
+        raise ValidationError('Campos de componente no permitidos.')
+    if not datos.get('posicion', '').strip() or not datos.get('descripcion', '').strip():
+        raise ValidationError('Indique el número y la descripción leídos en el plano.')
+    parte = tecnica._save(ParteReferenciaTecnica(referencia=ref, **datos))
+    tecnica._event(exp, usuario, clave, 'COMPONENTE_TRABAJO_REGISTRADO', payload, parte.pk)
+    return parte
+
+
 def documento_info(ref, empresa):
     tecnica.documento_valido(ref.documento, empresa)
     try:
@@ -34,13 +109,28 @@ def documento_info(ref, empresa):
 
 @transaction.atomic
 def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, clave):
-    tecnica._liblock(usuario, empresa)  # PLANTA only, no ADMIN/superuser equivalence.
+    rol = tecnica.autorizar_tecnica(usuario, empresa, {'PLANTA', 'TALLER'})
     ref = ReferenciaTecnica.objects.get(pk=referencia_id, empresa=empresa)
+    if rol.rol == 'TALLER':
+        if not ref.expediente_trabajo_id or ref.estado != 'BORRADOR':
+            raise PermissionDenied('TALLER solo marca posiciones en el plano provisional de su expediente.')
+        exp = tecnica.expediente_autorizado(usuario, empresa, ref.expediente_trabajo_id, {'TALLER'}, True)
+        etapa = tecnica._etapa(exp, 'DIAGNOSTICO')
+        if not etapa or not etapa.diagnostico_id:
+            raise PermissionDenied('Se requiere un diagnóstico borrador vigente.')
+        tecnica._editable(usuario, empresa, etapa.diagnostico, etapa.diagnostico.version_edicion)
+        tecnica.seleccion_editable(etapa.diagnostico)
+    else:
+        tecnica._liblock(usuario, empresa)
+    ref = ReferenciaTecnica.objects.select_for_update().get(pk=ref.pk, empresa=empresa)
     payload = dict(referencia=ref.pk, base=base_version, posiciones=posiciones)
     old = tecnica._libretry(empresa, clave, 'PLANO_MAPA_CREADO', payload)
     if old:
         return MapaPlano.objects.get(pk=old)
-    if ref.tipo != 'PLANO' or ref.estado != 'PUBLICADA':
+    provisional = ref.estado == 'BORRADOR' and bool(ref.expediente_trabajo_id)
+    if rol.rol == 'TALLER' and not provisional:
+        raise PermissionDenied('El plano dejó de ser provisional; recargue antes de marcar.')
+    if ref.tipo != 'PLANO' or not (ref.estado == 'PUBLICADA' or provisional):
         raise PermissionDenied('Publique primero la revisión documental verificada para configurar su mapa.')
     info = documento_info(ref, empresa)
     actual = ref.mapas.aggregate(n=Max('version'))['n'] or 0
@@ -66,7 +156,7 @@ def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, c
         except (ValueError, KeyError, TypeError, InvalidOperation):
             raise ValidationError('Parte, página o coordenadas inválidas; use valores normalizados entre 0 y 1.') from None
     mapa = tecnica._save(MapaPlano(referencia=ref, version=actual + 1,
-        hash_documento=ref.documento.hash_sha256, autor=usuario, clave=clave))
+        hash_documento=ref.documento.hash_sha256, autor=usuario, clave=clave, provisional=provisional))
     for punto in puntos:
         punto.mapa = mapa
         tecnica._save(punto)
@@ -86,6 +176,7 @@ def guardar_seleccion(*, usuario, empresa, diagnostico_id, version, clave, datos
     if old:
         return old
     tecnica._editable(usuario, empresa, obj, version)
+    tecnica.seleccion_editable(obj)
     key = uuid.UUID(str(clave))
     if operacion == 'retirar_foto':
         foto = obj.evidencias.filter(pk=evidencia_id, pieza_id=pieza_id, pieza__isnull=False).first()
