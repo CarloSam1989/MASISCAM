@@ -2,7 +2,7 @@ from functools import wraps
 
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
-from django.db.models import F, Q
+from django.db.models import Q
 from django.shortcuts import render
 
 from accounts.models import Perfil
@@ -16,12 +16,7 @@ class EquipoNoAsignado(PermissionDenied):
 PERMISOS_ROL = {
     RolMasiscam.Rol.TALLER: {"ver", "equipos_crear"},
     RolMasiscam.Rol.OFICINA: {"ver", "clientes_crear", "clientes_editar"},
-    RolMasiscam.Rol.PLANTA: {"ver"},
-    RolMasiscam.Rol.GERENCIA: {"ver"},
     RolMasiscam.Rol.ADMINISTRADOR: {"ver", "crear", "editar", "archivar", "equipos", "documentos", "reemplazar", "qr", "visibilidad", "historial", "usuarios", "clientes_crear", "clientes_editar"},
-    RolMasiscam.Rol.TECNICO: {"ver", "crear", "editar", "equipos", "documentos", "reemplazar", "qr", "historial"},
-    RolMasiscam.Rol.CONSULTA: {"ver"},
-    RolMasiscam.Rol.CLIENTE: {"ver"},
 }
 
 VISTAS_TALLER = {
@@ -66,13 +61,13 @@ def equipos_taller(*, usuario, empresa):
     return qs if rol and rol.rol == "TALLER" and not acceso_cliente_usuario(usuario) else qs.none()
 
 
-AUDITORES_INACTIVOS = {'ADMIN', 'PLANTA', 'GERENCIA', 'CONSULTA'}
+AUDITORES_INACTIVOS = {'ADMIN'}
 
 
 def puede_auditar_inactivos(request):
     rol=getattr(getattr(request,'rol_masiscam',None),'rol',None)
     return bool(request.user.is_authenticated and request.user.is_active and
-        (rol in AUDITORES_INACTIVOS or (rol is None and request.user.is_superuser)))
+        rol in AUDITORES_INACTIVOS)
 
 
 def validar_equipo_operativo(equipo, bloquear=False):
@@ -90,22 +85,12 @@ def validar_consulta_equipo(equipo, rol):
 
 def clientes_autorizados(*, usuario, empresa):
     """Customer boundary shared by HTML, AJAX and customer selectors."""
-    from .models import Cliente, ExpedienteMantenimiento
+    from .models import Cliente
     qs = Cliente.objects.filter(empresa=empresa)
     if not usuario.is_authenticated or not usuario.is_active or not empresa or not empresa.activa:
         return qs.none()
     rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa)
-    if rol and rol.rol == RolMasiscam.Rol.TECNICO:
-        expedientes = ExpedienteMantenimiento.objects.filter(
-            empresa=empresa, asignaciones_tecnicas__tecnico=usuario,
-            asignaciones_tecnicas__fin__isnull=True,
-            registro__equipo__proyecto__empresa=empresa,
-            registro__equipo__cliente_id=F('cliente_contractual_id'),
-        )
-        return qs.filter(pk__in=expedientes.values('cliente_contractual_id'))
-    if rol and rol.rol == RolMasiscam.Rol.CLIENTE:
-        return qs.filter(pk=rol.cliente_id)
-    return qs if rol or usuario.is_superuser else qs.none()
+    return qs if rol else qs.none()
 
 # Client roles are scoped globally to prevent changing the active company or
 # using another membership to escape the customer boundary.
@@ -143,7 +128,7 @@ def rol_masiscam_usuario(*, usuario, empresa):
     perfil = perfil_masiscam_usuario(usuario=usuario, empresa=empresa)
     if perfil is None or not perfil.empresa.activa:
         return None
-    return RolMasiscam.objects.filter(perfil=perfil, activo=True).first()
+    return RolMasiscam.objects.filter(perfil=perfil, activo=True, rol__in=PERMISOS_ROL).first()
 
 
 def tiene_permiso(request, permiso):
@@ -157,8 +142,6 @@ def tiene_permiso(request, permiso):
     asignacion = getattr(request, "rol_masiscam", None)
     if asignacion and asignacion.rol in {"TALLER","OFICINA"}:
         return permiso in PERMISOS_ROL[asignacion.rol]
-    if request.user.is_superuser:
-        return True
     asignacion = getattr(request, "rol_masiscam", None)
     return bool(asignacion and permiso in PERMISOS_ROL.get(asignacion.rol, set()))
 
@@ -186,8 +169,8 @@ def masiscam_access_required(view_func):
             raise PermissionDenied("El perfil no tiene acceso a MASISCAM.")
         request.perfil_masiscam = perfil
         request.rol_masiscam = rol_masiscam_usuario(usuario=request.user, empresa=empresa)
-        if not request.user.is_superuser and request.rol_masiscam is None:
-            raise PermissionDenied("El perfil no tiene un rol MASISCAM activo.")
+        if request.rol_masiscam is None:
+            raise PermissionDenied("Se requiere una asignación autorizada de ADMINISTRADOR, TALLER u OFICINA. Los roles anteriores se conservan sin acceso operativo.")
         if request.rol_masiscam and request.rol_masiscam.rol=='OFICINA':
             if view_func.__name__ not in VISTAS_OFICINA.get(view_func.__module__,set()):
                 raise PermissionDenied('Esta ventana no corresponde al trabajo autorizado de OFICINA.')

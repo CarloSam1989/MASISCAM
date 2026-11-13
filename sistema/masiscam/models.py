@@ -15,17 +15,18 @@ def generar_token_publico():
 
 class RolMasiscam(models.Model):
     class Rol(models.TextChoices):
-        ADMINISTRADOR = "ADMIN", "Administrador MASISCAM"
+        ADMINISTRADOR = "ADMIN", "ADMINISTRADOR"
         TECNICO = "TECNICO", "Técnico"
         CONSULTA = "CONSULTA", "Consulta"
         CLIENTE = "CLIENTE", "Cliente (solo sus productos)"
-        OFICINA = "OFICINA", "Secretaría / Oficina"
+        OFICINA = "OFICINA", "OFICINA"
         PLANTA = "PLANTA", "Administrador de planta"
         GERENCIA = "GERENCIA", "Gerencia / Administración"
-        TALLER = "TALLER", "Taller / Registro de ingreso"
+        TALLER = "TALLER", "TALLER"
 
     perfil = models.OneToOneField(Perfil, on_delete=models.CASCADE, related_name="rol_masiscam")
-    rol = models.CharField(max_length=12, choices=Rol.choices, default=Rol.CONSULTA)
+    ROLES_OPERATIVOS = ('ADMIN', 'TALLER', 'OFICINA')
+    rol = models.CharField(max_length=12, choices=Rol.choices, default='')
     activo = models.BooleanField(default=True)
     cliente = models.ForeignKey("Cliente", on_delete=models.PROTECT, null=True, blank=True, related_name="acceso_usuario")
 
@@ -50,6 +51,9 @@ class RolMasiscam(models.Model):
 
     def clean(self):
         super().clean()
+        anterior = type(self).objects.filter(pk=self.pk).values_list('rol', flat=True).first() if self.pk else None
+        if self.rol not in self.ROLES_OPERATIVOS and self.rol != anterior:
+            raise ValidationError({'rol': 'Seleccione ADMINISTRADOR, TALLER u OFICINA. Los roles anteriores son históricos.'})
         if self.cliente_id and self.perfil_id and self.cliente.empresa_id != self.perfil.empresa_id:
             raise ValidationError({"cliente": "El cliente debe pertenecer a la empresa del perfil."})
 

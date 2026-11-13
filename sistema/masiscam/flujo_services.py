@@ -11,7 +11,7 @@ from .models import (SolicitudRepuestos, AdquisicionRepuesto, EnvioRepuestos, De
     ConfirmacionEnvio, RecepcionLineaEnvio, Diagnostico, PiezaRequerida, Documento)
 from .recepcion_services import _hash, verificar_copia_persistente, evento
 
-LECTORES = {'TALLER','OFICINA','PLANTA','GERENCIA'}
+LECTORES = {'TALLER', 'OFICINA', 'ADMIN'}
 
 
 def expediente(usuario, empresa, pk, roles=None, lock=False):
@@ -61,7 +61,7 @@ def enviar_solicitud(*, usuario, empresa, diagnostico_id, version, clave, datos=
     previa = SolicitudRepuestos.objects.filter(diagnostico=diag).first()
     if previa:
         if datos is not None and (set(datos)-set(t.DIA_FIELDS) or any(str(value or '')!=str(getattr(diag,field,None) or '') for field,value in datos.items())):
-            raise ValidationError('La solicitud está congelada. PLANTA debe autorizar una revisión para modificarla.')
+            raise ValidationError('La solicitud está congelada. ADMINISTRADOR debe autorizar una revisión para modificarla.')
         t._event(exp,usuario,clave,'SOLICITUD_OFICINA_ENVIADA',payload,previa.pk)
         return previa
     if not diag.piezas.exists() and diag.repuestos!='SIN_REPUESTOS' and (datos or {}).get('repuestos')!='SIN_REPUESTOS':
@@ -102,14 +102,14 @@ def autorizacion(obj):
 
 @transaction.atomic
 def cotizar(*, usuario, empresa, solicitud_id, clave, referencia, observaciones='', archivo=None):
-    obj, exp = solicitud(usuario,empresa,solicitud_id,{'OFICINA','GERENCIA'},True)
+    obj, exp = solicitud(usuario,empresa,solicitud_id,{'OFICINA'},True)
     vigente(obj)
     # Reuse an existing proposal for this diagnosis; no retyping or parallel budget.
     anterior = o.PropuestaComercial.objects.filter(expediente=exp).order_by('-version').first()
     if anterior and anterior.diagnostico_id == obj.diagnostico_id:
         return anterior
     if not t._aprobado(obj.diagnostico):
-        raise ValidationError('PLANTA debe aprobar el diagnóstico antes de cotizar.')
+        raise ValidationError('ADMINISTRADOR debe aprobar el diagnóstico antes de cotizar.')
     informe = t.reservar_informe(usuario=usuario,empresa=empresa,diagnostico_id=obj.diagnostico_id,
         clave=uuid.uuid5(uuid.UUID(str(clave)), 'informe'))
     t.generar_informe(informe.pk)
@@ -257,7 +257,7 @@ def generar_final_automatico(calibracion_id, propagar=False):
     if not SolicitudRepuestos.objects.filter(diagnostico_id=cal.diagnostico_id).exists(): return
     try:
         with transaction.atomic():
-            exp=cierre.expediente(cal.tecnico,cal.expediente.empresa,cal.expediente_id,{'TALLER','TECNICO'},True)
+            exp=cierre.expediente(cal.tecnico,cal.expediente.empresa,cal.expediente_id,{'TALLER'},True)
             key=uuid.uuid5(uuid.NAMESPACE_URL,f'masiscam:final:calibracion:{cal.pk}')
             em=exp.informes_finales.filter(clave=key).first()
             if not em:
@@ -306,7 +306,7 @@ def resumen(exp, usuario):
         mensaje='Registra la inspección inicial. No se solicitan reparaciones ni calibraciones en esta etapa.'
         if role=='TALLER': accion=action('Iniciar inspección',op='inspeccion')
     elif not ins.enviado_en and not sol:
-        mensaje='Puedes seleccionar piezas en el plano y enviarlas a OFICINA. Los detalles técnicos se completan para la aprobación posterior de PLANTA.'
+        mensaje='Puedes seleccionar piezas en el plano y enviarlas a OFICINA. Los detalles técnicos se completan para la aprobación posterior de ADMINISTRADOR.'
         if role=='TALLER' and not diag:
             accion=action('Continuar a selección de piezas',op='diagnostico')
         elif role=='TALLER' and diag and not sol:
@@ -320,7 +320,7 @@ def resumen(exp, usuario):
     elif not sol:
         mensaje='El diagnóstico está enviado. Puedes entregar a OFICINA su listado congelado sin duplicar piezas.'
         if role=='TALLER' and diag.piezas.exists(): accion=action('Enviar solicitud de repuestos a oficina',op='solicitud')
-        elif role=='PLANTA': accion=action('Revisar diagnóstico',url=reverse('masiscam:tecnica_revision',args=['DIAGNOSTICO',diag.pk])+'?flujo=1')
+        elif role=='ADMIN': accion=action('Revisar diagnóstico',url=reverse('masiscam:tecnica_revision',args=['DIAGNOSTICO',diag.pk])+'?flujo=1')
         else: mensaje='Diagnóstico sin solicitud de repuestos. Conserva su flujo técnico existente.'
     elif not settings.MASISCAM_OPERACION_LOCAL:
         paso=3; pasos[1]['estado']='Listo'; bloqueo=True
@@ -333,9 +333,9 @@ def resumen(exp, usuario):
             mensaje='Repuestos enviados. Confirma las cantidades físicas; la reparación seguirá exigiendo autorización comercial vigente.'
             accion=action('Confirmar repuestos recibidos',op='recibir')
         elif not mensaje and not t._aprobado(diag):
-            mensaje='Solicitud recibida en OFICINA. PLANTA debe aprobar el diagnóstico antes de cotizar.'
-            bloqueo=role!='PLANTA'
-            if role=='PLANTA': accion=action('Revisar diagnóstico',url=reverse('masiscam:tecnica_revision',args=['DIAGNOSTICO',diag.pk])+'?flujo=1')
+            mensaje='Solicitud recibida en OFICINA. ADMINISTRADOR debe aprobar el diagnóstico antes de cotizar.'
+            bloqueo=role!='ADMIN'
+            if role=='ADMIN': accion=action('Revisar diagnóstico',url=reverse('masiscam:tecnica_revision',args=['DIAGNOSTICO',diag.pk])+'?flujo=1')
         elif not mensaje and (not prop or prop.diagnostico_id!=diag.pk):
             mensaje='OFICINA prepara la cotización a partir de las piezas solicitadas, sin reescribirlas.'
             if role=='OFICINA': accion=action('Preparar cotización',op='cotizar')
@@ -364,9 +364,9 @@ def resumen(exp, usuario):
                         mensaje='Registra la reparación, el montaje, las fotografías y los repuestos utilizados.'
                         if role=='TALLER':
                             op='resultado' if sin_resultado else 'actividad'
-                            if pendientes_revision.exists() and not sin_resultado: mensaje='PLANTA debe revisar las actividades terminadas.'
+                            if pendientes_revision.exists() and not sin_resultado: mensaje='ADMINISTRADOR debe revisar las actividades terminadas.'
                             else: accion=action('Registrar resultado de reparación' if sin_resultado else 'Iniciar reparación',url=reverse('masiscam:operacion_operar',args=[exp.pk,op])+'?flujo=1')
-                        elif role=='PLANTA': accion=action('Revisar reparación',url=reverse('masiscam:operacion_operar',args=[exp.pk,'revision'])+'?flujo=1')
+                        elif role=='ADMIN': accion=action('Revisar reparación',url=reverse('masiscam:operacion_operar',args=[exp.pk,'revision'])+'?flujo=1')
                     elif not settings.MASISCAM_CALIBRACION_LOCAL:
                         mensaje='El responsable del sistema debe habilitar la calibración. Se mantiene la exigencia de un protocolo aprobado y revisión independiente.'
                         bloqueo=True
@@ -378,20 +378,20 @@ def resumen(exp, usuario):
                             bloqueo=True
                         elif role=='TALLER': accion=action('Preparar calibración',url=reverse('masiscam:calibracion_expediente',args=[exp.pk])+'?flujo=1')
                     elif cal.estado!='APROBADA':
-                        mensaje='Completa las mediciones y envía la calibración a la revisión independiente de PLANTA.'
-                        if role in {'TALLER','PLANTA'}: accion=action('Revisar calibración' if role=='PLANTA' else 'Continuar calibración',url=reverse('masiscam:calibracion_revision',args=[cal.pk])+'?flujo=1')
+                        mensaje='Completa las mediciones y envía la calibración a la revisión independiente de ADMINISTRADOR.'
+                        if role in {'TALLER', 'ADMIN'}: accion=action('Revisar calibración' if role=='ADMIN' else 'Continuar calibración',url=reverse('masiscam:calibracion_revision',args=[cal.pk])+'?flujo=1')
                     else:
                         paso=5; pasos[3]['estado']='Listo'
                         mensaje='El informe PDF se genera con las fuentes aprobadas y conserva su revisión final independiente.'
                         if not settings.MASISCAM_CIERRE_LOCAL:
                             mensaje='El responsable del sistema debe habilitar la generación del informe final. Las fuentes y aprobaciones se conservan.'
                             bloqueo=True
-                        elif not informe and role in {'TALLER','OFICINA'}: accion=action('Generar informe',op='final')
+                        elif not informe and role in {'TALLER', 'OFICINA'}: accion=action('Generar informe',op='final')
                         elif informe:
                             if informe.documento_id: pasos[4]['estado']='Listo'
-                            if informe.estado=='PENDIENTE_REVISION' and role=='PLANTA': accion=action('Revisar informe final',url=reverse('masiscam:cierre_detalle',args=[exp.pk])+'?flujo=1')
-                            elif informe.estado=='APROBADO' and role=='GERENCIA': accion=action('Revisar cierre administrativo',url=reverse('masiscam:cierre_detalle',args=[exp.pk])+'?flujo=1')
-                            elif role in {'TALLER','OFICINA'}: accion=action('Descargar informe final',url=reverse('masiscam:cierre_documento',args=[exp.pk,informe.pk])) if informe.documento_id else action('Reintentar generación del informe',op='final')
+                            if informe.estado=='PENDIENTE_REVISION' and role=='ADMIN': accion=action('Revisar informe final',url=reverse('masiscam:cierre_detalle',args=[exp.pk])+'?flujo=1')
+                            elif informe.estado=='APROBADO' and role=='ADMIN': accion=action('Revisar cierre administrativo',url=reverse('masiscam:cierre_detalle',args=[exp.pk])+'?flujo=1')
+                            elif role in {'TALLER', 'OFICINA'}: accion=action('Descargar informe final',url=reverse('masiscam:cierre_documento',args=[exp.pk,informe.pk])) if informe.documento_id else action('Reintentar generación del informe',op='final')
     if pasos[paso-1]['estado']!='Listo': pasos[paso-1]['estado']='Bloqueado' if bloqueo else ('En proceso' if accion else 'Esperando oficina' if paso==3 else 'Pendiente')
     cerrado=CierreExpediente.objects.filter(expediente_id=exp.pk).first()
     if cerrado:

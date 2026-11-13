@@ -42,7 +42,7 @@ PuntosFormSet=formset_factory(PuntoForm,extra=16,max_num=16,validate_max=True)
 
 class InicioForm(BaseForm):
     plantilla_id=forms.ModelChoiceField(queryset=PlantillaCalibracion.objects.none(),label='Plantilla exacta validada/aplicable')
-    motivo=forms.CharField(required=False,widget=forms.Textarea,label='Motivo de corrección (PLANTA)')
+    motivo=forms.CharField(required=False,widget=forms.Textarea,label='Motivo de corrección (ADMINISTRADOR)')
     def __init__(self,*args,exp,**kwargs):
         super().__init__(*args,**kwargs)
         self.fields['plantilla_id'].queryset=PlantillaCalibracion.objects.filter(empresa=exp.empresa,aplicabilidades__equipo=exp.registro.equipo).distinct()
@@ -103,7 +103,7 @@ class InformeForm(BaseForm):
 
 class ValidarForm(BaseForm):
     fundamento=forms.CharField(widget=forms.Textarea,label='Fundamento de validación independiente',
-        help_text='Documente la fuente, competencia técnica del responsable y verificación de versión/aplicabilidad. El rol PLANTA no sustituye esa validación.')
+        help_text='Documente la fuente, competencia técnica del responsable y verificación de versión/aplicabilidad. El rol ADMINISTRADOR no sustituye esa validación.')
 
 
 class AplicarForm(ValidarForm):

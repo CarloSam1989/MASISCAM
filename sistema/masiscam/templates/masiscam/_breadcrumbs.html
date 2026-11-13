@@ -1,5 +1,4 @@
 {% load masiscam_navigation %}{% breadcrumbs as items %}
 <nav class="masiscam-breadcrumbs no-print" aria-label="Migas de pan"><ol class="breadcrumb mb-0 small">
-{% for item in items %}<li class="breadcrumb-item{% if not forloop.first and not forloop.last %} breadcrumb-parent{% endif %}{% if forloop.last %} active{% endif %}"{% if forloop.last %} aria-current="page"{% endif %}>{% if item.url %}<a href="{{ item.url }}">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}</li>
-{% if forloop.first and items|length > 2 %}<li class="breadcrumb-item breadcrumb-compact"><details class="breadcrumb-ancestors"><summary aria-label="Ver rutas anteriores">…</summary><ul>{% for parent in items %}{% if not forloop.first and not forloop.last %}<li>{% if parent.url %}<a href="{{ parent.url }}">{{ parent.label }}</a>{% else %}{{ parent.label }}{% endif %}</li>{% endif %}{% endfor %}</ul></details></li>{% endif %}{% endfor %}
+{% for item in items %}<li class="breadcrumb-item{% if forloop.last %} active{% endif %}"{% if forloop.last %} aria-current="page"{% endif %}>{% if item.url %}<a href="{{ item.url }}">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}</li>{% endfor %}
 </ol></nav>

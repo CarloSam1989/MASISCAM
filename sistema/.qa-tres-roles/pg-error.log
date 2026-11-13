@@ -1,0 +1,88 @@
+2026-11-13 15:02:52.236 -05 [19408] LOG:  starting PostgreSQL 16.4, compiled by Visual C++ build 1940, 64-bit
+2026-11-13 15:02:52.241 -05 [19408] LOG:  listening on IPv4 address "127.0.0.1", port 55439
+2026-11-13 15:02:52.346 -05 [18692] LOG:  database system was shut down at 2026-11-13 15:02:48 -05
+2026-11-13 15:02:52.408 -05 [19408] LOG:  database system is ready to accept connections
+2026-11-13 15:04:26.916 -05 [1804] ERROR:  Componente citado en trabajo inmutable
+2026-11-13 15:04:26.916 -05 [1804] CONTEXT:  PL/pgSQL function masiscam_componente_trabajo_guard() line 5 at RAISE
+2026-11-13 15:04:26.916 -05 [1804] STATEMENT:  UPDATE "masiscam_partereferenciatecnica" SET "descripcion" = 'Cambio de fuente' WHERE ("masiscam_partereferenciatecnica"."referencia_id" = 1 AND "masiscam_partereferenciatecnica"."id" = 1)
+2026-11-13 15:04:26.920 -05 [1804] ERROR:  Origen del plano de trabajo inmutable
+2026-11-13 15:04:26.920 -05 [1804] CONTEXT:  PL/pgSQL function masiscam_plano_trabajo_scope() line 5 at RAISE
+2026-11-13 15:04:26.920 -05 [1804] STATEMENT:  UPDATE "masiscam_referenciatecnica" SET "expediente_trabajo_id" = NULL WHERE "masiscam_referenciatecnica"."id" = 1
+2026-11-13 15:04:30.725 -05 [1804] ERROR:  Seleccion enviada a OFICINA inmutable
+2026-11-13 15:04:30.725 -05 [1804] CONTEXT:  PL/pgSQL function masiscam_seleccion_congelada() line 13 at RAISE
+2026-11-13 15:04:30.725 -05 [1804] STATEMENT:  UPDATE "masiscam_piezarequerida" SET "cantidad" = 5 WHERE ("masiscam_piezarequerida"."diagnostico_id" = 3 AND "masiscam_piezarequerida"."id" = 2)
+2026-11-13 15:04:30.743 -05 [1804] ERROR:  Seleccion enviada a OFICINA inmutable
+2026-11-13 15:04:30.743 -05 [1804] CONTEXT:  PL/pgSQL function masiscam_seleccion_congelada() line 13 at RAISE
+2026-11-13 15:04:30.743 -05 [1804] STATEMENT:  DELETE FROM "masiscam_evidenciatecnica" WHERE "masiscam_evidenciatecnica"."id" IN (2)
+2026-11-13 15:04:35.698 -05 [1804] ERROR:  plano: informacion protegida
+2026-11-13 15:04:35.698 -05 [1804] CONTEXT:  PL/pgSQL function masiscam_plano_mapaplano_update() line 1 at RAISE
+2026-11-13 15:04:35.698 -05 [1804] STATEMENT:  UPDATE "masiscam_mapaplano" SET "provisional" = false WHERE "masiscam_mapaplano"."id" = 1
+2026-11-13 15:04:35.707 -05 [1804] ERROR:  plano: informacion protegida
+2026-11-13 15:04:35.707 -05 [1804] CONTEXT:  PL/pgSQL function masiscam_plano_posicionplano_update() line 1 at RAISE
+2026-11-13 15:04:35.707 -05 [1804] STATEMENT:  UPDATE "masiscam_posicionplano" SET "x" = 0.1 WHERE "masiscam_posicionplano"."id" = 1
+2026-11-13 15:04:35.713 -05 [1804] ERROR:  plano: informacion protegida
+2026-11-13 15:04:35.713 -05 [1804] CONTEXT:  PL/pgSQL function masiscam_plano_mapaplano_insert() line 7 at RAISE
+2026-11-13 15:04:35.713 -05 [1804] STATEMENT:  INSERT INTO "masiscam_mapaplano" ("provisional", "referencia_id", "version", "hash_documento", "autor_id", "creado_en", "clave") VALUES (false, 3, 2, 'a46f12f0c2e62ec7d50b4d2dfa35a3944db855ca2cdef39476c4bbbd37a48c9f', 20, '2026-11-13T20:04:35.711170+00:00'::timestamptz, '9aaeaa1a-c9b5-4427-9e66-8dd263f10b91'::uuid) RETURNING "masiscam_mapaplano"."id"
+2026-11-13 15:05:29.489 -05 [8180] ERROR:  Se requiere asignacion explicita de un rol operativo vigente
+2026-11-13 15:05:29.489 -05 [8180] CONTEXT:  PL/pgSQL function masiscam_roles_operativos_guard() line 5 at RAISE
+2026-11-13 15:05:29.489 -05 [8180] STATEMENT:  UPDATE "masiscam_rolmasiscam" SET "rol" = 'PLANTA' WHERE "masiscam_rolmasiscam"."id" IN (SELECT U0."id" FROM "masiscam_rolmasiscam" U0 INNER JOIN "accounts_perfil" U1 ON (U0."perfil_id" = U1."id") WHERE U1."user_id" = 36)
+2026-11-13 15:05:32.680 -05 [8180] ERROR:  Componente citado en trabajo inmutable
+2026-11-13 15:05:32.680 -05 [8180] CONTEXT:  PL/pgSQL function masiscam_componente_trabajo_guard() line 5 at RAISE
+2026-11-13 15:05:32.680 -05 [8180] STATEMENT:  UPDATE "masiscam_partereferenciatecnica" SET "descripcion" = 'Cambio de fuente' WHERE ("masiscam_partereferenciatecnica"."referencia_id" = 5 AND "masiscam_partereferenciatecnica"."id" = 6)
+2026-11-13 15:05:32.683 -05 [8180] ERROR:  Origen del plano de trabajo inmutable
+2026-11-13 15:05:32.683 -05 [8180] CONTEXT:  PL/pgSQL function masiscam_plano_trabajo_scope() line 5 at RAISE
+2026-11-13 15:05:32.683 -05 [8180] STATEMENT:  UPDATE "masiscam_referenciatecnica" SET "expediente_trabajo_id" = NULL WHERE "masiscam_referenciatecnica"."id" = 5
+2026-11-13 15:05:36.144 -05 [8180] ERROR:  Seleccion enviada a OFICINA inmutable
+2026-11-13 15:05:36.144 -05 [8180] CONTEXT:  PL/pgSQL function masiscam_seleccion_congelada() line 13 at RAISE
+2026-11-13 15:05:36.144 -05 [8180] STATEMENT:  UPDATE "masiscam_piezarequerida" SET "cantidad" = 5 WHERE ("masiscam_piezarequerida"."diagnostico_id" = 9 AND "masiscam_piezarequerida"."id" = 8)
+2026-11-13 15:05:36.159 -05 [8180] ERROR:  Seleccion enviada a OFICINA inmutable
+2026-11-13 15:05:36.159 -05 [8180] CONTEXT:  PL/pgSQL function masiscam_seleccion_congelada() line 13 at RAISE
+2026-11-13 15:05:36.159 -05 [8180] STATEMENT:  DELETE FROM "masiscam_evidenciatecnica" WHERE "masiscam_evidenciatecnica"."id" IN (6)
+2026-11-13 15:05:41.072 -05 [8180] ERROR:  plano: informacion protegida
+2026-11-13 15:05:41.072 -05 [8180] CONTEXT:  PL/pgSQL function masiscam_plano_mapaplano_update() line 1 at RAISE
+2026-11-13 15:05:41.072 -05 [8180] STATEMENT:  UPDATE "masiscam_mapaplano" SET "provisional" = false WHERE "masiscam_mapaplano"."id" = 7
+2026-11-13 15:05:41.083 -05 [8180] ERROR:  plano: informacion protegida
+2026-11-13 15:05:41.083 -05 [8180] CONTEXT:  PL/pgSQL function masiscam_plano_posicionplano_update() line 1 at RAISE
+2026-11-13 15:05:41.083 -05 [8180] STATEMENT:  UPDATE "masiscam_posicionplano" SET "x" = 0.1 WHERE "masiscam_posicionplano"."id" = 6
+2026-11-13 15:05:41.092 -05 [8180] ERROR:  plano: informacion protegida
+2026-11-13 15:05:41.092 -05 [8180] CONTEXT:  PL/pgSQL function masiscam_plano_mapaplano_insert() line 7 at RAISE
+2026-11-13 15:05:41.092 -05 [8180] STATEMENT:  INSERT INTO "masiscam_mapaplano" ("provisional", "referencia_id", "version", "hash_documento", "autor_id", "creado_en", "clave") VALUES (false, 7, 2, 'a46f12f0c2e62ec7d50b4d2dfa35a3944db855ca2cdef39476c4bbbd37a48c9f', 52, '2026-11-13T20:05:41.089752+00:00'::timestamptz, '9e7dcce8-e24f-4152-9798-9c3f7744aaab'::uuid) RETURNING "masiscam_mapaplano"."id"
+2026-11-13 15:07:27.197 -05 [15904] ERROR:  Se requiere asignacion explicita de un rol operativo vigente
+2026-11-13 15:07:27.197 -05 [15904] CONTEXT:  PL/pgSQL function masiscam_roles_operativos_guard() line 5 at RAISE
+2026-11-13 15:07:27.197 -05 [15904] STATEMENT:  UPDATE "masiscam_rolmasiscam" SET "rol" = 'PLANTA' WHERE "masiscam_rolmasiscam"."id" IN (SELECT U0."id" FROM "masiscam_rolmasiscam" U0 INNER JOIN "accounts_perfil" U1 ON (U0."perfil_id" = U1."id") WHERE U1."user_id" = 84)
+2026-11-13 15:07:33.409 -05 [15904] ERROR:  Componente citado en trabajo inmutable
+2026-11-13 15:07:33.409 -05 [15904] CONTEXT:  PL/pgSQL function masiscam_componente_trabajo_guard() line 5 at RAISE
+2026-11-13 15:07:33.409 -05 [15904] STATEMENT:  UPDATE "masiscam_partereferenciatecnica" SET "descripcion" = 'Cambio de fuente' WHERE ("masiscam_partereferenciatecnica"."referencia_id" = 11 AND "masiscam_partereferenciatecnica"."id" = 14)
+2026-11-13 15:07:33.412 -05 [15904] ERROR:  Origen del plano de trabajo inmutable
+2026-11-13 15:07:33.412 -05 [15904] CONTEXT:  PL/pgSQL function masiscam_plano_trabajo_scope() line 5 at RAISE
+2026-11-13 15:07:33.412 -05 [15904] STATEMENT:  UPDATE "masiscam_referenciatecnica" SET "expediente_trabajo_id" = NULL WHERE "masiscam_referenciatecnica"."id" = 11
+2026-11-13 15:07:36.719 -05 [15904] ERROR:  Seleccion enviada a OFICINA inmutable
+2026-11-13 15:07:36.719 -05 [15904] CONTEXT:  PL/pgSQL function masiscam_seleccion_congelada() line 13 at RAISE
+2026-11-13 15:07:36.719 -05 [15904] STATEMENT:  UPDATE "masiscam_piezarequerida" SET "cantidad" = 5 WHERE ("masiscam_piezarequerida"."diagnostico_id" = 18 AND "masiscam_piezarequerida"."id" = 17)
+2026-11-13 15:07:36.729 -05 [15904] ERROR:  Seleccion enviada a OFICINA inmutable
+2026-11-13 15:07:36.729 -05 [15904] CONTEXT:  PL/pgSQL function masiscam_seleccion_congelada() line 13 at RAISE
+2026-11-13 15:07:36.729 -05 [15904] STATEMENT:  DELETE FROM "masiscam_evidenciatecnica" WHERE "masiscam_evidenciatecnica"."id" IN (12)
+2026-11-13 15:07:41.685 -05 [15904] ERROR:  plano: informacion protegida
+2026-11-13 15:07:41.685 -05 [15904] CONTEXT:  PL/pgSQL function masiscam_plano_mapaplano_update() line 1 at RAISE
+2026-11-13 15:07:41.685 -05 [15904] STATEMENT:  UPDATE "masiscam_mapaplano" SET "provisional" = false WHERE "masiscam_mapaplano"."id" = 14
+2026-11-13 15:07:41.691 -05 [15904] ERROR:  plano: informacion protegida
+2026-11-13 15:07:41.691 -05 [15904] CONTEXT:  PL/pgSQL function masiscam_plano_posicionplano_update() line 1 at RAISE
+2026-11-13 15:07:41.691 -05 [15904] STATEMENT:  UPDATE "masiscam_posicionplano" SET "x" = 0.1 WHERE "masiscam_posicionplano"."id" = 12
+2026-11-13 15:07:41.696 -05 [15904] ERROR:  plano: informacion protegida
+2026-11-13 15:07:41.696 -05 [15904] CONTEXT:  PL/pgSQL function masiscam_plano_mapaplano_insert() line 7 at RAISE
+2026-11-13 15:07:41.696 -05 [15904] STATEMENT:  INSERT INTO "masiscam_mapaplano" ("provisional", "referencia_id", "version", "hash_documento", "autor_id", "creado_en", "clave") VALUES (false, 13, 2, 'a46f12f0c2e62ec7d50b4d2dfa35a3944db855ca2cdef39476c4bbbd37a48c9f', 105, '2026-11-13T20:07:41.694322+00:00'::timestamptz, 'af8c4975-e2b5-4c21-8329-607e76f49dbc'::uuid) RETURNING "masiscam_mapaplano"."id"
+2026-11-13 15:07:52.220 -05 [8460] LOG:  checkpoint starting: time
+2026-11-13 15:08:12.546 -05 [17148] LOG:  skipping vacuum of "masiscam_auditoria" --- lock not available
+2026-11-13 15:08:12.548 -05 [17148] LOG:  skipping vacuum of "django_session" --- lock not available
+2026-11-13 15:09:40.986 -05 [18000] ERROR:  Se requiere asignacion explicita de un rol operativo vigente
+2026-11-13 15:09:40.986 -05 [18000] CONTEXT:  PL/pgSQL function masiscam_roles_operativos_guard() line 5 at RAISE
+2026-11-13 15:09:40.986 -05 [18000] STATEMENT:  UPDATE "masiscam_rolmasiscam" SET "rol" = 'PLANTA' WHERE "masiscam_rolmasiscam"."id" IN (SELECT U0."id" FROM "masiscam_rolmasiscam" U0 INNER JOIN "accounts_perfil" U1 ON (U0."perfil_id" = U1."id") WHERE U1."user_id" = 138)
+2026-11-13 15:10:03.269 -05 [19348] FATAL:  database "masiscam_qa_tres_roles" does not exist
+2026-11-13 15:10:31.870 -05 [19408] LOG:  received fast shutdown request
+2026-11-13 15:10:31.877 -05 [19408] LOG:  aborting any active transactions
+2026-11-13 15:10:31.888 -05 [19408] LOG:  background worker "logical replication launcher" (PID 18416) exited with exit code 1
+2026-11-13 15:10:42.013 -05 [8460] LOG:  checkpoint complete: wrote 1375 buffers (8.4%); 0 WAL file(s) added, 0 removed, 1 recycled; write=159.612 s, sync=8.990 s, total=169.793 s; sync files=5642, longest=0.038 s, average=0.002 s; distance=11574 kB, estimate=11574 kB; lsn=0/284CDF0, redo lsn=0/20C4EA8
+2026-11-13 15:10:42.033 -05 [8460] LOG:  shutting down
+2026-11-13 15:10:42.037 -05 [8460] LOG:  checkpoint starting: shutdown immediate
+2026-11-13 15:10:44.628 -05 [8460] LOG:  checkpoint complete: wrote 1096 buffers (6.7%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.087 s, sync=0.835 s, total=2.595 s; sync files=274, longest=0.010 s, average=0.004 s; distance=7711 kB, estimate=11187 kB; lsn=0/284CE68, redo lsn=0/284CE68
+2026-11-13 15:10:44.829 -05 [19408] LOG:  database system is shut down

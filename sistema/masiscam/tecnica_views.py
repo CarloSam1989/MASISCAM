@@ -243,7 +243,7 @@ def biblioteca(request):
 @local
 @masiscam_access_required
 def biblioteca_referencia_form(request,pk=None):
-    svc.autorizar_tecnica(request.user,request.empresa_activa,{'PLANTA'})
+    svc.autorizar_tecnica(request.user,request.empresa_activa,{'ADMIN'})
     obj=get_object_or_404(ReferenciaTecnica,pk=pk,empresa=request.empresa_activa) if pk else None
     initial={f.name:getattr(obj,f.name) for f in obj._meta.fields} if obj else {}
     if obj:
@@ -268,7 +268,7 @@ def biblioteca_referencia(request,pk):
     ref=get_object_or_404(svc.referencias_visibles(request.user,request.empresa_activa),pk=pk)
     forms={'parte':ParteForm(empresa=request.empresa_activa),'aplicabilidad':AplicabilidadForm(empresa=request.empresa_activa)}
     if request.method=='POST':
-        svc.autorizar_tecnica(request.user,request.empresa_activa,{'PLANTA'})
+        svc.autorizar_tecnica(request.user,request.empresa_activa,{'ADMIN'})
         action=request.POST.get('op')
         form=(ParteForm(request.POST,empresa=request.empresa_activa) if action=='parte' else
               AplicabilidadForm(request.POST,empresa=request.empresa_activa) if action=='aplicabilidad' else BaseForm(request.POST))
@@ -301,7 +301,7 @@ def biblioteca_referencia(request,pk):
 @local
 @masiscam_access_required
 def biblioteca_componentes(request,pk=None):
-    svc.autorizar_tecnica(request.user,request.empresa_activa,{'PLANTA'})
+    svc.autorizar_tecnica(request.user,request.empresa_activa,{'ADMIN'})
     obj=get_object_or_404(ComponenteTecnico,pk=pk,empresa=request.empresa_activa) if pk else None
     initial={f.name:getattr(obj,f.name) for f in obj._meta.fields} if obj else {}
     form=ComponenteForm(request.POST or None,initial=initial)

@@ -14,27 +14,17 @@ class UsuarioCamposMixin:
         super().__init__(*args, **kwargs)
         self.asignacion = asignacion
         roles = [(codigo, nombre) for codigo, nombre in RolMasiscam.Rol.choices
-                 if codigo != RolMasiscam.Rol.CONSULTA]
-        inicial = asignacion.rol if asignacion else RolMasiscam.Rol.ADMINISTRADOR
-        retirado = inicial not in dict(roles)
+                 if codigo in RolMasiscam.ROLES_OPERATIVOS]
+        inicial = asignacion.rol if asignacion else ''
+        retirado = bool(asignacion and inicial not in dict(roles))
         self.fields["rol"] = forms.ChoiceField(
             label="Rol", choices=[("", "Seleccione un rol")] + roles,
             initial="" if retirado else inicial,
             help_text=("Esta cuenta conserva un rol retirado. No se cambia automáticamente; seleccione expresamente un rol vigente para guardar."
                        if retirado else ""),
         )
-        self.fields["cliente"] = ClienteUsuarioField(
-            label="Cliente asociado", required=False,
-            queryset=Cliente.objects.filter(empresa=empresa),
-            initial=asignacion.cliente_id if asignacion else None,
-            help_text="Busque por nombre, razón social o RUC/cédula. Obligatorio para CLIENTE; admite varios usuarios por cliente.",
-            widget=forms.Select(attrs={"data-usuario-cliente": "true"}),
-        )
-        if self.is_bound and self.data.get(self.add_prefix("rol")) in {
-            RolMasiscam.Rol.ADMINISTRADOR, RolMasiscam.Rol.TECNICO,
-            RolMasiscam.Rol.OFICINA, RolMasiscam.Rol.PLANTA, RolMasiscam.Rol.GERENCIA,
-            RolMasiscam.Rol.TALLER,
-        }:
+        self.fields["cliente"] = forms.ModelChoiceField(queryset=Cliente.objects.none(), required=False, widget=forms.HiddenInput)
+        if self.is_bound:
             self.data = self.data.copy()
             self.data[self.add_prefix("cliente")] = ""
         for field in self.fields.values():
@@ -47,13 +37,9 @@ class UsuarioCamposMixin:
     def clean(self):
         data = super().clean()
         if self.asignacion and self.asignacion.perfil.user_id == getattr(self, "actor_id", None):
-            if data.get("rol") != self.asignacion.rol and data.get("rol") in {"OFICINA", "PLANTA", "GERENCIA", "TALLER"}:
+            if data.get("rol") != self.asignacion.rol and data.get("rol") in {"OFICINA", "TALLER"}:
                 self.add_error("rol", "No puede autoasignarse un rol operativo de recepción.")
-        if data.get("rol") == RolMasiscam.Rol.CLIENTE:
-            if not data.get("cliente"):
-                self.add_error("cliente", "Seleccione un cliente de esta empresa.")
-        else:
-            data["cliente"] = None
+        data["cliente"] = None
         if (self.instance.is_superuser and data.get("rol")
                 and data["rol"] != RolMasiscam.Rol.ADMINISTRADOR):
             self.add_error("rol", "Esta cuenta tiene privilegios de superusuario. Retírelos desde la administración técnica antes de asignar un rol restringido.")

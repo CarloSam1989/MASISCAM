@@ -139,7 +139,7 @@ def _equipo_compatible(p,equipo):
 
 @transaction.atomic
 def crear_plantilla(*,usuario,empresa,clave,datos,archivo):
-    autorizar(usuario,empresa,{'PLANTA'})
+    autorizar(usuario,empresa,{'ADMIN'})
     t._liblock(usuario,empresa)
     o._datos(datos,('codigo','titulo','tipo_equipo','definicion','proyecto_id','sustituye_id'))
     payload=dict(datos=datos,hash=_hash(archivo) if archivo else None)
@@ -167,7 +167,7 @@ def crear_plantilla(*,usuario,empresa,clave,datos,archivo):
 
 @transaction.atomic
 def validar_plantilla(*,usuario,empresa,plantilla_id,clave,fundamento):
-    autorizar(usuario,empresa,{'PLANTA'}); t._liblock(usuario,empresa)
+    autorizar(usuario,empresa,{'ADMIN'}); t._liblock(usuario,empresa)
     p=PlantillaCalibracion.objects.get(pk=plantilla_id,empresa=empresa)
     payload=dict(plantilla=p.pk,fundamento=fundamento)
     old=t._libretry(empresa,clave,'CAL_PLANTILLA_VALIDADA',payload)
@@ -189,7 +189,7 @@ def validar_plantilla(*,usuario,empresa,plantilla_id,clave,fundamento):
 
 @transaction.atomic
 def aplicar_plantilla(*,usuario,empresa,plantilla_id,equipo_id,clave,fundamento,version_equipo=''):
-    autorizar(usuario,empresa,{'PLANTA'}); t._liblock(usuario,empresa)
+    autorizar(usuario,empresa,{'ADMIN'}); t._liblock(usuario,empresa)
     payload=dict(plantilla=plantilla_id,equipo=equipo_id,fundamento=fundamento,version_equipo=version_equipo)
     old=t._libretry(empresa,clave,'CAL_APLICABILIDAD',payload)
     if old:
@@ -229,7 +229,7 @@ def _dependencias(c):
 
 @transaction.atomic
 def iniciar(*,usuario,empresa,expediente_id,plantilla_id,clave,motivo=''):
-    exp=expediente(usuario,empresa,expediente_id,{'TECNICO','TALLER','PLANTA'},True)
+    exp=expediente(usuario,empresa,expediente_id,{'TALLER', 'ADMIN'},True)
     payload=dict(plantilla=plantilla_id,motivo=motivo)
     old=t._retry(exp,clave,'CAL_INICIADA',payload)
     if old:
@@ -241,14 +241,14 @@ def iniciar(*,usuario,empresa,expediente_id,plantilla_id,clave,motivo=''):
     t.documento_valido(p.documento,empresa)
     oldcal=Calibracion.objects.filter(expediente=exp).order_by('-revision').first()
     role=autorizar(usuario,empresa,exp=exp).rol
-    if oldcal and (role!='PLANTA' or not motivo.strip()):
-        raise PermissionDenied('PLANTA autoriza corrección con motivo; el técnico no sobrescribe revisiones previas.')
+    if oldcal and (role!='ADMIN' or not motivo.strip()):
+        raise PermissionDenied('ADMINISTRADOR autoriza corrección con motivo; el técnico no sobrescribe revisiones previas.')
     if not oldcal and role not in t.OPERADORES:
         raise PermissionDenied('El técnico principal inicia la calibración.')
     assignment=exp.asignaciones_tecnicas.filter(fin__isnull=True).first()
     if not assignment:
         raise ValidationError('Asigne un técnico principal activo.')
-    t.autorizar_tecnica(assignment.tecnico,empresa,{'TECNICO','TALLER'},exp)
+    t.autorizar_tecnica(assignment.tecnico,empresa,{'TALLER'},exp)
     c=t._save(Calibracion(expediente=exp,diagnostico=auth.propuesta.diagnostico,autorizacion=auth,plantilla=p,
         tecnico=assignment.tecnico,reparacion_snapshot=rep,revision=oldcal.revision+1 if oldcal else 1,sustituye=oldcal,motivo_revision=motivo,clave=clave))
     # Correction starts empty: no implicit reuse of measurements or instrument
@@ -278,7 +278,7 @@ def _bump(c):
 @transaction.atomic
 def guardar(*,usuario,empresa,calibracion_id,version,clave,datos):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO','TALLER'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,version=version,datos=datos)
     old=t._retry(exp,clave,'CAL_GUARDADA',payload)
     if old:
@@ -306,7 +306,7 @@ def guardar(*,usuario,empresa,calibracion_id,version,clave,datos):
 @transaction.atomic
 def medir(*,usuario,empresa,calibracion_id,version,clave,punto,valor,observaciones=''):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO','TALLER'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,version=version,punto=punto,valor=str(valor),observaciones=observaciones)
     old=t._retry(exp,clave,'CAL_MEDICION',payload)
     if old:
@@ -332,7 +332,7 @@ def medir(*,usuario,empresa,calibracion_id,version,clave,punto,valor,observacion
 @transaction.atomic
 def evidencia(*,usuario,empresa,calibracion_id,version,clave,clase,leyenda,archivo):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO','TALLER'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,version=version,clase=clase,leyenda=leyenda,hash=_hash(archivo) if archivo else None)
     old=t._retry(exp,clave,'CAL_EVIDENCIA',payload)
     if old:
@@ -361,7 +361,7 @@ def evidencia(*,usuario,empresa,calibracion_id,version,clave,clase,leyenda,archi
 @transaction.atomic
 def enviar(*,usuario,empresa,calibracion_id,version,clave):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'TECNICO','TALLER'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,version=version)
     old=t._retry(exp,clave,'CAL_ENVIADA',payload)
     if old:
@@ -400,7 +400,7 @@ def _autores(c):
 @transaction.atomic
 def decidir(*,usuario,empresa,calibracion_id,clave,decision,motivo,evaluaciones):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'PLANTA'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'ADMIN'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,decision=decision,motivo=motivo,evaluaciones=evaluaciones)
     old=t._retry(exp,clave,'CAL_DECISION',payload)
     if old:
@@ -423,7 +423,7 @@ def decidir(*,usuario,empresa,calibracion_id,clave,decision,motivo,evaluaciones)
         if value not in {'PENDIENTE','CONFORME','NO_CONFORME'} or (value!='PENDIENTE' and not refs[key].get('criterio','').strip()):
             raise ValidationError('Sin criterio aprobado solo se permite evaluación pendiente; no se calcula conformidad.')
     if decision=='APROBADA' and (len(evaluaciones)!=16 or any(v!='CONFORME' for v in evaluaciones.values())):
-        raise ValidationError('Aprobación bloqueada: evaluación manual por PLANTA incompleta/no favorable. No se admiten excepciones implícitas.')
+        raise ValidationError('Aprobación bloqueada: evaluación manual por ADMINISTRADOR incompleta/no favorable. No se admiten excepciones implícitas.')
     obj=t._save(DecisionCalibracion(calibracion=c,decision=decision,motivo=motivo,evaluaciones=evaluaciones,responsable=usuario,clave=clave))
     c.estado=decision;c.save(update_fields=['estado'])
     t._event(exp,usuario,clave,'CAL_DECISION',payload,obj.pk)
@@ -458,7 +458,7 @@ def snapshot(c):
 @transaction.atomic
 def reservar_informe(*,usuario,empresa,calibracion_id,clave,nueva_version=False,motivo=''):
     c=Calibracion.objects.get(pk=calibracion_id)
-    exp=expediente(usuario,empresa,c.expediente_id,{'OFICINA','PLANTA','TECNICO','TALLER'},True);c.refresh_from_db()
+    exp=expediente(usuario,empresa,c.expediente_id,{'OFICINA', 'ADMIN', 'TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,nueva_version=bool(nueva_version),motivo=motivo)
     old=t._retry(exp,clave,'CAL_INFORME',payload)
     if old:

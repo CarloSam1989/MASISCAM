@@ -207,27 +207,7 @@ def cliente_detalle(request, pk):
 @require_POST
 @permiso_masiscam_required("usuarios")
 def cliente_usuario_crear(request, pk):
-    cliente = get_object_or_404(Cliente, pk=pk, empresa=request.empresa_activa)
-    identificacion = cliente.ruc.strip()
-    if not identificacion.isascii() or not identificacion.isdecimal() or len(identificacion) not in {10, 13}:
-        messages.error(request, "El cliente debe tener una cédula de 10 dígitos o un RUC de 13 dígitos.")
-        return redirect("masiscam:cliente_detalle", pk=cliente.pk)
-    try:
-        with transaction.atomic():
-            cliente = Cliente.objects.select_for_update().get(pk=cliente.pk, empresa=request.empresa_activa)
-            User = get_user_model()
-            if User.objects.filter(username=identificacion).exists():
-                messages.error(request, "La identificación ya está registrada como usuario. No se reasignó la cuenta.")
-                return redirect("masiscam:cliente_detalle", pk=cliente.pk)
-            usuario = User.objects.create_user(username=identificacion, password=identificacion, email=cliente.correo)
-            perfil = Perfil.objects.create(user=usuario, empresa=cliente.empresa)
-            RolMasiscam.objects.create(perfil=perfil, rol=RolMasiscam.Rol.CLIENTE, cliente=cliente)
-            auditar(empresa=request.empresa_activa, usuario=request.user, accion="USUARIO_CLIENTE_CREADO", objeto=cliente)
-    except IntegrityError:
-        messages.error(request, "Ya existe un usuario con esa identificación.")
-    else:
-        messages.success(request, "Usuario creado. El usuario y la clave inicial son la identificación del cliente.")
-    return redirect("masiscam:cliente_detalle", pk=cliente.pk)
+    raise PermissionDenied("Solo se asignan ADMINISTRADOR, TALLER y OFICINA desde Usuarios.")
 
 
 def _cliente_formulario(request, cliente=None):

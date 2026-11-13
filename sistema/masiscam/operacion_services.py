@@ -152,7 +152,7 @@ def estado(exp):
 
 @transaction.atomic
 def proponer(*, usuario, empresa, expediente_id, diagnostico_id, clave, datos, archivo=None):
-    exp = expediente(usuario, empresa, expediente_id, {'GERENCIA','OFICINA'}, True)
+    exp = expediente(usuario, empresa, expediente_id, {'OFICINA'}, True)
     _datos(datos, ('alcance','observaciones','presupuesto_referencia'))
     payload = dict(diagnostico=diagnostico_id, datos=datos, hash=_hash(archivo) if archivo else None)
     old = t._retry(exp, clave, 'COMERCIAL_PROPUESTA', payload)
@@ -184,7 +184,7 @@ def proponer(*, usuario, empresa, expediente_id, diagnostico_id, clave, datos, a
 @transaction.atomic
 def decidir_comercial(*, usuario, empresa, propuesta_id, clave, datos, archivo, archivo_facultad=None):
     p = PropuestaComercial.objects.get(pk=propuesta_id)
-    exp = expediente(usuario, empresa, p.expediente_id, {'GERENCIA','OFICINA'}, True)
+    exp = expediente(usuario, empresa, p.expediente_id, {'OFICINA'}, True)
     basicos=('decision','fecha_cliente','representante_cliente','motivo')
     verificacion_campos=('identidad','calidad','calidad_representante','medio_verificacion','canal',
         'respaldo_verificacion','verificacion_confirmada','alcance_autorizado')
@@ -253,9 +253,9 @@ def decidir_comercial(*, usuario, empresa, propuesta_id, clave, datos, archivo, 
     data['decision']='APROBADO' if positiva else 'RECHAZADO'
     politica_snapshot=dict(pol or {'estado':'PENDIENTE'},verificacion_cliente=verificacion)
     obj = t._save(DecisionComercial(expediente=exp,autor=usuario,clave=clave,propuesta=p,politica=politica_snapshot,**data))
-    _evidencia(obj,usuario,archivo,'DOCUMENTO','Respaldo de decisión aportado por GERENCIA; sin firma digital certificada.',uuid.uuid4())
+    _evidencia(obj,usuario,archivo,'DOCUMENTO','Respaldo de decisión aportado por OFICINA; sin firma digital certificada.',uuid.uuid4())
     if archivo_facultad:
-        _evidencia(obj,usuario,archivo_facultad,'DOCUMENTO','Facultades e identidad verificadas por GERENCIA.',uuid.uuid4())
+        _evidencia(obj,usuario,archivo_facultad,'DOCUMENTO','Facultades e identidad verificadas por OFICINA.',uuid.uuid4())
     t._event(exp,usuario,clave,'COMERCIAL_DECISION',payload,obj.pk)
     return obj
 
@@ -273,7 +273,7 @@ def verificar_presupuesto(propuesta):
 
 @transaction.atomic
 def recibir_repuesto(*, usuario, empresa, expediente_id, clave, datos, archivo=None, fotografia=None):
-    exp = expediente(usuario,empresa,expediente_id,{'OFICINA','PLANTA','TALLER'},True)
+    exp = expediente(usuario,empresa,expediente_id,{'OFICINA', 'ADMIN', 'TALLER'},True)
     _datos(datos, ('pieza_id','procedencia','entregado_por','numero_parte','descripcion','cantidad','unidad','fecha','guia','discrepancia'))
     payload = dict(datos=datos,hash=_hash(archivo) if archivo else None,foto=_hash(fotografia) if fotografia else None)
     old = t._retry(exp,clave,'REPUESTO_RECIBIDO',payload)
@@ -301,7 +301,7 @@ def recibir_repuesto(*, usuario, empresa, expediente_id, clave, datos, archivo=N
 
 @transaction.atomic
 def iniciar_actividad(*, usuario, empresa, expediente_id, clave, datos):
-    exp = expediente(usuario,empresa,expediente_id,{'TECNICO','TALLER'},True)
+    exp = expediente(usuario,empresa,expediente_id,{'TALLER'},True)
     _datos(datos, ('trabajo','componentes','inicio','observaciones'))
     old = t._retry(exp,clave,'REPARACION_INICIADA',datos)
     if old:
@@ -323,7 +323,7 @@ def iniciar_actividad(*, usuario, empresa, expediente_id, clave, datos):
 
 def _actividad(usuario, empresa, pk):
     act = ActividadReparacion.objects.get(pk=pk)
-    exp = expediente(usuario,empresa,act.expediente_id,{'TECNICO','TALLER'},True)
+    exp = expediente(usuario,empresa,act.expediente_id,{'TALLER'},True)
     if act.autor_id!=usuario.pk or exigir_autorizacion(exp).pk!=act.autorizacion_id:
         raise PermissionDenied('Se requiere autor asignado y autorización vigente de la actividad.')
     return act,exp
@@ -396,7 +396,7 @@ def terminar_actividad(*, usuario, empresa, actividad_id, clave, datos):
 @transaction.atomic
 def revisar_actividad(*, usuario, empresa, resultado_id, clave, decision, motivo):
     result = ResultadoReparacion.objects.get(pk=resultado_id)
-    exp = expediente(usuario,empresa,result.expediente_id,{'PLANTA'},True)
+    exp = expediente(usuario,empresa,result.expediente_id,{'ADMIN'},True)
     payload = dict(resultado=result.pk,decision=decision,motivo=motivo)
     old = t._retry(exp,clave,'REPARACION_REVISION',payload)
     if old:
@@ -415,7 +415,7 @@ def revisar_actividad(*, usuario, empresa, resultado_id, clave, decision, motivo
 def documentos_visibles(exp, rol):
     # Commercial documents are restricted even within the same company.
     qs = Documento.objects.filter(Q(evidencias_operativas__expediente=exp)|Q(emision_operativa__expediente=exp))
-    if rol not in {'GERENCIA','OFICINA'}:
+    if rol not in {'OFICINA'}:
         qs = qs.filter(Q(evidencias_operativas__recepcion__isnull=False)|Q(evidencias_operativas__actividad__isnull=False)|Q(emision_operativa__isnull=False))
     return qs.distinct()
 
@@ -423,7 +423,7 @@ def documentos_visibles(exp, rol):
 @transaction.atomic
 def respaldo_propuesta(*, usuario, empresa, propuesta_id, clave, leyenda, archivo):
     p=PropuestaComercial.objects.get(pk=propuesta_id)
-    exp=expediente(usuario,empresa,p.expediente_id,{'OFICINA','GERENCIA'},True)
+    exp=expediente(usuario,empresa,p.expediente_id,{'OFICINA'},True)
     payload=dict(propuesta=p.pk,leyenda=leyenda,hash=_hash(archivo) if archivo else None)
     old=t._retry(exp,clave,'COMERCIAL_RESPALDO',payload)
     if old:
@@ -438,7 +438,7 @@ def respaldo_propuesta(*, usuario, empresa, propuesta_id, clave, leyenda, archiv
 @transaction.atomic
 def evidencia_repuesto(*, usuario, empresa, recepcion_id, clave, leyenda, archivo):
     r=RecepcionRepuesto.objects.get(pk=recepcion_id)
-    exp=expediente(usuario,empresa,r.expediente_id,{'OFICINA','PLANTA','TALLER'},True)
+    exp=expediente(usuario,empresa,r.expediente_id,{'OFICINA', 'ADMIN', 'TALLER'},True)
     payload=dict(recepcion=r.pk,leyenda=leyenda,hash=_hash(archivo) if archivo else None)
     old=t._retry(exp,clave,'REPUESTO_EVIDENCIA',payload)
     if old:
@@ -452,7 +452,7 @@ def evidencia_repuesto(*, usuario, empresa, recepcion_id, clave, leyenda, archiv
 
 @transaction.atomic
 def reservar_documento(*, usuario, empresa, expediente_id, tipo, clave, nueva_version=False, motivo=''):
-    exp = expediente(usuario,empresa,expediente_id,{'OFICINA','PLANTA'},True)
+    exp = expediente(usuario,empresa,expediente_id,{'OFICINA', 'ADMIN'},True)
     if tipo not in {'REPUESTOS','REPARACION'}:
         raise ValidationError('Tipo documental inválido.')
     payload = dict(tipo=tipo,nueva_version=bool(nueva_version),motivo=motivo)

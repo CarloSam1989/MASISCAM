@@ -5,7 +5,7 @@ from .models import Empresa, Perfil
 def acceso_admin(request):
     from masiscam.access import rol_masiscam_usuario
     rol = rol_masiscam_usuario(usuario=request.user, empresa=getattr(request, 'empresa_activa', None))
-    return request.user.is_active and request.user.is_superuser and not (rol and rol.rol in {'TALLER','OFICINA'})
+    return bool(request.user.is_active and request.user.is_superuser and rol and rol.rol == 'ADMIN')
 
 
 admin.site.has_permission = acceso_admin

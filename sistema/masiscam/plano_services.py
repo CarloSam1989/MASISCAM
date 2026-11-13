@@ -58,7 +58,7 @@ def cargar_plano_trabajo(*, usuario, empresa, expediente_id, clave, archivo):
             expediente_trabajo=exp, codigo=f'TRABAJO-{exp.pk}-{digest[:16]}', revision=1,
             tipo='PLANO', titulo=archivo.name[:200], autor=usuario,
             procedencia=f'Cargado por TALLER desde {exp.numero}',
-            autorizacion_uso='Borrador de trabajo privado; pendiente de revisión y aplicabilidad por PLANTA.'))
+            autorizacion_uso='Borrador de trabajo privado; pendiente de revisión y aplicabilidad por ADMINISTRADOR.'))
     tecnica.documento_valido(ref.documento, empresa)
     tecnica._event(exp, usuario, clave, 'PLANO_TRABAJO_CARGADO', payload, ref.pk)
     return ref
@@ -109,7 +109,7 @@ def documento_info(ref, empresa):
 
 @transaction.atomic
 def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, clave):
-    rol = tecnica.autorizar_tecnica(usuario, empresa, {'PLANTA', 'TALLER'})
+    rol = tecnica.autorizar_tecnica(usuario, empresa, {'ADMIN', 'TALLER'})
     ref = ReferenciaTecnica.objects.get(pk=referencia_id, empresa=empresa)
     if rol.rol == 'TALLER':
         if not ref.expediente_trabajo_id or ref.estado != 'BORRADOR':
@@ -168,7 +168,7 @@ def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, c
 def guardar_seleccion(*, usuario, empresa, diagnostico_id, version, clave, datos=None,
                       pieza_id=None, fotografias=(), operacion='guardar', evidencia_id=None):
     obj = Diagnostico.objects.get(pk=diagnostico_id)
-    exp = tecnica.expediente_autorizado(usuario, empresa, obj.expediente_id, {'TECNICO','TALLER'}, True)
+    exp = tecnica.expediente_autorizado(usuario, empresa, obj.expediente_id, {'TALLER'}, True)
     obj.refresh_from_db()
     payload = dict(diagnostico=obj.pk, version=version, pieza=pieza_id, datos=datos,
         operacion=operacion, evidencia=evidencia_id, fotos=[_hash(f) for f in fotografias])

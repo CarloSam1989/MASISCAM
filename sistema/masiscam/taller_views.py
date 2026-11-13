@@ -97,7 +97,7 @@ def taller_equipo(request, pk):
     if exp:
         pasos[1]['estado']='Bloqueado'
         if not asignado:
-            mensaje='PLANTA debe asignar el responsable para continuar este expediente.'
+            mensaje='ADMINISTRADOR debe asignar el responsable para continuar este expediente.'
         elif not settings.MASISCAM_TECNICA_LOCAL:
             mensaje=('Fase técnica deshabilitada: el responsable de configuración debe activar '
                 'MASISCAM_TECNICA_ENABLED para habilitar inspección y selección de piezas.')

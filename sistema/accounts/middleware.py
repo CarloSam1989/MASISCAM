@@ -30,7 +30,9 @@ class EmpresaActivaMiddleware:
                 request.empresa_activa = perfil.empresa
                 request.perfil_activo = perfil
                 request.perfil_masiscam = perfil
-                request.rol_masiscam = perfil.rol_masiscam
+                from masiscam.models import RolMasiscam
+                request.rol_masiscam = (perfil.rol_masiscam
+                    if perfil.rol_masiscam.rol in RolMasiscam.ROLES_OPERATIVOS else None)
                 request.session["empresa_activa_id"] = perfil.empresa_id
             elif request.user.is_superuser and empresa_id:
                 request.empresa_activa = Empresa.objects.filter(pk=empresa_id, activa=True).first()

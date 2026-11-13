@@ -19,8 +19,8 @@ from .models import (AsignacionTecnica, Auditoria, ConfirmacionRecepcion, Docume
     AplicabilidadReferenciaEquipo, PiezaRequerida, EmisionInformeTecnico)
 from .recepcion_services import evento, verificar_copia_persistente, validar_fotografias, _hash
 
-OPERADORES = {'TECNICO', 'TALLER'}
-LECTORES = {'TALLER', 'TECNICO', 'PLANTA', 'OFICINA', 'GERENCIA', 'ADMIN', 'CONSULTA'}
+OPERADORES = {'TALLER'}
+LECTORES = {'TALLER', 'ADMIN', 'OFICINA'}
 INS_FIELDS = ('fecha','estado_fisico','condiciones_generales','hallazgos','observaciones','motivo_sin_evidencia')
 DIA_FIELDS = ('fecha','fallas','causas','componentes_afectados','recomendaciones','conclusiones','observaciones','motivo_sin_evidencia','repuestos')
 
@@ -105,7 +105,7 @@ def _save(obj):
 
 @transaction.atomic
 def asignar_tecnico(*, usuario, empresa, expediente_id, tecnico_id, motivo, clave):
-    exp = expediente_autorizado(usuario, empresa, expediente_id, {'PLANTA'}, True)
+    exp = expediente_autorizado(usuario, empresa, expediente_id, {'ADMIN'}, True)
     payload = {'tecnico':int(tecnico_id), 'motivo':motivo.strip()}
     old = _retry(exp, clave, 'TECNICO_ASIGNADO', payload)
     if old:
@@ -116,7 +116,7 @@ def asignar_tecnico(*, usuario, empresa, expediente_id, tecnico_id, motivo, clav
     user = get_user_model().objects.filter(pk=tecnico_id, is_active=True).first()
     rol = rol_masiscam_usuario(usuario=user, empresa=empresa) if user else None
     if not rol or rol.rol not in OPERADORES or acceso_cliente_usuario(user):
-        raise ValidationError('El responsable debe ser TECNICO o TALLER activo de la empresa.')
+        raise ValidationError('El responsable debe ser TALLER activo de la empresa.')
     if rol.rol == 'TALLER':
         from .access import equipos_taller
         if not equipos_taller(usuario=user, empresa=empresa).filter(pk=exp.registro.equipo_id).exists():
@@ -149,7 +149,7 @@ def _crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo='',
         permitir_inspeccion_pendiente=False):
     if tipo not in {'INSPECCION', 'DIAGNOSTICO'}:
         raise ValidationError('Tipo técnico inválido.')
-    exp = expediente_autorizado(usuario, empresa, expediente_id, {'TECNICO','TALLER','PLANTA'}, True)
+    exp = expediente_autorizado(usuario, empresa, expediente_id, {'TALLER', 'ADMIN'}, True)
     payload = dict(tipo=tipo, motivo=motivo.strip())
     action = tipo+'_CREADA'
     old = _retry(exp, clave, action, payload)
@@ -160,19 +160,19 @@ def _crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo='',
     role = rol_masiscam_usuario(usuario=usuario, empresa=empresa).rol
     from .models import SolicitudRepuestos
     solicitud_taller = SolicitudRepuestos.objects.filter(expediente=exp).exists()
-    if not recepcion and role != 'TALLER' and not (role == 'PLANTA' and solicitud_taller):
+    if not recepcion and role != 'TALLER' and not (role == 'ADMIN' and solicitud_taller):
         raise ValidationError('Confirme la recepción antes de iniciar inspección.')
     if recepcion:
         verificar_copia_persistente(recepcion.guia.documento)
     asignacion = exp.asignaciones_tecnicas.filter(fin__isnull=True).first()
     if not asignacion:
-        raise ValidationError('PLANTA debe asignar un técnico principal.')
+        raise ValidationError('ADMINISTRADOR debe asignar un técnico principal.')
     etapa = _etapa(exp, tipo)
     anterior = getattr(etapa, tipo.lower()) if etapa else None
     role = rol_masiscam_usuario(usuario=usuario, empresa=empresa).rol
     if anterior:
-        if role != 'PLANTA' or not motivo.strip():
-            raise PermissionDenied('PLANTA debe autorizar una revisión nueva con motivo; el autor puede continuar su borrador.')
+        if role != 'ADMIN' or not motivo.strip():
+            raise PermissionDenied('ADMINISTRADOR debe autorizar una revisión nueva con motivo; el autor puede continuar su borrador.')
     elif role not in OPERADORES or asignacion.tecnico_id != usuario.pk:
         raise PermissionDenied('El técnico asignado inicia la primera revisión.')
     data = dict(expediente=exp, tecnico=asignacion.tecnico, revision=(model.objects.filter(expediente=exp).aggregate(n=Max('revision'))['n'] or 0)+1,
@@ -239,7 +239,7 @@ def iniciar_inspeccion(*, usuario, empresa, expediente_id, clave):
 
 
 def _editable(usuario, empresa, obj, version):
-    autorizar_tecnica(usuario, empresa, {'TECNICO','TALLER'}, obj.expediente)
+    autorizar_tecnica(usuario, empresa, {'TALLER'}, obj.expediente)
     if obj.tecnico_id != usuario.pk or obj.enviado_en or not vigente(obj):
         raise PermissionDenied('Solo el autor asignado edita su borrador vigente.')
     try:
@@ -256,7 +256,7 @@ def guardar_revision(*, usuario, empresa, tipo, revision_id, version, clave, dat
     if not model:
         raise ValidationError('Tipo inválido.')
     obj = model.objects.get(pk=revision_id)
-    exp = expediente_autorizado(usuario, empresa, obj.expediente_id, {'TECNICO','TALLER'}, True)
+    exp = expediente_autorizado(usuario, empresa, obj.expediente_id, {'TALLER'}, True)
     obj.refresh_from_db()
     allowed = INS_FIELDS if model is Inspeccion else DIA_FIELDS
     if set(datos) - set(allowed):
@@ -333,7 +333,7 @@ def guardar_archivo(*, usuario, empresa, proyecto, archivo, categoria, equipo=No
 def agregar_evidencia(*,usuario,empresa,tipo,revision_id,version,clave,clase,leyenda,archivo=None,documento_id=None,referencia_id=None):
     model = Inspeccion if tipo=='INSPECCION' else Diagnostico
     obj=model.objects.get(pk=revision_id)
-    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'TECNICO','TALLER'},True)
+    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'TALLER'},True)
     obj.refresh_from_db()
     payload=dict(tipo=tipo,id=obj.pk,version=version,clase=clase,leyenda=leyenda,documento=documento_id,referencia=referencia_id,hash=_hash(archivo) if archivo else None)
     old=_retry(exp,clave,'EVIDENCIA_TECNICA_AGREGADA',payload)
@@ -376,7 +376,7 @@ def agregar_evidencia(*,usuario,empresa,tipo,revision_id,version,clave,clase,ley
 def quitar_hijo(*,usuario,empresa,tipo,revision_id,version,clave,hijo_id,pieza=False):
     model=Inspeccion if tipo=='INSPECCION' else Diagnostico
     obj=model.objects.get(pk=revision_id)
-    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'TECNICO','TALLER'},True)
+    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'TALLER'},True)
     obj.refresh_from_db()
     payload=dict(tipo=tipo,id=obj.pk,version=version,hijo=hijo_id,pieza=pieza)
     old=_retry(exp,clave,'DETALLE_TECNICO_RETIRADO',payload)
@@ -398,7 +398,7 @@ def quitar_hijo(*,usuario,empresa,tipo,revision_id,version,clave,hijo_id,pieza=F
 def enviar_revision(*,usuario,empresa,tipo,revision_id,version,clave):
     model=Inspeccion if tipo=='INSPECCION' else Diagnostico
     obj=model.objects.get(pk=revision_id)
-    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'TECNICO','TALLER'},True)
+    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'TALLER'},True)
     obj.refresh_from_db()
     payload=dict(tipo=tipo,id=obj.pk,version=version)
     old=_retry(exp,clave,'REVISION_ENVIADA',payload)
@@ -457,7 +457,7 @@ def _autores(obj):
 @transaction.atomic
 def decidir_diagnostico(*,usuario,empresa,diagnostico_id,decision,motivo,clave):
     obj=Diagnostico.objects.get(pk=diagnostico_id)
-    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'PLANTA'},True)
+    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'ADMIN'},True)
     obj.refresh_from_db()
     payload=dict(id=obj.pk,decision=decision,motivo=motivo.strip())
     old=_retry(exp,clave,'DIAGNOSTICO_DECIDIDO',payload)
@@ -483,7 +483,7 @@ def decidir_diagnostico(*,usuario,empresa,diagnostico_id,decision,motivo,clave):
 def referencias_visibles(usuario,empresa):
     rol=autorizar_tecnica(usuario,empresa)
     qs=ReferenciaTecnica.objects.filter(empresa=empresa)
-    if rol.rol!='PLANTA':
+    if rol.rol!='ADMIN':
         qs=qs.exclude(estado='BORRADOR')
     if rol.rol in OPERADORES:
         equipos=AsignacionTecnica.objects.filter(tecnico=usuario,fin__isnull=True,expediente__empresa=empresa).values('expediente__registro__equipo_id')
@@ -499,7 +499,7 @@ def referencias_visibles(usuario,empresa):
         qs = qs.filter(Q(estado='PUBLICADA', aplicabilidades__activa=True, aplicabilidades__equipo_id__in=scope.values('registro__equipo_id')) |
             Q(partes__piezarequerida__diagnostico__expediente__in=scope) |
             Q(citas_tecnicas__diagnostico__expediente__in=scope) | Q(citas_tecnicas__inspeccion__expediente__in=scope))
-    if rol.rol in {'TALLER', 'PLANTA'}:
+    if rol.rol in {'TALLER', 'ADMIN'}:
         provisionales = ReferenciaTecnica.objects.filter(empresa=empresa, estado='BORRADOR',
             expediente_trabajo__in=expedientes_operativos(usuario, empresa))
         qs = qs | provisionales
@@ -521,7 +521,7 @@ def plano_de_trabajo(ref, exp):
 def seleccion_editable(obj):
     from .models import SolicitudRepuestos
     if SolicitudRepuestos.objects.filter(diagnostico=obj).exists():
-        raise ValidationError('Las piezas enviadas a OFICINA están congeladas. PLANTA debe abrir una nueva revisión.')
+        raise ValidationError('Las piezas enviadas a OFICINA están congeladas. ADMINISTRADOR debe abrir una nueva revisión.')
 
 
 def _validar_pieza(p):
@@ -543,7 +543,7 @@ def _validar_pieza(p):
 @transaction.atomic
 def agregar_pieza(*,usuario,empresa,diagnostico_id,version,clave,datos,pieza_id=None):
     obj=Diagnostico.objects.get(pk=diagnostico_id)
-    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'TECNICO','TALLER'},True)
+    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'TALLER'},True)
     obj.refresh_from_db()
     payload=dict(id=obj.pk,version=version,datos=datos)
     action='PIEZA_REQUERIDA_EDITADA' if pieza_id else 'PIEZA_REQUERIDA_AGREGADA'
@@ -599,7 +599,7 @@ def agregar_pieza(*,usuario,empresa,diagnostico_id,version,clave,datos,pieza_id=
 
 
 def _liblock(usuario,empresa):
-    autorizar_tecnica(usuario,empresa,{'PLANTA'})
+    autorizar_tecnica(usuario,empresa,{'ADMIN'})
     Empresa.objects.select_for_update().get(pk=empresa.pk,activa=True)
 
 
@@ -802,10 +802,10 @@ def _aprobado(obj):
 @transaction.atomic
 def reservar_informe(*,usuario,empresa,diagnostico_id,clave,nueva_version=False,motivo=''):
     obj=Diagnostico.objects.get(pk=diagnostico_id)
-    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'OFICINA','PLANTA','TECNICO','TALLER'},True)
+    exp=expediente_autorizado(usuario,empresa,obj.expediente_id,{'OFICINA', 'ADMIN', 'TALLER'},True)
     obj.refresh_from_db()
     if not _aprobado(obj):
-        raise ValidationError('Solo se emite un diagnóstico vigente aprobado independientemente por PLANTA.')
+        raise ValidationError('Solo se emite un diagnóstico vigente aprobado independientemente por ADMINISTRADOR.')
     try:
         clave=uuid.UUID(str(clave))
     except (ValueError,TypeError):

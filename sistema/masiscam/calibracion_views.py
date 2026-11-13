@@ -38,7 +38,7 @@ def inicio(request):
 @masiscam_access_required
 def plantillas(request):
     role=s.autorizar(request.user,request.empresa_activa).rol
-    if request.method=='POST': s.autorizar(request.user,request.empresa_activa,{'PLANTA'})
+    if request.method=='POST': s.autorizar(request.user,request.empresa_activa,{'ADMIN'})
     form=PlantillaForm(request.POST or None,request.FILES or None,empresa=request.empresa_activa)
     points=PuntosFormSet(request.POST or None,prefix='puntos')
     if request.method=='POST' and form.is_valid() and points.is_valid():

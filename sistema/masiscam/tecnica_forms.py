@@ -24,7 +24,7 @@ class AsignacionForm(BaseForm):
 
     def __init__(self,*args,empresa,**kwargs):
         super().__init__(*args,**kwargs)
-        ids=RolMasiscam.objects.filter(perfil__empresa=empresa,activo=True,rol__in=['TECNICO','TALLER']).values('perfil__user_id')
+        ids=RolMasiscam.objects.filter(perfil__empresa=empresa,activo=True,rol='TALLER').values('perfil__user_id')
         self.fields['tecnico_id'].queryset=get_user_model().objects.filter(pk__in=ids,is_active=True)
 
 

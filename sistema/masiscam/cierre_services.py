@@ -154,7 +154,7 @@ def vigente(informe):
 
 @transaction.atomic
 def reservar(*,usuario,empresa,expediente_id,clave,nueva_version=False,motivo=''):
-    exp=expediente(usuario,empresa,expediente_id,{'OFICINA','TECNICO','TALLER'},True)
+    exp=expediente(usuario,empresa,expediente_id,{'OFICINA', 'TALLER'},True)
     if t.autorizar_tecnica(usuario,empresa).rol == 'TALLER' and not exp.solicitudrepuestos_set.exists():
         raise PermissionDenied('La generaci?n operativa requiere una solicitud de taller.')
     payload=dict(nueva_version=bool(nueva_version),motivo=motivo)
@@ -178,7 +178,7 @@ def reservar(*,usuario,empresa,expediente_id,clave,nueva_version=False,motivo=''
 def generar(informe_id):
     from .cierre_pdf import construir_informe
     em=InformeFinal.objects.get(pk=informe_id)
-    autorizar(em.autor,em.expediente.empresa,{'OFICINA','TECNICO','TALLER'},em.expediente)
+    autorizar(em.autor,em.expediente.empresa,{'OFICINA', 'TALLER'},em.expediente)
     if em.documento_id:
         verificar_copia_persistente(em.documento);return em.documento_id
     photos=[]
@@ -219,7 +219,7 @@ def autores(em):
 @transaction.atomic
 def revisar(*,usuario,empresa,informe_id,clave,decision,motivo):
     em=InformeFinal.objects.get(pk=informe_id)
-    exp=expediente(usuario,empresa,em.expediente_id,{'PLANTA'},True);em.refresh_from_db()
+    exp=expediente(usuario,empresa,em.expediente_id,{'ADMIN'},True);em.refresh_from_db()
     payload=dict(informe=em.pk,decision=decision,motivo=motivo)
     old=t._retry(exp,clave,'FINAL_REVISION',payload)
     if old: return RevisionInformeFinal.objects.get(pk=old)
@@ -238,7 +238,7 @@ def revisar(*,usuario,empresa,informe_id,clave,decision,motivo):
 @transaction.atomic
 def cerrar(*,usuario,empresa,informe_id,clave,motivo):
     em=InformeFinal.objects.get(pk=informe_id)
-    exp=expediente(usuario,empresa,em.expediente_id,{'GERENCIA'},True);em.refresh_from_db()
+    exp=expediente(usuario,empresa,em.expediente_id,{'ADMIN'},True);em.refresh_from_db()
     payload=dict(informe=em.pk,motivo=motivo)
     old=t._retry(exp,clave,'EXPEDIENTE_CERRADO',payload)
     if old: return CierreExpediente.objects.get(pk=old)

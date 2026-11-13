@@ -50,7 +50,7 @@ def detalle(request,pk):
             actions=[op for op in actions if op not in {'actividad','uso','foto','resultado','revision'}]
     # Only the accepted work scope is operational; never disclose the budget,
     # representative identity or verification evidence to technicians/plant.
-    commercial=rol in {'GERENCIA','OFICINA'}
+    commercial=rol in {'OFICINA'}
     receipts=list(RecepcionRepuesto.objects.filter(expediente=exp).order_by('-pk'))
     pieces=list(PiezaRequerida.objects.filter(diagnostico__expediente=exp).order_by('pk'))
     for p in pieces:

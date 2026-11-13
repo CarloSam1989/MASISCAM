@@ -136,7 +136,7 @@ if (root) {
         el('p', `${piece.cantidad} ${piece.unidad} · ${piece.accion}`), el('p', piece.condicion));
       if (piece.observaciones) card.append(el('p', piece.observaciones));
       const source = piece.snapshot;
-      if (source.provisional) card.append(el('small', 'Origen: plano provisional de TALLER; sujeto a revisión de PLANTA.'));
+      if (source.provisional) card.append(el('small', 'Origen: plano provisional de TALLER; sujeto a revisión de ADMINISTRADOR.'));
       if (source.referencia) card.append(el('small', `${source.referencia} r${source.revision} · posición ${source.posicion}${source.plano ? ` · mapa v${source.plano.version}, página ${source.plano.pagina}` : ' · selección por listado'}`));
       if (piece.fuente_url) {
         const sourceLink = el('a', 'Abrir plano fuente'); sourceLink.href = piece.fuente_url; card.append(sourceLink);
@@ -259,7 +259,7 @@ if (root) {
     state.data = await request(root.dataset.datos);
     list(); selected();
     $('#pl-map-label').textContent = state.data.mapa_version
-      ? `Mapa v${state.data.mapa_version} · ${state.data.mapa_provisional ? 'provisional, pendiente de PLANTA' : 'publicado'} · coordenadas normalizadas`
+      ? `Mapa v${state.data.mapa_version} · ${state.data.mapa_provisional ? 'provisional, pendiente de ADMINISTRADOR' : 'publicado'} · coordenadas normalizadas`
       : 'Mapa sin configurar: puedes continuar por el listado y marcar posiciones si tienes permiso.';
   }
   async function start() {

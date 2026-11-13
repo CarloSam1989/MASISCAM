@@ -25,7 +25,7 @@ def expedientes(request):
     from django.core.paginator import Paginator
     qs = expedientes_autorizados(request.user, request.empresa_activa).select_related("cliente_contractual", "registro__equipo")
     return render(request, "masiscam/recepcion_listado.html", {"pagina": Paginator(qs, 25).get_page(request.GET.get("page")),
-        "puede_recepcion": request.rol_masiscam and request.rol_masiscam.rol in {"OFICINA", "TALLER"}})
+        "puede_recepcion": request.rol_masiscam and request.rol_masiscam.rol in {'OFICINA', 'TALLER'}})
 
 
 @require_http_methods(["GET", "POST"])
@@ -80,7 +80,7 @@ def _detalle(request, exp, form=None, status=200):
             pendientes.append('Indica el motivo de ausencia de guía de remisión.')
         if not habilitada(): pendientes.append('El responsable del sistema debe habilitar la confirmación de recepción.')
     elif taller and not asignado:
-        pendientes.append('PLANTA debe asignar el responsable para continuar la inspección y selección de piezas.')
+        pendientes.append('ADMINISTRADOR debe asignar el responsable para continuar la inspección y selección de piezas.')
     elif taller and not settings.MASISCAM_TECNICA_LOCAL:
         pendientes.append('El responsable del sistema debe habilitar el módulo técnico para continuar.')
     guias=list(exp.guias.select_related('documento').order_by('-version'))
@@ -93,7 +93,7 @@ def _detalle(request, exp, form=None, status=200):
     pasos=[dict(nombre=n,estado='Listo' if i==0 else 'Pendiente') for i,n in enumerate(
         ['Registrar equipo','Seleccionar piezas','Oficina cotiza y envía','Taller repara','Generar informe'])]
     paso=2
-    if settings.MASISCAM_TECNICA_LOCAL and request.rol_masiscam.rol in {'TALLER','OFICINA','PLANTA','GERENCIA'}:
+    if settings.MASISCAM_TECNICA_LOCAL and request.rol_masiscam.rol in {'TALLER', 'OFICINA', 'ADMIN'}:
         from .flujo_services import resumen
         try: estado=resumen(exp,request.user)
         except (PermissionDenied,ValidationError): pass
@@ -106,7 +106,7 @@ def _detalle(request, exp, form=None, status=200):
         "snapshot": exp.recepcion.snapshot, "clave_emision": uuid.uuid4(),
         "confirmacion": confirmacion, "cierre_local": habilitada(),
         "form_confirmacion": form if form is not None else ConfirmacionRecepcionForm(recepcion=exp.recepcion),
-        "puede_recepcion": request.rol_masiscam and request.rol_masiscam.rol in {"OFICINA", "TALLER"}}, status=status)
+        "puede_recepcion": request.rol_masiscam and request.rol_masiscam.rol in {'OFICINA', 'TALLER'}}, status=status)
 
 
 @require_POST

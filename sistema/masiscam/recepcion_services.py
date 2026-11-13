@@ -21,7 +21,7 @@ def autorizar(usuario, empresa, escribir=False):
     if not usuario.is_authenticated or not usuario.is_active or not empresa or not empresa.activa or acceso_cliente_usuario(usuario):
         raise PermissionDenied("Recepción no autorizada.")
     rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa)
-    permitidos = {"OFICINA", "TALLER"} if escribir else {"OFICINA", "TALLER", "PLANTA", "GERENCIA", "ADMIN", "CONSULTA"}
+    permitidos = {'OFICINA', 'TALLER'} if escribir else {'OFICINA', 'TALLER', 'ADMIN'}
     if not rol or rol.rol not in permitidos:
         raise PermissionDenied("El rol no permite esta operación de recepción.")
     return rol

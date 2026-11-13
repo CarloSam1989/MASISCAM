@@ -80,7 +80,7 @@ def plano(request, pk):
     from .flujo_forms import ComponenteTrabajoForm
     return render(request, 'masiscam/plano.html', dict(referencia=ref, diagnostico=obj,
         componente_form=ComponenteTrabajoForm() if editable and tecnica.plano_de_trabajo(ref, obj.expediente) else None,
-        editable_plano=editable, configurar=(request.rol_masiscam.rol == 'PLANTA' and
+        editable_plano=editable, configurar=(request.rol_masiscam.rol == 'ADMIN' and
             (ref.estado == 'PUBLICADA' or ref.estado == 'BORRADOR' and ref.expediente_trabajo_id)
             or editable and request.rol_masiscam.rol == 'TALLER' and tecnica.plano_de_trabajo(ref, obj.expediente))))
 
@@ -135,7 +135,7 @@ def plano_componente(request, pk):
 @masiscam_access_required
 @errores_api
 def plano_mapa(request, pk):
-    rol = tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'PLANTA', 'TALLER'})
+    rol = tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN', 'TALLER'})
     if rol.rol == 'TALLER':
         ref = ReferenciaTecnica.objects.filter(pk=pk, empresa=request.empresa_activa,
             tipo='PLANO', estado='BORRADOR', expediente_trabajo__isnull=False).first()
@@ -154,7 +154,7 @@ def plano_mapa(request, pk):
     mapa = svc.guardar_mapa(usuario=request.user, empresa=request.empresa_activa, referencia_id=pk,
         base_version=version, posiciones=posiciones, clave=key)
     return JsonResponse({'version': mapa.version, 'provisional': mapa.provisional,
-        'mensaje': 'Posiciones provisionales guardadas; pendientes de revisión de PLANTA.' if mapa.provisional else 'Posiciones revisadas y publicadas en una nueva versión.'})
+        'mensaje': 'Posiciones provisionales guardadas; pendientes de revisión de ADMINISTRADOR.' if mapa.provisional else 'Posiciones revisadas y publicadas en una nueva versión.'})
 
 
 class SeleccionForm(BaseForm):
@@ -174,7 +174,7 @@ class SeleccionForm(BaseForm):
 @errores_api
 def plano_pieza(request, pk):
     obj = get_object_or_404(Diagnostico, pk=pk)
-    tecnica.expediente_autorizado(request.user, request.empresa_activa, obj.expediente_id, {'TECNICO','TALLER'})
+    tecnica.expediente_autorizado(request.user, request.empresa_activa, obj.expediente_id, {'TALLER'})
     op = request.POST.get('operacion', 'guardar')
     form = SeleccionForm(request.POST) if op == 'guardar' else BaseForm(request.POST)
     if not form.is_valid():
@@ -218,7 +218,7 @@ class ImportarForm(BaseForm):
 @local
 @masiscam_access_required
 def plano_importar(request):
-    tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'PLANTA'})
+    tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN'})
     from pathlib import Path
     seed = (Path(__file__).parent / 'data/m20a_hnrc_fig1_revision.csv').read_text(encoding='utf-8')
     form = ImportarForm(request.POST or None, request.FILES or None, empresa=request.empresa_activa,

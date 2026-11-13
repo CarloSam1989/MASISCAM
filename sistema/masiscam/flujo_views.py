@@ -20,7 +20,7 @@ from .models import SolicitudRepuestos,EnvioRepuestos,Documento
 @require_GET
 @masiscam_access_required
 def bandeja(request):
-    role=t.autorizar_tecnica(request.user,request.empresa_activa,{'OFICINA','PLANTA','GERENCIA'}).rol
+    role=t.autorizar_tecnica(request.user,request.empresa_activa,{'OFICINA', 'ADMIN'}).rol
     from django.core.paginator import Paginator
     qs=SolicitudRepuestos.objects.filter(expediente__empresa=request.empresa_activa).select_related(
         'expediente__cliente_contractual','expediente__registro__equipo','autor','diagnostico').order_by('-creado_en')
@@ -29,7 +29,7 @@ def bandeja(request):
     if buscar: qs=qs.filter(Q(expediente__numero__icontains=buscar)|Q(expediente__cliente_contractual__ruc__icontains=buscar)|Q(expediente__registro__equipo__numero_serie__icontains=buscar))
     pagina=Paginator(qs,20).get_page(request.GET.get('page'))
     for obj in pagina:
-        obj.estado_operativo='Diagnóstico pendiente de PLANTA' if not t._aprobado(obj.diagnostico) else 'En gestión de oficina'
+        obj.estado_operativo='Diagnóstico pendiente de ADMINISTRADOR' if not t._aprobado(obj.diagnostico) else 'En gestión de oficina'
         if obj.envios.exists(): obj.estado_operativo='Repuestos enviados' if obj.envios.filter(confirmacion__isnull=True).exists() else 'Recibidos en taller'
     return render(request,'masiscam/flujo_bandeja.html',dict(pagina=pagina,buscar=buscar,rol=role))
 
@@ -115,24 +115,24 @@ def contexto(request,exp,errores=None):
             context['accion']=None
             plano=planos.first()
             if plano:
-                context['mensaje']=f'El plano {plano.codigo} está publicado y aplicable, pero no tiene componentes registrados. PLANTA debe completar la lista en la biblioteca técnica; puedes agregar piezas manualmente mientras tanto.'
+                context['mensaje']=f'El plano {plano.codigo} está publicado y aplicable, pero no tiene componentes registrados. ADMINISTRADOR debe completar la lista en la biblioteca técnica; puedes agregar piezas manualmente mientras tanto.'
             else:
-                context['mensaje']='No hay un plano publicado y aplicable a este equipo. PLANTA debe publicar el PDF y asignar su aplicabilidad. Puedes agregar piezas manualmente mientras se gestiona.'
-    elif (context['rol']=='PLANTA' and ins and not ins.enviado_en and diag and not diag.enviado_en):
+                context['mensaje']='No hay un plano publicado y aplicable a este equipo. ADMINISTRADOR debe publicar el PDF y asignar su aplicabilidad. Puedes agregar piezas manualmente mientras se gestiona.'
+    elif (context['rol']=='ADMIN' and ins and not ins.enviado_en and diag and not diag.enviado_en):
         plano=planos.filter(partes_count__gt=0).first()
         if not plano:
             plano=planos.first()
             if plano:
                 context['accion']=dict(texto='Completar componentes del plano',
                     url=reverse('masiscam:biblioteca_referencia',args=[plano.pk]),op=None)
-                context['mensaje']=f'El plano {plano.codigo} está publicado, pero todavía no tiene componentes. PLANTA debe registrar la lista de piezas para habilitar la selección por componente.'
+                context['mensaje']=f'El plano {plano.codigo} está publicado, pero todavía no tiene componentes. ADMINISTRADOR debe registrar la lista de piezas para habilitar la selección por componente.'
             else:
                 context['accion']=dict(texto='Gestionar planos técnicos',url=reverse('masiscam:biblioteca'),op=None)
                 context['mensaje']='No hay un plano publicado y aplicable a este equipo. Publica el documento de referencia y registra su aplicabilidad desde la biblioteca técnica.'
         else:
             context['accion']=dict(texto=f'Revisar posiciones de {plano.codigo}',
                 url=reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diag.pk}&flujo=1',op=None)
-            context['mensaje']='La lista de componentes ya está disponible. PLANTA puede configurar las posiciones; TALLER puede seleccionar componentes desde el listado mientras tanto.'
+            context['mensaje']='La lista de componentes ya está disponible. ADMINISTRADOR puede configurar las posiciones; TALLER puede seleccionar componentes desde el listado mientras tanto.'
     context.update(expediente=exp,equipo=exp.registro.equipo,inspeccion=ins,forms=forms,envio=envio,
         mantenimientos=t.expedientes_operativos(request.user,request.empresa_activa).filter(registro__equipo=exp.registro.equipo).order_by('-correlativo') if context['rol']=='TALLER' else [],
         errores_generales=[str(error) for form in (errores or {}).values() for errors in form.errors.values() for error in errors],
@@ -225,7 +225,7 @@ def detalle(request,pk):
             elif op=='recibir' and sol:
                 s.confirmar_envio(**common,envio_id=envio.pk,clave=key,fecha=data['fecha'],lineas=form.filas(),observaciones=data['observaciones'])
             elif op=='final':
-                s.expediente(request.user,request.empresa_activa,pk,{'TALLER','OFICINA'})
+                s.expediente(request.user,request.empresa_activa,pk,{'TALLER', 'OFICINA'})
                 cal=ctx['calibracion']
                 if not cal: raise ValidationError('Calibración aprobada pendiente.')
                 informe=s.generar_final_automatico(cal.pk,propagar=True)
@@ -252,7 +252,7 @@ def documento(request,pk,documento_pk):
         for pieza in obj.snapshot['piezas']:
             ids.update(f['documento'] for f in pieza['fotos'])
     ids.update(EnvioRepuestos.objects.filter(expediente=exp).values_list('documento_id',flat=True))
-    if role in {'OFICINA','GERENCIA'}:
+    if role in {'OFICINA'}:
         ids.update(s.AdquisicionRepuesto.objects.filter(expediente=exp,documento__isnull=False).values_list('documento_id',flat=True))
     doc=get_object_or_404(Documento,pk=documento_pk,pk__in=ids)
     return _archivo(doc,request.empresa_activa,inline=request.GET.get('ver')=='1')

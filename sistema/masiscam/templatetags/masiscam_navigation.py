@@ -31,7 +31,7 @@ def puede_ver_tecnica(context):
     request=context.get('request')
     role=getattr(request,'rol_masiscam',None)
     return bool(getattr(settings,'MASISCAM_TECNICA_LOCAL',False) and request and request.user.is_authenticated
-        and not getattr(request,'cliente_usuario',None) and role and role.rol in {'TECNICO','PLANTA','GERENCIA','ADMIN','CONSULTA'})
+        and not getattr(request,'cliente_usuario',None) and role and role.rol in {'TALLER', 'ADMIN', 'OFICINA'})
 
 
 @register.simple_tag(takes_context=True)
@@ -39,7 +39,7 @@ def puede_ver_recepcion(context):
     request = context.get("request")
     rol = getattr(request, "rol_masiscam", None)
     return bool(request and request.user.is_authenticated and not getattr(request, "cliente_usuario", None)
-                and rol and rol.rol in {"OFICINA", "PLANTA", "GERENCIA", "ADMIN", "CONSULTA"})
+                and rol and rol.rol in {'OFICINA', 'ADMIN'})
 
 
 @register.simple_tag(takes_context=True)
@@ -79,9 +79,9 @@ def breadcrumbs(context):
         exp = getattr(revision, 'expediente', None)
     equipo_operativo = context.get('equipo') or (exp.registro.equipo if exp else None)
     labels = {
-        'dashboard':'Inicio', 'taller_inicio':'Mis equipos', 'taller_estado':'Estado del mantenimiento',
+        'dashboard':'Inicio', 'taller_inicio':'Mis equipos', 'taller_estado':'Mis trabajos',
         'taller_cuenta':'Mi cuenta', 'ficha_crear':'Registrar equipo', 'equipo_crear':'Registrar equipo',
-        'expedientes':'Mis expedientes' if role=='TALLER' else 'Expedientes',
+        'expedientes':'Mis trabajos' if role=='TALLER' else 'Expedientes',
         'recepcion_crear':'Registrar recepción', 'expediente_detalle':'Recepción', 'recepcion_finalizar':'Recepción',
         'flujo_detalle':'Etapas del mantenimiento', 'flujo_bandeja':'Solicitudes de taller',
         'tecnica_inicio':'Trabajo técnico', 'tecnica_expediente':'Trabajo técnico',
@@ -91,7 +91,7 @@ def breadcrumbs(context):
         'calibracion_expediente':'Calibración', 'calibracion_revision':'Mediciones y calibración',
         'calibracion_plantillas':'Protocolos de calibración', 'calibracion_plantilla':'Protocolo de calibración',
         'cierre_dashboard':'Seguimiento', 'cierre_detalle':'Informe final y cierre', 'cierre_historial':'Historial',
-        'biblioteca':'Planos técnicos' if role=='TALLER' else 'Biblioteca técnica',
+        'biblioteca':'Planos y piezas' if role=='TALLER' else 'Biblioteca técnica',
         'biblioteca_referencia':'Referencia técnica', 'biblioteca_referencia_crear':'Nueva referencia',
         'biblioteca_referencia_editar':'Editar referencia', 'biblioteca_componentes':'Componentes',
         'biblioteca_componente_editar':'Componente', 'plano':'Plano y componentes',
@@ -106,24 +106,24 @@ def breadcrumbs(context):
                 trail.append(('Mis equipos',reverse('masiscam:taller_inicio')+'#trabajos-titulo'))
                 trail.append((equipo_operativo.nombre,reverse('masiscam:taller_equipo',args=[equipo_operativo.pk])))
             elif exp:
-                listing='tecnica_inicio' if role=='TECNICO' else 'expedientes'
+                listing='tecnica_inicio' if role=='TALLER' else 'expedientes'
                 trail.append(('Expedientes',reverse('masiscam:'+listing)))
             if exp:
                 assigned = role!='TALLER' or exp.asignaciones_tecnicas.filter(tecnico=request.user,fin__isnull=True).exists()
-                target = 'tecnica_expediente' if role=='TECNICO' else 'flujo_detalle' if role in {'TALLER','OFICINA','PLANTA','GERENCIA'} and assigned and settings.MASISCAM_TECNICA_LOCAL else 'expediente_detalle'
+                target = 'tecnica_expediente' if role=='TALLER' else 'flujo_detalle' if role in {'TALLER', 'OFICINA', 'ADMIN'} and assigned and settings.MASISCAM_TECNICA_LOCAL else 'expediente_detalle'
                 trail.append((exp.numero,reverse('masiscam:'+target,args=[exp.pk])))
         elif vista.startswith('biblioteca') or vista.startswith('plano'):
-            trail.append(('Planos técnicos' if role=='TALLER' else 'Biblioteca técnica',reverse('masiscam:biblioteca')))
+            trail.append(('Planos y piezas' if role=='TALLER' else 'Biblioteca técnica',reverse('masiscam:biblioteca')))
         label=labels.get(vista, context.get('titulo') or 'Detalle')
         if vista=='taller_equipo':
             if exp: trail.append(('Etapas del mantenimiento',None))
-        else:
+        elif not trail or label != trail[-1][0]:
             trail.append((label,None))
         # The current page is text; never offer a circular last breadcrumb.
-        if vista==home: trail=[('Inicio de taller' if role=='TALLER' else 'Inicio',None)]
+        if vista==home: trail=[('Inicio',None)]
         return [{'label':label,'url':url if request.user.is_authenticated and i<len(trail)-1 else None}
                 for i,(label,url) in enumerate(trail)]
-    items = [("Dashboard", reverse("masiscam:dashboard"))]
+    items = [("Inicio", reverse("masiscam:dashboard"))]
     equipo = context.get("equipo")
     cliente = context.get("cliente") or context.get("cliente_seleccionado")
     producto = context.get("producto_codigo")
@@ -192,7 +192,7 @@ def flujo_operativo(context):
     request=context.get('request');exp=context.get('expediente')
     if not request or request.GET.get('flujo')!='1' or not exp: return None
     role=getattr(request,'rol_masiscam',None)
-    if not role or role.rol not in {'TALLER','OFICINA','PLANTA','GERENCIA'}: return None
+    if not role or role.rol not in {'TALLER', 'OFICINA', 'ADMIN'}: return None
     from masiscam.flujo_services import resumen
     from django.core.exceptions import PermissionDenied,ValidationError
     try: return resumen(exp,request.user)
@@ -203,5 +203,5 @@ def flujo_operativo(context):
 def puede_ver_solicitudes_taller(context):
     from django.conf import settings
     request=context.get('request');role=getattr(request,'rol_masiscam',None)
-    return bool(role and role.rol in {'OFICINA','PLANTA','GERENCIA'} and
+    return bool(role and role.rol in {'OFICINA', 'ADMIN'} and
         getattr(settings,'MASISCAM_TECNICA_LOCAL',False) and getattr(settings,'MASISCAM_OPERACION_LOCAL',False))

@@ -14,14 +14,9 @@ from .usuario_forms import AdministradorCrearForm, UsuarioClaveForm, UsuarioEdit
 
 
 ALCANCE_OPERATIVO = {
-    "TALLER": "Alta exclusiva de equipos; recepción, planos aplicables, inspección, diagnóstico, repuestos, reparación comercialmente autorizada y calibración de sus equipos con asignación vigente. Sin editar clientes ni planos maestros, autorizar comercialmente, aprobar trabajos o cerrar expedientes.",
-    "ADMIN": "Lectura técnica de empresa; administración heredada. Sin decisiones técnicas o comerciales.",
-    "CONSULTA": "Lectura histórica de empresa. Sin modificaciones ni aprobaciones.",
-    "CLIENTE": "Solo productos propios y documentos autorizados. Sin biblioteca ni operaciones internas.",
-    "OFICINA": "Crear y editar clientes; recibir solicitudes de taller, cotizar y gestionar aceptación comercial documentada bajo la política vigente; registrar adquisición y envío de repuestos y preparar documentación. Sin aprobación técnica ni conformidad propia.",
-    "TECNICO": "Consultar clientes de expedientes asignados, sin modificarlos; expedientes asignados y biblioteca aplicable; edición de sus borradores técnicos, reparación autorizada y calibración. Sin aprobar trabajos ni consultar respaldos comerciales.",
-    "PLANTA": "Asignación técnica, biblioteca, revisión técnica independiente, protocolos de calibración y recepción de repuestos. Sin decisión comercial ni cierre administrativo.",
-    "GERENCIA": "Propuestas y decisiones comerciales con respaldo y política válida; cierre administrativo con revisión técnica previa. Sin sustituir PLANTA.",
+    "ADMIN": "Administrar usuarios, aprobar y publicar planos, componentes, aplicabilidad, revisiones, protocolos y configuraciones; revisar trabajos y cerrar expedientes. Sin aceptar comercialmente en nombre del cliente.",
+    "TALLER": "Registrar equipos propios, inspeccionar, cargar planos y posiciones provisionales, seleccionar piezas, reparar con autorizaci\u00f3n comercial v\u00e1lida y calibrar. Sin aprobar sus trabajos.",
+    "OFICINA": "Gestionar clientes, cotizaciones, compras, ventas, aceptaci\u00f3n comercial documentada y env\u00edos. Sin aprobar trabajos t\u00e9cnicos.",
 }
 
 
@@ -50,11 +45,11 @@ def usuarios(request):
     roles = list(_roles(request).order_by("perfil__user__username"))
     for rol in roles:
         rol.gestionable = _gestionable(request, rol)
-        rol.acceso_activo = rol.activo and rol.perfil.activo and rol.perfil.user.is_active
+        rol.acceso_activo = rol.rol in RolMasiscam.ROLES_OPERATIVOS and rol.activo and rol.perfil.activo and rol.perfil.user.is_active
         rol.permisos_efectivos = sorted(PERMISOS_ROL.get(rol.rol, set())) if rol.acceso_activo else []
         rol.privilegio_tecnico = rol.perfil.user.is_superuser
         rol.alcance_operativo = ALCANCE_OPERATIVO.get(rol.rol, "Sin operaciones autorizadas.") if rol.acceso_activo else "Sin acceso."
-    pendientes = len({rol.perfil.user_id for rol in roles if rol.rol == RolMasiscam.Rol.CONSULTA})
+    pendientes = len({rol.perfil.user_id for rol in roles if rol.rol not in RolMasiscam.ROLES_OPERATIVOS})
     return render(request, "masiscam/usuarios.html", {
         "roles": roles, "consulta_pendientes": pendientes, "empresa_usuarios": request.empresa_activa,
     })
@@ -92,11 +87,14 @@ def usuario_editar(request, pk):
         try:
             with transaction.atomic():
                 form.save()
+                rol_anterior = rol.rol
+                cliente_anterior = rol.cliente_id
                 rol.rol = form.cleaned_data["rol"]
                 rol.cliente = form.cleaned_data["cliente"]
                 rol.save(update_fields=["rol", "cliente"])
                 auditar(empresa=request.empresa_activa, usuario=request.user,
-                        accion="USUARIO_EDITADO", objeto=rol)
+                        accion="USUARIO_EDITADO", objeto=rol, detalle={"rol_anterior": rol_anterior, "rol_nuevo": rol.rol,
+                            "cliente_anterior": cliente_anterior})
         except IntegrityError:
             form.add_error(None, "No se pudo guardar el usuario. Compruebe que el nombre de usuario sea único.")
         else:
