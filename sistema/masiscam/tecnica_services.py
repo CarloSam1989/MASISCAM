@@ -671,14 +671,19 @@ def guardar_referencia(*,usuario,empresa,clave,datos,archivo=None,referencia_id=
         n=ReferenciaTecnica.objects.filter(empresa=empresa,codigo=data.get('codigo')).aggregate(n=Max('revision'))['n'] or 0
         if n and not source:
             raise ValidationError('Seleccione la versión fuente para crear otra revisión del código.')
-        obj=ReferenciaTecnica(empresa=empresa,documento=doc,autor=usuario,revision=n+1,sustituye=source,**data)
+        obj=ReferenciaTecnica(empresa=empresa,documento=doc,autor=usuario,revision=n+1,sustituye=source,
+            expediente_trabajo_id=source.expediente_trabajo_id if source else None,**data)
     _save(obj)
     if source and not referencia_id:
-        for part in source.partes.all():
-            values={f.name:getattr(part,f.name) for f in ParteReferenciaTecnica._meta.fields if f.name not in {'id','referencia'}}
-            ParteReferenciaTecnica.objects.create(referencia=obj,**values)
+        copiar_partes_referencia(source, obj)
     _libevent(empresa,usuario,clave,'BIBLIOTECA_REFERENCIA',payload,obj.pk)
     return obj
+
+
+def copiar_partes_referencia(source, obj):
+    for part in source.partes.all():
+        values={f.name:getattr(part,f.name) for f in ParteReferenciaTecnica._meta.fields if f.name not in {'id','referencia'}}
+        ParteReferenciaTecnica.objects.create(referencia=obj,**values)
 
 
 @transaction.atomic
@@ -689,6 +694,8 @@ def estado_referencia(*,usuario,empresa,referencia_id,estado,clave):
     if old:
         return ReferenciaTecnica.objects.get(pk=old)
     obj=ReferenciaTecnica.objects.get(pk=referencia_id,empresa=empresa)
+    if estado == 'PUBLICADA' and obj.expediente_trabajo_id:
+        validar_revisor_plano(usuario, obj)
     if (obj.estado,estado) not in {('BORRADOR','PUBLICADA'),('PUBLICADA','RETIRADA')}:
         raise ValidationError('Transición de biblioteca no permitida.')
     documento_valido(obj.documento,empresa)
@@ -698,6 +705,14 @@ def estado_referencia(*,usuario,empresa,referencia_id,estado,clave):
     if estado=='PUBLICADA' and settings.GOOGLE_DRIVE_ENABLED:
         transaction.on_commit(lambda:_encolar_documento(obj.documento_id))
     return obj
+
+
+def validar_revisor_plano(usuario, ref):
+    source = ref
+    while source:
+        if source.autor_id == usuario.pk:
+            raise PermissionDenied('El autor del plano o de sus versiones no puede aprobar su propio trabajo.')
+        source = source.sustituye
 
 
 @transaction.atomic

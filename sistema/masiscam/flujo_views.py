@@ -133,6 +133,24 @@ def contexto(request,exp,errores=None):
             context['accion']=dict(texto=f'Revisar posiciones de {plano.codigo}',
                 url=reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diag.pk}&flujo=1',op=None)
             context['mensaje']='La lista de componentes ya está disponible. ADMINISTRADOR puede configurar las posiciones; TALLER puede seleccionar componentes desde el listado mientras tanto.'
+    versiones_plano = {}
+    for plano in planos:
+        versiones_plano.setdefault(plano.codigo, plano)
+    pendientes_plano = [p for p in versiones_plano.values() if p.expediente_trabajo_id and p.estado == 'BORRADOR']
+    if context['rol'] == 'ADMIN' and pendientes_plano:
+        pendiente = pendientes_plano[0]
+        context['accion'] = dict(texto='Revisar plano',
+            url=reverse('masiscam:biblioteca_referencia', args=[pendiente.pk]), op=None)
+        context['mensaje'] = 'Visualiza el PDF y aprueba o rechaza su uso para este equipo. No se exige un despiece completo.'
+    from .models import Auditoria
+    decisiones = Auditoria.objects.filter(empresa=exp.empresa, expediente=exp,
+        accion='PLANO_REVISADO', objeto_tipo='ReferenciaTecnica').order_by('pk')
+    rechazos = {}
+    for decision in decisiones:
+        rechazos[decision.objeto_id] = decision.detalle
+    for plano in planos:
+        ultima = rechazos.get(str(plano.pk), {})
+        plano.motivo_rechazo = ultima.get('motivo') if ultima.get('decision') == 'RECHAZADO' else None
     context.update(expediente=exp,equipo=exp.registro.equipo,inspeccion=ins,forms=forms,envio=envio,
         mantenimientos=t.expedientes_operativos(request.user,request.empresa_activa).filter(registro__equipo=exp.registro.equipo).order_by('-correlativo') if context['rol']=='TALLER' else [],
         errores_generales=[str(error) for form in (errores or {}).values() for errors in form.errors.values() for error in errors],

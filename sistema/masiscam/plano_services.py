@@ -13,6 +13,101 @@ from .models import Diagnostico, MapaPlano, PosicionPlano, ReferenciaTecnica
 from .recepcion_services import _hash, validar_fotografias
 
 
+def revision_plano(ref):
+    from .models import Auditoria
+    return Auditoria.objects.filter(empresa_id=ref.empresa_id, objeto_tipo='ReferenciaTecnica',
+        objeto_id=str(ref.pk), accion='PLANO_REVISADO').select_related('usuario').order_by('-pk').first()
+
+
+def validar_pdf_trabajo(archivo):
+    from pypdf import PdfReader
+    try:
+        archivo.seek(0)
+        reader = PdfReader(archivo)
+        if reader.is_encrypted or not 1 <= len(reader.pages) <= 200:
+            raise ValueError()
+    except Exception as exc:
+        raise ValidationError('Seleccione un PDF legible, sin contraseña y de hasta 200 páginas.') from exc
+    finally:
+        archivo.seek(0)
+
+
+@transaction.atomic
+def corregir_plano_trabajo(*, usuario, empresa, referencia_id, clave, archivo):
+    ref = ReferenciaTecnica.objects.get(pk=referencia_id, empresa=empresa)
+    if not ref.expediente_trabajo_id:
+        raise PermissionDenied('La corrección requiere un plano de trabajo propio.')
+    from accounts.models import Empresa
+    Empresa.objects.select_for_update().get(pk=empresa.pk)
+    exp = tecnica.expediente_autorizado(usuario, empresa, ref.expediente_trabajo_id, {'TALLER'}, True)
+    ref = ReferenciaTecnica.objects.select_for_update().get(pk=ref.pk)
+    payload = dict(referencia=ref.pk, hash=_hash(archivo))
+    old = tecnica._retry(exp, clave, 'PLANO_TRABAJO_CORREGIDO', payload)
+    if old:
+        return ReferenciaTecnica.objects.get(pk=old)
+    decision = revision_plano(ref)
+    if ref.estado != 'BORRADOR' or not decision or decision.detalle['decision'] != 'RECHAZADO':
+        raise ValidationError('Solo se corrige un plano devuelto a TALLER.')
+    if ReferenciaTecnica.objects.filter(empresa=empresa, codigo=ref.codigo, revision__gt=ref.revision).exists():
+        raise ValidationError('Ya existe una nueva versión. Continúe desde ella.')
+    validar_pdf_trabajo(archivo)
+    doc = tecnica.guardar_archivo(usuario=usuario, empresa=empresa, proyecto=exp.registro.equipo.proyecto,
+        equipo=exp.registro.equipo, archivo=archivo, categoria='PLANOS')
+    nueva = tecnica._save(ReferenciaTecnica(empresa=empresa, documento=doc, expediente_trabajo=exp,
+        autor=usuario, sustituye=ref, revision=ref.revision+1,
+        **{f:getattr(ref, f) for f in ('codigo','tipo','titulo','marca','modelo','ratio',
+                                     'version_fabricante','procedencia','autorizacion_uso')}))
+    tecnica.copiar_partes_referencia(ref, nueva)
+    tecnica._event(exp, usuario, clave, 'PLANO_TRABAJO_CORREGIDO', payload, nueva.pk)
+    return nueva
+
+
+@transaction.atomic
+def decidir_plano_trabajo(*, usuario, empresa, referencia_id, clave, revision, decision, motivo=''):
+    tecnica._liblock(usuario, empresa)
+    ref = ReferenciaTecnica.objects.get(pk=referencia_id, empresa=empresa)
+    if not ref.expediente_trabajo_id or ref.tipo != 'PLANO':
+        raise PermissionDenied('La revisión requiere el plano de un expediente.')
+    exp = tecnica.expediente_autorizado(usuario, empresa, ref.expediente_trabajo_id, {'ADMIN'}, True)
+    ref = ReferenciaTecnica.objects.select_for_update().get(pk=ref.pk)
+    payload = dict(referencia=ref.pk, revision=str(revision), decision=decision, motivo=motivo.strip())
+    if tecnica._libretry(empresa, clave, 'PLANO_DECIDIDO', payload):
+        return ref
+    if str(revision) != str(ref.revision) or ref.estado != 'BORRADOR':
+        raise ValidationError('La versión ya fue publicada o cambió. Recargue el plano.')
+    if ReferenciaTecnica.objects.filter(empresa=empresa, codigo=ref.codigo, revision__gt=ref.revision).exists():
+        raise ValidationError('Revise la nueva versión; esta se conserva como histórica.')
+    if decision not in {'APROBADO', 'RECHAZADO'} or len(motivo.strip()) > 2000:
+        raise ValidationError('Decisión o motivo inválidos.')
+    if decision == 'RECHAZADO' and not motivo.strip():
+        raise ValidationError('Indique el motivo del rechazo.')
+    tecnica.validar_revisor_plano(usuario, ref)
+    tecnica.documento_valido(ref.documento, empresa)
+    mapa = ref.mapas.order_by('-version').first()
+    if decision == 'APROBADO':
+        key = uuid.UUID(str(clave))
+        base = dict(usuario=usuario, empresa=empresa, referencia_id=ref.pk)
+        tecnica.estado_referencia(**base, estado='PUBLICADA', clave=uuid.uuid5(key, 'publicar'))
+        tecnica.aplicar_referencia(**base, equipo_id=exp.registro.equipo_id,
+            fundamento=f'Plano r{ref.revision} aprobado para el equipo del expediente {exp.numero}.',
+            clave=uuid.uuid5(key, 'aplicabilidad'))
+        # Publicar una copia revisada del mapa parcial, sin alterar el original.
+        if mapa and mapa.provisional:
+            mapa = guardar_mapa(**base, base_version=mapa.version, clave=uuid.uuid5(key, 'mapa'),
+                posiciones=[dict(parte=p.parte_id, pagina=p.pagina, x=str(p.x), y=str(p.y))
+                            for p in mapa.posiciones.all()])
+        ref.refresh_from_db()
+    from .models import Auditoria
+    Auditoria.objects.create(empresa=empresa, usuario=usuario, expediente=exp,
+        accion='PLANO_REVISADO', objeto_tipo='ReferenciaTecnica', objeto_id=str(ref.pk),
+        detalle=dict(decision=decision, motivo=motivo.strip(), revision=ref.revision,
+            documento=ref.documento_id, hash_documento=ref.documento.hash_sha256,
+            mapa_version=mapa.version if mapa else None, equipo=exp.registro.equipo_id,
+            partes=list(ref.partes.order_by('pk').values('id', 'posicion', 'numero_parte', 'descripcion'))))
+    tecnica._libevent(empresa, usuario, clave, 'PLANO_DECIDIDO', payload, ref.pk)
+    return ref
+
+
 @transaction.atomic
 def cargar_plano_trabajo(*, usuario, empresa, expediente_id, clave, archivo):
     exp = tecnica.expediente_autorizado(usuario, empresa, expediente_id, {'TALLER'}, True)
@@ -37,16 +132,7 @@ def cargar_plano_trabajo(*, usuario, empresa, expediente_id, clave, archivo):
                 clave=uuid.uuid5(uuid.UUID(str(clave)), 'diagnostico'))
     tecnica._editable(usuario, empresa, diag, diag.version_edicion)
     tecnica.seleccion_editable(diag)
-    from pypdf import PdfReader
-    try:
-        archivo.seek(0)
-        reader = PdfReader(archivo)
-        if reader.is_encrypted or not 1 <= len(reader.pages) <= 200:
-            raise ValueError()
-    except Exception as exc:
-        raise ValidationError('Seleccione un PDF legible, sin contraseña y de hasta 200 páginas.') from exc
-    finally:
-        archivo.seek(0)
+    validar_pdf_trabajo(archivo)
     ref = exp.planos_trabajo.filter(documento__hash_sha256=digest).first()
     if not ref:
         doc = tecnica.guardar_archivo(usuario=usuario, empresa=empresa,

@@ -26,6 +26,23 @@
     const submitter=event.submitter;
     const op=submitter?.name==='op' ? submitter.value : form.querySelector('[name="op"]')?.value;
     const pregunta=preguntaPara(form,op);
+    if (op==='rechazar_plano' && form.closest('#revision-plano')) {
+      event.preventDefault();event.stopImmediatePropagation();
+      if (form.dataset.mcConfirming==='1' || !window.Swal) return;
+      form.dataset.mcConfirming='1';
+      try {
+        const result=await Swal.fire({...opciones,title:'Rechazar plano',input:'textarea',
+          inputLabel:'Motivo para TALLER',inputAttributes:{maxlength:'2000'},
+          showCancelButton:true,cancelButtonText:'Cancelar',confirmButtonText:'Rechazar plano',
+          inputValidator:value=>!value?.trim()?'Indique el motivo del rechazo.':undefined,
+          allowOutsideClick:false});
+        if(result.isConfirmed && form.isConnected) {
+          form.querySelector('[name="motivo"]').value=result.value.trim();
+          form.dataset.mcConfirmed='1';form.requestSubmit(submitter);
+        }
+      } finally {delete form.dataset.mcConfirming;}
+      return;
+    }
     if (!pregunta) return;
     event.preventDefault();event.stopImmediatePropagation();
     if (form.dataset.mcConfirming==='1') return;

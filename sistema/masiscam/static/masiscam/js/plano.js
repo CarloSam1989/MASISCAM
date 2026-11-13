@@ -1,3 +1,29 @@
+async function cargarPDF(node) {
+  const pdfjs = await import(node.dataset.pdfModule);
+  pdfjs.GlobalWorkerOptions.workerSrc = node.dataset.pdfWorker;
+  pdfjs.GlobalWorkerOptions.rendererSrc = node.dataset.pdfRenderer;
+  const assets = new URL('./', new URL(node.dataset.pdfModule, location.href)).href;
+  return pdfjs.getDocument({url: node.dataset.documento, withCredentials: true,
+    isEvalSupported: false, enableXfa: false, cMapPacked: true, cMapUrl: assets+'cmaps/',
+    standardFontDataUrl: assets+'standard_fonts/', wasmUrl: assets+'wasm/', iccUrl: assets+'iccs/'}).promise;
+}
+
+const preview = document.querySelector('#pl-preview');
+if (preview) {
+  (async () => {
+    const pdf = await cargarPDF(preview), page = await pdf.getPage(1);
+    const canvas = preview.querySelector('canvas'), base = page.getViewport({scale:1});
+    const scale = Math.min(2, (preview.clientWidth || 800) / base.width);
+    const viewport = page.getViewport({scale});
+    canvas.width = Math.round(viewport.width); canvas.height = Math.round(viewport.height);
+    await page.render({canvas, canvasContext:canvas.getContext('2d'), viewport}).promise;
+    preview.dataset.ready = 'true'; preview.querySelector('[role=status]').hidden = true;
+  })().catch(() => {
+    preview.dataset.ready = 'error';
+    preview.querySelector('[role=status]').textContent = 'No se pudo visualizar el PDF. Puedes abrir el visor o descargar el original.';
+  });
+}
+
 const root = document.querySelector('#pl-app');
 if (root) {
   const $ = selector => root.querySelector(selector);
@@ -266,13 +292,7 @@ if (root) {
     tab('plano'); await load();
     for (let index = 1; index <= state.data.documento.paginas; index++) $('#pl-page').append(new Option(String(index), index));
     if (state.data.documento.tipo === 'pdf') {
-      const pdfjs = await import(root.dataset.pdfModule);
-      pdfjs.GlobalWorkerOptions.workerSrc = root.dataset.pdfWorker;
-      pdfjs.GlobalWorkerOptions.rendererSrc = root.dataset.pdfRenderer;
-      const assets = new URL('./', new URL(root.dataset.pdfModule, location.href)).href;
-      state.pdf = await pdfjs.getDocument({url: root.dataset.documento, withCredentials: true,
-        isEvalSupported: false, enableXfa: false, cMapPacked: true, cMapUrl: assets+'cmaps/',
-        standardFontDataUrl: assets+'standard_fonts/', wasmUrl: assets+'wasm/', iccUrl: assets+'iccs/'}).promise;
+      state.pdf = await cargarPDF(root);
     } else {
       state.image = new Image(); state.image.src = root.dataset.documento; await state.image.decode();
     }

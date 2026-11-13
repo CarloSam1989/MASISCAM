@@ -79,9 +79,10 @@ def plano(request, pk):
     ref, obj, editable = contexto(request, pk)
     from .flujo_forms import ComponenteTrabajoForm
     return render(request, 'masiscam/plano.html', dict(referencia=ref, diagnostico=obj,
+        revision_plano=svc.revision_plano(ref) if ref.expediente_trabajo_id else None,
         componente_form=ComponenteTrabajoForm() if editable and tecnica.plano_de_trabajo(ref, obj.expediente) else None,
         editable_plano=editable, configurar=(request.rol_masiscam.rol == 'ADMIN' and
-            (ref.estado == 'PUBLICADA' or ref.estado == 'BORRADOR' and ref.expediente_trabajo_id)
+            ref.estado == 'PUBLICADA' and not ref.expediente_trabajo_id
             or editable and request.rol_masiscam.rol == 'TALLER' and tecnica.plano_de_trabajo(ref, obj.expediente))))
 
 

@@ -266,6 +266,38 @@ def biblioteca_referencia_form(request,pk=None):
 @masiscam_access_required
 def biblioteca_referencia(request,pk):
     ref=get_object_or_404(svc.referencias_visibles(request.user,request.empresa_activa),pk=pk)
+    if ref.tipo == 'PLANO' and ref.expediente_trabajo_id:
+        from .plano_services import decidir_plano_trabajo, revision_plano, corregir_plano_trabajo
+        from .flujo_forms import PlanoTrabajoForm
+        correccion = _role(request) == 'TALLER'
+        form = (PlanoTrabajoForm(request.POST if request.method=='POST' else None,
+                                 request.FILES if request.method=='POST' else None) if correccion
+                else BaseForm(request.POST if request.method=='POST' else None))
+        if request.method == 'POST':
+            if not correccion:
+                svc.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN'})
+            if form.is_valid():
+                try:
+                    if correccion:
+                        nueva = corregir_plano_trabajo(usuario=request.user, empresa=request.empresa_activa,
+                            referencia_id=ref.pk, **form.cleaned_data)
+                    else:
+                        decidir_plano_trabajo(usuario=request.user, empresa=request.empresa_activa,
+                            referencia_id=ref.pk, clave=form.cleaned_data['clave'],
+                            revision=request.POST.get('revision'),
+                            decision={'aprobar_plano':'APROBADO', 'rechazar_plano':'RECHAZADO'}.get(request.POST.get('op')),
+                            motivo=request.POST.get('motivo', ''))
+                except (ValidationError, IntegrityError, OSError) as exc:
+                    _error(form, exc)
+                else:
+                    messages.success(request, 'Corrección guardada como nueva versión pendiente de revisión.' if correccion
+                        else 'Plano aprobado y aplicable al equipo.' if request.POST['op']=='aprobar_plano'
+                        else 'Plano devuelto a TALLER para corrección.')
+                    return redirect('masiscam:biblioteca_referencia', pk=nueva.pk if correccion else ref.pk)
+        superada = ReferenciaTecnica.objects.filter(empresa=ref.empresa, codigo=ref.codigo, revision__gt=ref.revision).exists()
+        return render(request, 'masiscam/tecnica_plano_revision.html', dict(referencia=ref,
+            form=form, clave=uuid.uuid4(), revision_plano=revision_plano(ref), version_superada=superada,
+            rol_tecnico=_role(request)), status=400 if request.method=='POST' else 200)
     forms={'parte':ParteForm(empresa=request.empresa_activa),'aplicabilidad':AplicabilidadForm(empresa=request.empresa_activa)}
     if request.method=='POST':
         svc.autorizar_tecnica(request.user,request.empresa_activa,{'ADMIN'})

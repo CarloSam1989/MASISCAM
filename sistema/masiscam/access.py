@@ -179,7 +179,9 @@ def masiscam_access_required(view_func):
                 raise PermissionDenied("Esta ventana no está autorizada para TALLER.")
             if (view_func.__module__ in {"masiscam.cierre_views", "masiscam.tecnica_views"}
                     and view_func.__name__ in {"detalle", "biblioteca", "biblioteca_referencia", "biblioteca_documento"}
-                    and request.method not in {"GET", "HEAD"}):
+                    and request.method not in {"GET", "HEAD"}
+                    and not (view_func.__name__ == 'biblioteca_referencia' and request.method == 'POST'
+                             and request.POST.get('op') == 'corregir_plano')):
                 raise PermissionDenied("Esta ventana es de consulta para TALLER.")
             if view_func.__name__ == "clientes" and (
                 request.method not in {"GET", "HEAD"} or request.GET.get("formato") != "json"

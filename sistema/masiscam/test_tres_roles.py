@@ -272,6 +272,7 @@ class Transicion0040Tests(TresRolesFixture, TransactionTestCase):
         self.assertEqual(self.client.get(reverse('masiscam:oficina_inicio')).status_code, 200)
         self.assertEqual(self.client.get(reverse('masiscam:flujo_detalle', args=[exp.pk])).status_code, 200)
 
+
     def test_cuentas_protegidas_y_limite_de_trabajos_historicos(self):
         import uuid
         from accounts.models import Empresa
@@ -301,3 +302,201 @@ class Transicion0040Tests(TresRolesFixture, TransactionTestCase):
         self.assertEqual(self.client.get(reverse('masiscam:flujo_detalle', args=[exp.pk])).status_code, 403)
         self.client.force_login(self.oficina)
         self.assertEqual(self.client.get(reverse('masiscam:flujo_detalle', args=[exp.pk])).status_code, 200)
+
+
+@override_settings(**flujo.FLAGS)
+class AprobacionPlanoTests(TresRolesFixture, TestCase):
+    def decision(self, decision='APROBADO', **kwargs):
+        import uuid
+        from .plano_services import decidir_plano_trabajo
+        data = dict(usuario=self.admin, empresa=self.empresa, referencia_id=self.ref.pk,
+                    revision=self.ref.revision, decision=decision, clave=uuid.uuid4())
+        data.update(kwargs)
+        return decidir_plano_trabajo(**data)
+
+    def test_aprobar_sin_desglose_aplica_equipo_idempotente_y_version_posterior(self):
+        import uuid
+        from .models import Auditoria, AplicabilidadReferenciaEquipo
+        self.cargar()
+        self.client.force_login(self.admin)
+        url = reverse('masiscam:biblioteca_referencia', args=[self.ref.pk])
+        page = self.client.get(url)
+        self.assertContains(page, 'Aprobar plano')
+        self.assertContains(page, 'Rechazar plano')
+        self.assertNotContains(page, 'Agregar parte al plano')
+        self.assertNotContains(page, 'Configurar posiciones')
+        self.assertNotContains(page, 'Publicar referencia y congelar')
+        key = uuid.uuid4()
+        self.decision(clave=key); self.decision(clave=key)
+        self.ref.refresh_from_db()
+        self.assertEqual(self.ref.estado, 'PUBLICADA')
+        self.assertFalse(self.ref.partes.exists())
+        self.assertEqual(AplicabilidadReferenciaEquipo.objects.get(referencia=self.ref).equipo_id, self.equipo.pk)
+        self.assertEqual(Auditoria.objects.filter(accion='PLANO_REVISADO').count(), 1)
+        self.client.force_login(self.taller)
+        self.assertEqual(self.client.get(self.plano_url).status_code, 200)
+        # Reutilizar la creación de versiones y conservar la asociación original.
+        fields = ('codigo','tipo','titulo','marca','modelo','ratio','version_fabricante','procedencia','autorizacion_uso')
+        data = {f:getattr(self.ref,f) for f in fields}
+        data.update(documento_id=self.ref.documento_id, sustituye_id=self.ref.pk)
+        nueva = tecnica.s.guardar_referencia(usuario=self.admin, empresa=self.empresa, clave=uuid.uuid4(), datos=data)
+        self.assertEqual(nueva.revision, 2)
+        self.assertEqual(nueva.expediente_trabajo_id, self.exp.pk)
+        from .plano_services import registrar_componente_trabajo
+        registrar_componente_trabajo(usuario=self.taller, empresa=self.empresa,
+            referencia_id=nueva.pk, diagnostico_id=self.diag.pk, clave=uuid.uuid4(),
+            datos=dict(posicion='9', descripcion='Componente registrado después QA', pagina=1, unidad='unidad'))
+        self.assertFalse(self.ref.partes.exists())
+        self.assertEqual(nueva.partes.count(), 1)
+        from .plano_services import decidir_plano_trabajo
+        decidir_plano_trabajo(usuario=self.admin_cierre, empresa=self.empresa, referencia_id=nueva.pk,
+            clave=uuid.uuid4(), revision=2, decision='APROBADO')
+        self.ref.refresh_from_db(); self.assertEqual(self.ref.estado, 'PUBLICADA')
+
+    def test_aprobacion_conserva_componentes_y_publica_copia_del_mapa_parcial(self):
+        import uuid
+        from . import plano_services as ps
+        self.cargar(); parte = self.componente()
+        before = list(self.ref.partes.values())
+        mapa = ps.guardar_mapa(usuario=self.taller, empresa=self.empresa, referencia_id=self.ref.pk,
+            base_version=0, clave=uuid.uuid4(), posiciones=[dict(parte=parte.pk, pagina=1, x='.3', y='.4')])
+        puntos = list(mapa.posiciones.values())
+        self.decision()
+        self.assertEqual(list(self.ref.partes.values()), before)
+        mapa.refresh_from_db(); self.assertTrue(mapa.provisional)
+        self.assertEqual(list(mapa.posiciones.values()), puntos)
+        nuevo = self.ref.mapas.order_by('-version').first()
+        self.assertFalse(nuevo.provisional)
+        self.assertEqual(nuevo.posiciones.get().parte_id, parte.pk)
+        self.assertEqual(nuevo.posiciones.get().x, mapa.posiciones.get().x)
+
+    def test_rechazo_motivo_y_correccion_de_taller_sin_perder_historia(self):
+        from .models import Auditoria
+        self.cargar(); self.componente()
+        with self.assertRaises(ValidationError): self.decision('RECHAZADO')
+        self.decision('RECHAZADO', motivo='Revisar los números del despiece')
+        self.ref.refresh_from_db(); self.assertEqual(self.ref.estado, 'BORRADOR')
+        self.assertFalse(self.ref.aplicabilidades.exists())
+        self.client.force_login(self.taller)
+        for url in (self.url, self.plano_url, reverse('masiscam:biblioteca_referencia', args=[self.ref.pk])):
+            self.assertContains(self.client.get(url), 'Revisar los números del despiece')
+        from . import plano_services as ps
+        import uuid
+        ps.registrar_componente_trabajo(usuario=self.taller, empresa=self.empresa,
+            referencia_id=self.ref.pk, diagnostico_id=self.diag.pk, clave=uuid.uuid4(),
+            datos=dict(posicion='8', descripcion='Componente manual QA', pagina='1', unidad='unidad'))
+        self.assertEqual(self.ref.partes.count(), 2)
+        self.decision()
+        self.assertEqual(list(Auditoria.objects.filter(accion='PLANO_REVISADO').order_by('pk')
+                         .values_list('detalle__decision', flat=True)), ['RECHAZADO','APROBADO'])
+
+    def test_permisos_autoaprobacion_y_atomicidad(self):
+        import uuid
+        from .models import Auditoria
+        self.cargar()
+        url = reverse('masiscam:biblioteca_referencia', args=[self.ref.pk])
+        for user in (self.taller, self.oficina):
+            self.client.force_login(user)
+            response = self.client.post(url, dict(op='aprobar_plano', clave=uuid.uuid4(), revision=1))
+            self.assertIn(response.status_code, (403,404))
+        with patch.object(tecnica.s, 'aplicar_referencia', side_effect=ValidationError('Conflicto QA')):
+            with self.assertRaises(ValidationError): self.decision()
+        self.ref.refresh_from_db(); self.assertEqual(self.ref.estado, 'BORRADOR')
+        self.assertFalse(Auditoria.objects.filter(accion='PLANO_REVISADO').exists())
+        role = RolMasiscam.objects.get(perfil__user=self.taller)
+        role.rol='ADMIN'; role.save()
+        with self.assertRaises(PermissionDenied): self.decision(usuario=self.taller)
+        with self.assertRaises(PermissionDenied):
+            tecnica.s.estado_referencia(usuario=self.taller, empresa=self.empresa,
+                referencia_id=self.ref.pk, estado='PUBLICADA', clave=uuid.uuid4())
+
+    def test_pdf_corregido_versionado_incluso_con_solicitud_congelada(self):
+        import uuid
+        from .models import SolicitudRepuestos, Documento
+        from .flujo_services import enviar_solicitud
+        self.cargar(); parte = self.componente(); self.seleccionar(parte)
+        self.diag.refresh_from_db()
+        sol = enviar_solicitud(usuario=self.taller, empresa=self.empresa, diagnostico_id=self.diag.pk,
+            version=self.diag.version_edicion, clave=uuid.uuid4(), preliminar=True)
+        snapshot = sol.snapshot
+        self.decision('RECHAZADO', motivo='Corregir PDF')
+        self.client.force_login(self.taller)
+        key = uuid.uuid4()
+        url = reverse('masiscam:biblioteca_referencia', args=[self.ref.pk])
+        documentos = Documento.objects.count()
+        response = self.client.post(url, dict(op='corregir_plano', clave=key, archivo=plano.pdf_trabajo()))
+        self.assertEqual(response.status_code, 302, response.content)
+        nueva = self.exp.planos_trabajo.get(sustituye=self.ref)
+        self.assertEqual(nueva.revision, 2)
+        self.assertEqual(nueva.documento_id, self.ref.documento_id)
+        self.assertEqual(Documento.objects.count(), documentos)
+        self.assertEqual(nueva.partes.count(), 1)
+        self.assertEqual(self.ref.partes.get().pk, parte.pk)
+        self.assertEqual(self.client.post(url, dict(op='corregir_plano', clave=key,
+            archivo=plano.pdf_trabajo())).status_code, 302)
+        self.assertEqual(self.exp.planos_trabajo.count(), 2)
+        sol.refresh_from_db(); self.assertEqual(sol.snapshot, snapshot)
+        self.assertEqual(SolicitudRepuestos.objects.count(), 1)
+        with self.assertRaises(ValidationError): self.decision()
+        from .plano_services import decidir_plano_trabajo
+        decidir_plano_trabajo(usuario=self.admin, empresa=self.empresa, referencia_id=nueva.pk,
+            clave=uuid.uuid4(), revision=2, decision='APROBADO')
+        self.client.force_login(self.admin)
+        response = self.client.get(self.url)
+        accion = response.context['accion'] or {}
+        self.assertNotEqual(accion.get('texto'), 'Revisar plano')
+
+
+@skipUnless(os.environ.get('MASISCAM_BROWSER_TESTS') == '1', 'Navegador QA explícito')
+@override_settings(**flujo.FLAGS)
+class AprobacionPlanoBrowserTests(TresRolesFixture, StaticLiveServerTestCase):
+    def test_rechazo_sweetalert2_y_aprobacion_del_pdf_en_admin_y_taller(self):
+        from pathlib import Path
+        from playwright.sync_api import sync_playwright, expect
+        self.cargar()
+        cookies = {}
+        for rol, user in [('ADMIN', self.admin), ('TALLER', self.taller)]:
+            client = Client(); client.force_login(user)
+            cookies[rol] = client.cookies[settings.SESSION_COOKIE_NAME].value
+        url = self.live_server_url + reverse('masiscam:biblioteca_referencia', args=[self.ref.pk])
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(channel='msedge', headless=True)
+            try:
+                context = browser.new_context(viewport=dict(width=1440, height=1000))
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookies['ADMIN'],url=self.live_server_url)])
+                page = context.new_page(); page.goto(url)
+                expect(page.locator('#revision-plano form button')).to_have_count(2)
+                expect(page.locator('#pl-preview')).to_have_attribute('data-ready', 'true', timeout=30000)
+                expect(page.locator('#pl-preview canvas')).to_be_visible()
+                self.assertTrue(page.locator('#pl-preview canvas').evaluate('c => c.width > 100 && c.height > 100'))
+                for width in (1440, 390):
+                    page.set_viewport_size(dict(width=width, height=1000))
+                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'))
+                    if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
+                        page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/f'revision-plano-{width}.png'), full_page=True)
+                page.set_viewport_size(dict(width=1440, height=1000))
+                pdf = context.request.get(self.live_server_url + reverse('masiscam:biblioteca_documento', args=[self.ref.pk]))
+                self.assertEqual(pdf.status, 200); self.assertEqual(pdf.body(), self.pdf)
+                page.get_by_role('button', name='Rechazar plano', exact=True).click()
+                expect(page.locator('.swal2-title')).to_have_text('Rechazar plano')
+                page.locator('.swal2-confirm').click()
+                expect(page.locator('.swal2-validation-message')).to_have_text('Indique el motivo del rechazo.')
+                page.locator('.swal2-textarea').fill('Revisar la legibilidad del plano')
+                page.locator('.swal2-confirm').click()
+                expect(page.locator('#revision-plano')).to_contain_text('RECHAZADO')
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookies['TALLER'],url=self.live_server_url)])
+                page.goto(url)
+                expect(page.locator('#revision-plano')).to_contain_text('Revisar la legibilidad del plano')
+                expect(page.get_by_role('button', name='Aprobar plano', exact=True)).to_have_count(0)
+                expect(page.get_by_role('button', name='Enviar PDF corregido', exact=True)).to_be_visible()
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookies['ADMIN'],url=self.live_server_url)])
+                page.goto(url); page.get_by_role('button', name='Aprobar plano', exact=True).click()
+                expect(page.locator('#revision-plano')).to_contain_text('APROBADO')
+                expect(page.locator('#pl-preview')).to_have_attribute('data-ready', 'true', timeout=30000)
+                expect(page.locator('#revision-plano form button')).to_have_count(0)
+                if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
+                    page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/'aprobacion-plano.png'), full_page=True)
+            finally:
+                browser.close()
+        self.ref.refresh_from_db(); self.assertEqual(self.ref.estado, 'PUBLICADA')
+        self.assertTrue(self.ref.aplicabilidades.filter(equipo=self.equipo, activa=True).exists())
