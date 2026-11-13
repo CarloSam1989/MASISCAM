@@ -110,6 +110,8 @@ def guardar_seleccion(*, usuario, empresa, diagnostico_id, version, clave, datos
         pieza = tecnica.agregar_pieza(usuario=usuario, empresa=empresa, diagnostico_id=obj.pk,
             version=obj.version_edicion, clave=uuid.uuid5(key, 'pieza'), datos=datos, pieza_id=pieza_id)
         for index, archivo in enumerate(fotografias):
+            if pieza.fotografias.filter(documento__hash_sha256=_hash(archivo)).exists():
+                continue
             obj.refresh_from_db()
             evidencia = tecnica.agregar_evidencia(usuario=usuario, empresa=empresa, tipo='DIAGNOSTICO',
                 revision_id=obj.pk, version=obj.version_edicion, clave=uuid.uuid5(key, 'foto-' + str(index)),

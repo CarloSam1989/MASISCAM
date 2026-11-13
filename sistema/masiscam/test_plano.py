@@ -56,6 +56,16 @@ class PlanoTests(TestCase):
             diagnostico_id=self.diag.pk, version=kwargs.pop('version', self.diag.version_edicion),
             clave=kwargs.pop('clave', uuid.uuid4()), datos=datos, **kwargs)
 
+    def test_editar_pieza_reutiliza_foto_sin_duplicar_evidencia(self):
+        from .models import Documento
+        pk = self.guardar(fotografias=[foto_pieza(), foto_pieza()])
+        pieza = PiezaRequerida.objects.get(pk=pk)
+        evidencia = pieza.fotografias.get()
+        documentos = Documento.objects.count()
+        self.guardar(pieza_id=pk, fotografias=[foto_pieza()])
+        self.assertEqual(pieza.fotografias.get().pk, evidencia.pk)
+        self.assertEqual(Documento.objects.count(), documentos)
+
     def test_coordenadas_limites_paginas_partes_y_versiones(self):
         mapa = self.mapa(posiciones=[dict(parte=self.parte.pk, pagina=1, x='0', y='1')])
         punto = mapa.posiciones.get()

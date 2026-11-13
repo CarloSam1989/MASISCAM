@@ -137,6 +137,9 @@ class ExperienciaTests(TestCase):
         diagnostico=self.exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
         self.assertEqual(diagnostico.inspeccion_id,inspeccion.pk)
         self.assertFalse(diagnostico.enviado_en)
+        self.assertEqual(tecnica.preparar_diagnostico(usuario=self.taller,empresa=self.empresa,
+            expediente_id=self.exp.pk,clave=uuid.uuid4()).pk,diagnostico.pk)
+        self.assertEqual(self.exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico_id,diagnostico.pk)
         sin_plano=self.client.get(url)
         self.assertContains(sin_plano,'No hay un plano publicado y aplicable a este equipo')
         self.assertContains(sin_plano,'Puedes agregar piezas manualmente mientras se gestiona')

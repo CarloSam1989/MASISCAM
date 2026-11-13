@@ -217,6 +217,12 @@ def preparar_diagnostico(*, usuario, empresa, expediente_id, clave):
     if (not etapa or not etapa.inspeccion_id or etapa.inspeccion.enviado_en
             or etapa.inspeccion.tecnico_id!=usuario.pk or not vigente(etapa.inspeccion)):
         raise ValidationError('Debe existir una inspección borrador vigente asignada a TALLER.')
+    diagnostico = _etapa(exp, 'DIAGNOSTICO')
+    if diagnostico and diagnostico.diagnostico_id:
+        obj = diagnostico.diagnostico
+        _retry(exp, clave, 'DIAGNOSTICO_CREADA', dict(tipo='DIAGNOSTICO', motivo=''))
+        _editable(usuario, empresa, obj, obj.version_edicion)
+        return obj
     return _crear_revision(usuario=usuario,empresa=empresa,expediente_id=exp.pk,
         tipo='DIAGNOSTICO',clave=clave,permitir_inspeccion_pendiente=True)
 
