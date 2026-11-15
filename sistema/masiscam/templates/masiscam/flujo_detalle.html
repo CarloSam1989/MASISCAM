@@ -1,6 +1,6 @@
 {% extends 'masiscam/base.html' %}{% load static %}
 {% block title %}{{ expediente.numero }} · Trabajo en curso{% endblock %}
-{% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/flujo.css' %}?v=20261114-oficina">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/flujo.css' %}?v=20261114-cotizacion-pdf">{% endblock %}
 {% block content %}<div class="container mf-app">
   {% if errores_generales %}<div class="alert alert-danger" role="alert"><strong>No se confirmó el avance.</strong><ul>{% for error in errores_generales %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
   <header class="mf-heading"><div><p class="mf-eyebrow">MANTENIMIENTO · {{ expediente.numero }}</p><h1>{{ equipo.nombre }}</h1><p>{{ equipo.marca }} {{ equipo.modelo }} · Serie {{ equipo.numero_serie|default:'Pendiente' }}</p><p>{{ expediente.cliente_contractual.nombre_comercial }} · RUC {{ expediente.cliente_contractual.ruc }}</p></div><span class="mf-role">{{ rol }}{% if solicitud %} · Solicitud v{{ solicitud.version }}{% endif %}</span></header>
@@ -35,4 +35,4 @@
 {% if rol != 'OFICINA' %}  <footer class="mf-links"><a href="{% url 'masiscam:expediente_detalle' expediente.pk %}">Recepción y documentos</a>{% if rol == 'TALLER' %}<a href="{% url 'masiscam:taller_inicio' %}">Mis equipos</a>{% else %}<a href="{% url 'masiscam:flujo_bandeja' %}">Solicitudes de taller</a>{% endif %}{% if historial_disponible and rol != 'OFICINA' %}<a href="{% url 'masiscam:cierre_historial' equipo.pk %}">Historial autorizado</a>{% endif %}</footer>{% endif %}
 </div>{% endblock %}
 
-{% block javascript %}<script type="module" src="{% static 'masiscam/js/plano.js' %}?v=20261114-multiples"></script><script src="{% static 'masiscam/js/flujo.js' %}?v=20261114-oficina" defer></script>{% endblock %}
+{% block javascript %}<script type="module" src="{% static 'masiscam/js/plano.js' %}?v=20261114-multiples"></script><script src="{% static 'masiscam/js/flujo.js' %}?v=20261114-cotizacion-pdf" defer></script>{% endblock %}

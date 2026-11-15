@@ -91,10 +91,12 @@ def contexto(request,exp,errores=None):
         if prop and prop.diagnostico_id==sol.diagnostico_id and not hasattr(prop,'decision'):
             forms['aceptacion']=OperacionForm(op='decision',exp=exp,politica=o.politica())
             forms['aceptacion'].fields['propuesta_id'].queryset=o.PropuestaComercial.objects.filter(pk=prop.pk)
-            forms['respaldo']=OperacionForm(op='respaldo',exp=exp,politica=o.politica())
-            forms['respaldo'].fields['propuesta_id'].queryset=o.PropuestaComercial.objects.filter(pk=prop.pk)
+            if not prop.evidencias.exists():
+                forms['respaldo']=OperacionForm(op='respaldo',exp=exp,politica=o.politica())
+                forms['respaldo'].fields['propuesta_id'].queryset=o.PropuestaComercial.objects.filter(pk=prop.pk)
             from django.forms import HiddenInput
             for nombre in ('aceptacion','respaldo'):
+                if nombre not in forms: continue
                 forms[nombre].initial['propuesta_id']=prop.pk
                 forms[nombre].fields['propuesta_id'].widget=HiddenInput()
     envio=None
@@ -146,6 +148,12 @@ def contexto(request,exp,errores=None):
             if not oficina_envio:
                 oficina_bloqueo=('Registre repuestos disponibles para preparar un envío; las salidas existentes se conservan.'
                     if sol.snapshot['piezas'] else 'Solicitud sin repuestos: no requiere adquisiciones ni envíos; se mantienen los requisitos técnicos antes de reparar.')
+    documentos_comerciales=[]
+    if context['rol']=='OFICINA':
+        for version in o.PropuestaComercial.objects.filter(expediente=exp).prefetch_related('evidencias__documento').order_by('-version'):
+            documentos_comerciales.append(dict(id=version.pk,version=version.version,referencia=version.snapshot.get('presupuesto_referencia',''),
+                generar=version.snapshot.get('cotizacion',{}).get('moneda')=='USD' and not version.snapshot.get('propuesta_origen') and not any(ev.clave==uuid.uuid5(version.clave,'cotizacion-pdf-v1') for ev in version.evidencias.all()),
+                documentos=[ev for ev in version.evidencias.all() if ev.documento.tipo_mime=='application/pdf']))
     cotizacion_bloqueo=('ADMINISTRADOR debe aprobar el diagnóstico antes de cotizar.'
         if not diag or not t._aprobado(diag) else
         'La cotización con repuestos registrados conserva sus importes y autorización; los cambios requieren una revisión de alcance.'
@@ -153,6 +161,7 @@ def contexto(request,exp,errores=None):
     context.update(expediente=exp,equipo=exp.registro.equipo,inspeccion=ins,forms=forms,envio=envio,
         oficina_estado=oficina_estado,oficina_bloqueo=oficina_bloqueo,oficina_envio=oficina_envio,
         cotizacion_habilitada=not bool(cotizacion_bloqueo),cotizacion_bloqueo=cotizacion_bloqueo,
+        documentos_comerciales=documentos_comerciales,
         mantenimientos=t.expedientes_operativos(request.user,request.empresa_activa).filter(registro__equipo=exp.registro.equipo).order_by('-correlativo') if context['rol']=='TALLER' else [],
         errores_generales=[str(error) for form in (errores or {}).values() for errors in form.errors.values() for error in errors],
         form_principal=forms.get(form_action),clave=uuid.uuid4(),
@@ -236,6 +245,11 @@ def detalle(request,pk):
                 guardar_seleccion(**common,diagnostico_id=diag.pk,version=version,clave=key,
                     datos=dict(data,origen='MANUAL'),fotografias=fotos)
             elif op=='cotizar' and sol: s.cotizar(**common,solicitud_id=sol.pk,clave=key,**form.datos())
+            elif op=='pdf_cotizacion':
+                raw=request.POST.get('propuesta_id','')
+                if not raw.isascii() or not raw.isdecimal() or len(raw)>18: raise Http404
+                propuesta=get_object_or_404(o.PropuestaComercial,pk=raw,expediente=exp)
+                s.generar_cotizacion_pdf(**common,propuesta_id=propuesta.pk)
             elif op=='aceptacion' and sol:
                 vigente=o.PropuestaComercial.objects.filter(expediente=exp).order_by('-version').first()
                 propuesta=data.pop('propuesta_id')

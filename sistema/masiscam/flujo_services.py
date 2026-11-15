@@ -102,10 +102,9 @@ def autorizacion(obj):
 
 def valorar_cotizacion(diag, detalle):
     """Importes aportados por OFICINA; cantidades y totales proceden del servidor."""
-    import re
     from datetime import date
-    if not isinstance(detalle,dict) or not re.fullmatch('[A-Z]{3}',str(detalle.get('moneda',''))):
-        raise ValidationError('Indique la moneda mediante su código de tres letras.')
+    if not isinstance(detalle,dict) or detalle.get('moneda','USD')!='USD':
+        raise ValidationError('Las nuevas cotizaciones se registran exclusivamente en USD.')
     filas=detalle.get('lineas')
     if not isinstance(filas,list) or len(filas)>500:
         raise ValidationError('Listado de precios inválido.')
@@ -132,8 +131,49 @@ def valorar_cotizacion(diag, detalle):
     if fecha:
         try: date.fromisoformat(fecha)
         except ValueError: raise ValidationError('Fecha de factura inválida.') from None
-    return dict(moneda=detalle['moneda'],lineas=sorted(result,key=lambda row:row['pieza']),
+    condiciones=str(detalle.get('condiciones','')).strip()
+    if len(condiciones)>20000: raise ValidationError('Condiciones comerciales demasiado extensas.')
+    return dict(moneda='USD',lineas=sorted(result,key=lambda row:row['pieza']),condiciones=condiciones,
         total=format(total,'.2f'),factura=dict(numero=numero,fecha=fecha))
+
+
+@transaction.atomic
+def generar_cotizacion_pdf(*,usuario,empresa,propuesta_id):
+    """Una copia inmutable por versión, protegida por el bloqueo del expediente."""
+    propuesta=o.PropuestaComercial.objects.get(pk=propuesta_id)
+    exp=expediente(usuario,empresa,propuesta.expediente_id,{'OFICINA'},True)
+    clave=uuid.uuid5(propuesta.clave,'cotizacion-pdf-v1')
+    existente=propuesta.evidencias.filter(clave=clave).select_related('documento').first()
+    if existente:
+        t.documento_valido(existente.documento,empresa)
+        return existente
+    precios=propuesta.snapshot.get('cotizacion')
+    if propuesta.snapshot.get('propuesta_origen'):
+        raise ValidationError('Prepare una nueva cotización valorada con el alcance parcial acordado.')
+    if not precios or precios.get('moneda')!='USD':
+        raise ValidationError('Guarde una cotización valorada en USD antes de generar su PDF.')
+    sol=SolicitudRepuestos.objects.get(diagnostico=propuesta.diagnostico)
+    if t._digest(sol.snapshot)!=sol.huella: raise ValidationError('Solicitud sin integridad documental.')
+    fuentes={r['pieza']:r for r in sol.snapshot['piezas']}
+    lineas=[]
+    for precio in precios['lineas']:
+        fuente=fuentes[precio['pieza']]
+        origen=fuente.get('origen') or {}
+        lineas.append(dict(precio,posicion=origen.get('posicion',''),codigo=fuente['codigo'],
+            descripcion=fuente['descripcion'],condicion=fuente['condicion'],
+            cantidad=format(Decimal(precio['cantidad']).normalize(),'f')))
+    from .flujo_pdf import cotizacion_comercial
+    contenido=cotizacion_comercial(dict(referencia=propuesta.snapshot['presupuesto_referencia'],
+        version=propuesta.version,fecha=timezone.localtime(propuesta.creado_en).strftime('%d/%m/%Y'),
+        cliente=propuesta.snapshot['cliente'],expediente=propuesta.snapshot['numero'],lineas=lineas,
+        total=precios['total'],observaciones=propuesta.observaciones,condiciones=precios.get('condiciones','')))
+    archivo=ContentFile(contenido,name=f'cotizacion-v{propuesta.version}.pdf')
+    archivo.content_type='application/pdf'
+    evidencia=o._evidencia(propuesta,usuario,archivo,
+        'DOCUMENTO',f'Cotización MASISCAM v{propuesta.version}',clave)
+    t._event(exp,usuario,clave,'COTIZACION_PDF_GENERADO',dict(propuesta=propuesta.pk,version=propuesta.version,
+        hash=evidencia.documento.hash_sha256,solicitud_sha=sol.huella),evidencia.pk)
+    return evidencia
 
 
 @transaction.atomic
@@ -172,10 +212,12 @@ def cotizar(*, usuario, empresa, solicitud_id, clave, referencia, observaciones=
         datos['cotizacion']=cotizacion
         alcance+='\n'+cotizacion['moneda']+' · '+ '; '.join(
             f"Pieza {r['pieza']}: unitario {r['precio_unitario']}, total {r['total']}" for r in cotizacion['lineas'])
-        datos['alcance']=alcance+'\nTotal: '+cotizacion['total']
+        datos['alcance']=alcance+'\nTotal: '+cotizacion['total']+'\nCondiciones comerciales: '+cotizacion['condiciones']
     result=o.proponer(usuario=usuario,empresa=empresa,expediente_id=exp.pk,diagnostico_id=obj.diagnostico_id,
         clave=uuid.uuid5(uuid.UUID(str(clave)),'propuesta') if payload else clave, datos=datos,archivo=archivo)
-    if payload: t._event(exp,usuario,clave,'OFICINA_COTIZACION',payload,result.pk)
+    if payload:
+        generar_cotizacion_pdf(usuario=usuario,empresa=empresa,propuesta_id=result.pk)
+        t._event(exp,usuario,clave,'OFICINA_COTIZACION',payload,result.pk)
     return result
 
 

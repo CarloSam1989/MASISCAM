@@ -21,6 +21,7 @@
       output.textContent=money(cents);total+=cents;
     });
     document.querySelector('#oficina-total').textContent=complete?money(total):'—';
+    form.querySelectorAll('[data-total-general]').forEach(output=>output.textContent=complete?money(total):'—');
   }
   form.addEventListener('input',totals);totals();
   for (const sheet of [form,document.querySelector('#oficina-enviar')].filter(Boolean)) {

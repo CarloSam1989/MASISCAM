@@ -133,7 +133,7 @@ def documento(request,pk,documento_pk):
     doc=get_object_or_404(svc.documentos_visibles(exp,rol),pk=documento_pk)
     try:
         svc.t.documento_valido(doc,request.empresa_activa)
-        response=FileResponse(doc.archivo.open('rb'),as_attachment=True,filename=doc.nombre_original,content_type=doc.tipo_mime)
+        response=FileResponse(doc.archivo.open('rb'),as_attachment=not (request.GET.get('ver')=='1' and doc.tipo_mime=='application/pdf'),filename=doc.nombre_original,content_type=doc.tipo_mime)
     except (OSError,ValidationError):
         raise Http404('Copia no disponible o no íntegra.') from None
     response['Cache-Control']='private, no-store'

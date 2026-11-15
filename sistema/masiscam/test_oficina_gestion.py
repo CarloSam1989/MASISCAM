@@ -74,8 +74,8 @@ class OficinaGestionTests(OficinaFixture,TestCase):
                 dict(self.detalle(),lineas=[]),dict(self.detalle(),lineas=[dict(pieza=99999,precio_unitario='1')])):
             with self.assertRaises(ValidationError):self.cotizar(cotizacion=detail)
         propuesta=self.cotizar(archivo=None)
-        self.assertFalse(propuesta.evidencias.exists())
-        with self.assertRaises(ValidationError):self.aceptar(propuesta)
+        self.assertEqual(propuesta.evidencias.count(),1)
+        with self.assertRaises(ValidationError):s.autorizacion(self.sol)
         for user in (self.taller,self.admin,self.otro):
             with self.assertRaises(PermissionDenied):self.cotizar(usuario=user)
         response=self.client.get(self.url)
@@ -108,7 +108,11 @@ class OficinaGestionTests(OficinaFixture,TestCase):
     test_sin_autorizacion=qa_flujo.FlujoTests.test_compras_y_reparaciones_no_se_crean_sin_autorizacion
     test_sin_repuestos=qa_flujo.FlujoTests.test_sin_repuestos_no_obliga_a_inventar_piezas_compras_o_envios
     test_recepcion_politica_retirada=qa_flujo.FlujoTests.test_recepcion_fisica_con_politica_retirada_no_autoriza_reparar
-    test_aceptacion_parcial=qa_flujo.FlujoTests.test_aceptacion_parcial_no_autoriza_comprar_el_listado_completo
+    def test_aceptacion_parcial(self):
+        qa_flujo.FlujoTests.test_aceptacion_parcial_no_autoriza_comprar_el_listado_completo(self)
+        parcial=PropuestaComercial.objects.filter(snapshot__has_key='propuesta_origen').get()
+        with self.assertRaises(ValidationError):
+            s.generar_cotizacion_pdf(usuario=self.oficina,empresa=self.empresa,propuesta_id=parcial.pk)
     def test_multiempresa(self):
         from accounts.models import Empresa
         from .test_tecnica import usuario
@@ -121,6 +125,85 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.client.force_login(self.taller)
         self.assertEqual(self.client.post(self.url,dict(op='cotizar',clave=uuid.uuid4(),referencia='QA',moneda='USD',
             **{f'precio_{self.pieza.pk}':'1'})).status_code,403)
+
+    def test_pdf_versionado_integridad_y_permisos(self):
+        from io import BytesIO
+        from pathlib import Path
+        from pypdf import PdfReader
+        from accounts.models import Empresa
+        from .test_tecnica import usuario
+        self.preparar()
+        propuesta=self.cotizar(archivo=None,observaciones='Observaciones de prueba',
+            cotizacion=dict(self.detalle(),condiciones='Entrega acordada con el cliente.'))
+        ev=s.generar_cotizacion_pdf(usuario=self.oficina,empresa=self.empresa,propuesta_id=propuesta.pk)
+        self.assertEqual(propuesta.evidencias.count(),1)
+        doc=ev.documento
+        with doc.archivo.open('rb') as archivo:contenido=archivo.read()
+        pdf=PdfReader(BytesIO(contenido));text='\n'.join(page.extract_text() for page in pdf.pages)
+        for esperado in ('COTIZACION-QA','24.70','12.35','USD',self.exp.numero,
+                propuesta.snapshot['cliente']['ruc'],'Entrega acordada','ACEPTACIÓN DEL CLIENTE'):
+            self.assertIn(esperado,text)
+        self.assertTrue(pdf.pages[0].images)
+        if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
+            (Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/'cotizacion-v1.pdf').write_bytes(contenido)
+        original_hash=doc.hash_sha256
+        nueva=self.cotizar(archivo=None,cotizacion=self.detalle('15.00'))
+        self.assertEqual(nueva.version,2)
+        self.assertEqual(nueva.evidencias.count(),1)
+        self.assertNotEqual(nueva.evidencias.get().documento_id,doc.pk)
+        doc.refresh_from_db();self.assertEqual(doc.hash_sha256,original_hash)
+        t.documento_valido(doc,self.empresa)
+        url=reverse('masiscam:operacion_documento',args=[self.exp.pk,doc.pk])
+        for suffix,disposition in (('','attachment'),('?ver=1','inline')):
+            response=self.client.get(url+suffix)
+            self.assertEqual(response.status_code,200)
+            self.assertTrue(response['Content-Disposition'].startswith(disposition))
+            self.assertEqual(response['Content-Type'],'application/pdf')
+            self.assertEqual(b''.join(response.streaming_content),contenido)
+        historica=o.proponer(usuario=self.oficina,empresa=self.empresa,expediente_id=self.exp.pk,
+            diagnostico_id=self.diag.pk,clave=uuid.uuid4(),datos=dict(alcance='Alcance existente de prueba',
+                presupuesto_referencia='COT-HISTORICA-QA',cotizacion=self.detalle()))
+        self.assertFalse(historica.evidencias.exists())
+        self.assertContains(self.client.get(self.url),'Generar PDF de esta versión')
+        payload=dict(op='pdf_cotizacion',propuesta_id=historica.pk,clave=uuid.uuid4())
+        for _ in range(2):self.assertEqual(self.client.post(self.url,payload).status_code,302)
+        self.assertEqual(historica.evidencias.count(),1)
+        self.assertEqual(PropuestaComercial.objects.count(),3)
+        for user in (self.taller,usuario(Empresa.objects.create(nombre='Ajena PDF'),'oficina-pdf-ajena','OFICINA')):
+            self.client.force_login(user)
+            self.assertIn(self.client.get(url).status_code,(403,404))
+            with self.assertRaises(PermissionDenied):
+                s.generar_cotizacion_pdf(usuario=user,empresa=self.empresa,propuesta_id=propuesta.pk)
+
+    def test_usd_fijo_calculos_y_condiciones_invalidan_aceptacion(self):
+        from .flujo_forms import CotizacionForm
+        self.preparar()
+        self.assertNotIn('moneda',CotizacionForm(solicitud=self.sol).fields)
+        with self.assertRaises(ValidationError):self.cotizar(cotizacion=dict(self.detalle(),moneda='EUR'))
+        propuesta=self.cotizar(archivo=None)
+        self.aceptar(propuesta)
+        nueva=self.cotizar(archivo=None,cotizacion=dict(self.detalle(),condiciones='Nueva condición explícita'))
+        self.assertIn('Nueva condición explícita',nueva.alcance)
+        with self.assertRaises(ValidationError):s.autorizacion(self.sol)
+        self.assertEqual(nueva.snapshot['cotizacion']['total'],'24.70')
+
+    def test_pdf_extenso_conserva_detalle_y_paginas(self):
+        from io import BytesIO
+        from pathlib import Path
+        from pypdf import PdfReader
+        from .flujo_pdf import cotizacion_comercial
+        contenido=cotizacion_comercial(dict(referencia='COTIZACION-EXTENSA-QA',version=1,fecha='14/11/2026',
+            cliente=dict(cliente='Cliente ficticio de prueba',ruc='RUC-QA',equipo='DERAN',serie='SERIE-QA'),expediente='EXP-QA',
+            lineas=[dict(posicion=str(i),codigo=f'COD-QA-{i}',descripcion='Componente registrado por TALLER. '*5,
+                condicion='Desgaste registrado.',cantidad='2',precio_unitario='12.35',total='24.70') for i in range(1,36)],
+            total='864.50',observaciones='Observaciones de prueba. '*30,condiciones='Condiciones aportadas por OFICINA. '*20))
+        pdf=PdfReader(BytesIO(contenido))
+        self.assertGreater(len(pdf.pages),1)
+        text='\n'.join(page.extract_text() for page in pdf.pages)
+        for value in ('COD-QA-35','864.50','ACEPTACIÓN DEL CLIENTE'):self.assertIn(value,text)
+        for i,page in enumerate(pdf.pages,1):self.assertIn(f'Página {i}',page.extract_text())
+        if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
+            (Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/'cotizacion-extensa.pdf').write_bytes(contenido)
 
 
 @skipUnless(os.environ.get('MASISCAM_BROWSER_TESTS')=='1','Navegador aislado explícito')
@@ -145,7 +228,8 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 quote.locator('[data-precio]').fill('12.35')
                 expect(page.locator('#oficina-total')).to_have_text('24.70')
                 quote.locator('[name=referencia]').fill('COTIZACION-UI-QA')
-                quote.locator('[name=moneda]').fill('USD')
+                expect(quote.locator('[name=moneda]')).to_have_count(0)
+                expect(quote.locator('[data-total-general]')).to_have_text('24.70')
                 quote.locator('[name=factura_numero]').fill('FACTURA-UI-QA')
                 quote.locator('[name=factura_fecha]').fill('2026-11-14')
                 pdf=presupuesto_qa()
@@ -154,6 +238,14 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 page.get_by_role('button',name='Sí, continuar',exact=True).click()
                 expect(page.locator('#oficina-estado')).to_have_text('Cotizado')
                 expect(page.locator('[name=factura_numero]')).to_have_value('FACTURA-UI-QA')
+                documents=page.locator('#oficina-documentos')
+                expect(documents.get_by_text('Cotización MASISCAM v1',exact=False)).to_be_visible()
+                for name,disposition in (('Visualizar PDF','inline'),('Descargar PDF','attachment')):
+                    link=documents.get_by_role('link',name=name,exact=True).last
+                    response=context.request.get(self.live_server_url+link.get_attribute('href'))
+                    self.assertEqual(response.status,200)
+                    self.assertTrue(response.headers['content-disposition'].startswith(disposition))
+                    self.assertTrue(response.body().startswith(b'%PDF-'))
                 page.locator('#oficina-aceptacion summary').click()
                 accept=page.locator('#oficina-aceptacion form')
                 accept.locator('[name=decision]').select_option('APROBADO')
@@ -181,7 +273,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                     if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
                         from pathlib import Path
                         page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/f'oficina-{width}.png'),full_page=True)
-                    overflow=page.evaluate('Array.from(document.querySelectorAll("main *")).filter(e=>e.getBoundingClientRect().right>innerWidth+1 && getComputedStyle(e).display!=="none").map(e=>({tag:e.tagName,id:e.id,cls:e.className,right:e.getBoundingClientRect().right})).slice(0,12)')
+                    overflow=page.evaluate('Array.from(document.querySelectorAll("body *")).filter(e=>e.getBoundingClientRect().right>innerWidth+1 && getComputedStyle(e).display!=="none" && !e.closest(".table-responsive")).map(e=>({tag:e.tagName,id:e.id,cls:e.className,right:e.getBoundingClientRect().right})).slice(0,12)')
                     self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),overflow)
                 send.locator('[name=numero_guia]').fill('GUIA-UI-QA')
                 send.locator('[name=fecha]').fill('2026-11-14T14:00')

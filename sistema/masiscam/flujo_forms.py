@@ -26,17 +26,18 @@ class CotizacionForm(BaseForm):
     referencia=forms.CharField(max_length=200,label='Número y versión del presupuesto')
     archivo=forms.FileField(required=False,label='Presupuesto PDF (puede adjuntarse antes de la aceptación)')
     observaciones=forms.CharField(required=False,widget=forms.Textarea(attrs={'rows':2}))
+    condiciones=forms.CharField(required=False,max_length=20000,label='Condiciones comerciales',widget=forms.Textarea(attrs={'rows':3}))
 
     def __init__(self,*args,solicitud=None,propuesta=None,**kwargs):
         super().__init__(*args,**kwargs)
         self.filas=[]
         if solicitud is None: return
-        self.fields['moneda']=forms.RegexField(r'^[A-Z]{3}$',max_length=3,label='Moneda (código de tres letras)')
         self.fields['factura_numero']=forms.CharField(max_length=200,required=False,label='Número de factura')
         self.fields['factura_fecha']=forms.DateField(required=False,label='Fecha de factura',widget=forms.DateInput(attrs={'type':'date'}))
         actual=propuesta.snapshot.get('cotizacion',{}) if propuesta and propuesta.diagnostico_id==solicitud.diagnostico_id else {}
+        if actual.get('moneda','USD')!='USD': actual={}
         precios={r['pieza']:r for r in actual.get('lineas',[])}
-        self.initial.update(moneda=actual.get('moneda',''),factura_numero=actual.get('factura',{}).get('numero',''),
+        self.initial.update(condiciones=actual.get('condiciones',''),factura_numero=actual.get('factura',{}).get('numero',''),
             factura_fecha=actual.get('factura',{}).get('fecha',''),
             referencia=propuesta.snapshot.get('presupuesto_referencia','') if propuesta else '',
             observaciones=propuesta.observaciones if propuesta else '')
@@ -45,12 +46,14 @@ class CotizacionForm(BaseForm):
             self.fields[name]=forms.DecimalField(max_digits=14,decimal_places=2,min_value=0,
                 label=f'Precio unitario de {pieza.descripcion}',widget=forms.NumberInput(attrs={'class':'form-control','step':'.01','min':'0','data-precio':pieza.pk}))
             self.initial[name]=precios.get(pieza.pk,{}).get('precio_unitario','')
-            self.filas.append(dict(pieza=pieza,precio=self[name],total=precios.get(pieza.pk,{}).get('total','')))
+            self.filas.append(dict(pieza=pieza,posicion=(pieza.snapshot or {}).get('posicion',''),precio=self[name],total=precios.get(pieza.pk,{}).get('total','')))
         for field in self.fields.values(): field.widget.attrs.setdefault('class','form-control')
         self.fields['archivo'].widget.attrs['accept']='.pdf,application/pdf'
 
     def clean(self):
         data=super().clean()
+        if self.data.get('moneda','USD')!='USD':
+            raise forms.ValidationError('Las nuevas cotizaciones se registran exclusivamente en USD.')
         if bool(data.get('factura_numero'))!=bool(data.get('factura_fecha')):
             raise forms.ValidationError('Registre juntos el número y la fecha de la factura.')
         return data
@@ -65,7 +68,7 @@ class CotizacionForm(BaseForm):
     def datos(self):
         data=self.cleaned_data
         return dict(referencia=data['referencia'],observaciones=data['observaciones'],archivo=data['archivo'],
-            cotizacion=dict(moneda=data['moneda'],factura=dict(numero=data['factura_numero'],
+            cotizacion=dict(moneda='USD',condiciones=data['condiciones'],factura=dict(numero=data['factura_numero'],
                 fecha=data['factura_fecha'].isoformat() if data['factura_fecha'] else ''),
                 lineas=[dict(pieza=row['pieza'].pk,precio_unitario=str(data[row['precio'].name])) for row in self.filas]))
 
