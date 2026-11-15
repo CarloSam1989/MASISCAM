@@ -159,7 +159,7 @@ class AuditoriaInterfazBrowserTests(InventarioFixture,StaticLiveServerTestCase):
     def test_tablas_y_busqueda_movil(self):
         from playwright.sync_api import sync_playwright,expect
         perfiles=[]
-        for role,user,view in [('ADMIN',self.admin,'usuarios'),('OFICINA',self.oficina,'oficina_inicio')]:
+        for role,user,view in [('ADMIN',self.admin,'usuarios'),('OFICINA',self.oficina,'oficina_inicio'),('TALLER',self.taller,'taller_inicio')]:
             client=Client();client.force_login(user)
             perfiles.append((role,view,client.cookies[settings.SESSION_COOKIE_NAME].value))
         with sync_playwright() as pw:
@@ -171,14 +171,80 @@ class AuditoriaInterfazBrowserTests(InventarioFixture,StaticLiveServerTestCase):
                     context.route('**/*',lambda route:route.continue_() if route.request.url.startswith((self.live_server_url,'data:','blob:')) else route.abort())
                     page=context.new_page();page.goto(self.live_server_url+reverse('masiscam:'+view),wait_until='networkidle')
                     expect(page.locator('header.mc-header')).to_have_count(1)
-                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+                    for width in (1440,1200,1024,768,390,320):
+                        page.set_viewport_size(dict(width=width,height=1000))
+                        self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),(role,width))
+                        self.assertLessEqual(page.locator('header.mc-header').bounding_box()['height'],74,(role,width))
+                        expect(page.locator('.mc-logout button')).to_be_visible()
+                        logo=page.locator('.mc-header .app-brand').bounding_box()
+                        for selector in ('.mc-session','.mc-logout'):
+                            box=page.locator('.mc-header '+selector).bounding_box()
+                            self.assertLess(abs((box['y']+box['height']/2)-(logo['y']+logo['height']/2)),10,(role,width,selector))
+                        if width<1200:
+                            page.locator('.app-menu-toggle').click()
+                            expect(page.locator('#appMenu')).to_have_class(__import__('re').compile(r'\bshow\b'))
+                            expect(page.locator('#appMenu')).to_be_visible()
+                            page.locator('#appMenu a').last.scroll_into_view_if_needed()
+                            expect(page.locator('#appMenu a').last).to_be_visible()
+                            page.locator('.app-menu-toggle').click()
+                            expect(page.locator('#appMenu')).not_to_be_visible()
+                        if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/f'compacta-{role}-{width}.png'),full_page=True)
                     if role=='ADMIN':
                         self.assertGreaterEqual(page.locator('#usuarios-tabla').evaluate('e=>e.getBoundingClientRect().width'),1050)
                         self.assertEqual(page.locator('#usuarios-tabla tbody td:nth-child(3)').first.evaluate('e=>getComputedStyle(e).whiteSpace'),'nowrap')
-                    else:self.assertLessEqual(page.locator('.of-search button').evaluate('e=>e.getBoundingClientRect().height'),48)
+                    elif role=='OFICINA':self.assertLessEqual(page.locator('.of-search button').evaluate('e=>e.getBoundingClientRect().height'),48)
                     if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/f'control-{role}-390.png'),full_page=True)
                     context.close()
             finally:browser.close()
+
+    def test_informacion_tecnica_unificada_conserva_guardado(self):
+        import uuid
+        from . import flujo_services as flujo
+        from playwright.sync_api import sync_playwright,expect
+        self.cargar();parte=self.componente();self.seleccionar(parte);self.diag.refresh_from_db()
+        flujo.enviar_solicitud(usuario=self.taller,empresa=self.empresa,diagnostico_id=self.diag.pk,
+            version=self.diag.version_edicion,clave=uuid.uuid4(),preliminar=True)
+        self.client.force_login(self.taller)
+        cookie=self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                context=browser.new_context(viewport=dict(width=1440,height=1000))
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookie,url=self.live_server_url)])
+                context.route('**/*',lambda route:route.continue_() if route.request.url.startswith((self.live_server_url,'data:','blob:')) else route.abort())
+                page=context.new_page();page.goto(self.live_server_url+self.url,wait_until='networkidle')
+                section=page.locator('#informacion-tecnica')
+                expect(section).to_have_count(1)
+                expect(section.locator('summary')).to_contain_text('Información técnica')
+                self.assertIsNone(section.get_attribute('open'))
+                self.assertEqual(page.locator('footer.mf-links').count(),0)
+                section.locator('summary').click()
+                inspection=section.locator('form').filter(has=page.get_by_role('button',name='Guardar detalles técnicos',exact=True))
+                expect(inspection).to_have_count(1)
+                expect(section.locator('#mf-diagnostico')).to_have_count(1)
+                self.assertTrue(section.evaluate('e=>{const ids=Array.from(e.querySelectorAll("[id]"),n=>n.id);return ids.length===new Set(ids).size}'))
+                for width in (1440,768,390):
+                    page.set_viewport_size(dict(width=width,height=1000))
+                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+                    if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/f'informacion-tecnica-{width}.png'),full_page=True)
+                inspection.locator('[name=hallazgos]').fill('Hallazgo conservado QA compacto')
+                inspection.get_by_role('button').click()
+                expect(section).to_be_visible()
+                section.locator('summary').click()
+                expect(inspection.locator('[name=hallazgos]')).to_have_value('Hallazgo conservado QA compacto')
+                diag=section.locator('#mf-diagnostico')
+                diag.locator('[name=repuestos]').select_option('REQUERIDOS')
+                diag.locator('[name=conclusiones]').fill('Conclusión conservada QA compacta')
+                diag.get_by_role('button',name='Guardar avance',exact=True).click()
+                expect(section).to_be_visible()
+                section.locator('summary').click()
+                expect(diag.locator('[name=conclusiones]')).to_have_value('Conclusión conservada QA compacta')
+                context.close()
+            finally:browser.close()
+        self.diag.refresh_from_db()
+        self.assertEqual(self.diag.conclusiones,'Conclusión conservada QA compacta')
+        self.assertFalse(self.diag.enviado_en)
+        self.assertEqual(self.diag.piezas.count(),1)
 
     def test_todas_las_vistas_html_tres_roles_y_tres_tamanos(self):
         from playwright.sync_api import sync_playwright,expect
