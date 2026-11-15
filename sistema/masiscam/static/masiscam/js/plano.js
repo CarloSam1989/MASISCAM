@@ -31,6 +31,8 @@ if (root) {
     point: null, configuring: false, dirty: false, rendering: null, generation: 0, saving: false};
   const stage = $('#pl-stage'), canvas = $('#pl-canvas'), viewport = $('#pl-viewport');
   const form = $('#pl-piece-form'), dialog = $('#pl-piece-dialog');
+  const positionDialog = $('#pl-position-dialog'), positionForm = $('#pl-position-form');
+  let movingPoint = null, movingValues = null, positionKey = null;
   const csrf = form.querySelector('[name=csrfmiddlewaretoken]').value;
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
@@ -84,7 +86,8 @@ if (root) {
       button.classList.toggle('is-selected', state.data.piezas.some(piece => piece.parte === point.parte));
       button.addEventListener('click', event => {
         event.stopPropagation(); select(point.parte, point.id);
-        if (!state.configuring && matchMedia('(max-width:991px)').matches) tab('componentes');
+        if (!state.configuring && state.data.marcable) selectPoint(point);
+        else if (!state.configuring && matchMedia('(max-width:991px)').matches) tab('componentes');
       });
       $('#pl-points').append(button);
     });
@@ -131,7 +134,7 @@ if (root) {
       const body = el('span'); body.append(el('strong', part.codigo || 'Código por verificar'), el('small', part.descripcion));
       button.append(body); button.addEventListener('click', () => select(part.id)); $('#pl-components').append(button);
     }
-    if (!items.length) $('#pl-components').append(el('p', 'No hay componentes con estos criterios.'));
+    if (!items.length) $('#pl-components').append(el('p', state.data.partes.length ? 'No hay componentes con estos criterios.' : 'Aún no hay componentes registrados. Pulsa un número del PDF para registrarlo manualmente; no se usa OCR.'));
     $('#pl-total').textContent = state.data.partes.length;
   }
   function select(id, pointId = null) {
@@ -152,12 +155,25 @@ if (root) {
       const button = el('button', 'Agregar al diagnóstico', 'btn btn-primary'); button.type = 'button';
       button.addEventListener('click', () => openPiece(part)); detail.append(button);
     } else detail.append(el('p', state.configuring ? 'Pulsa la ubicación numerada en el plano para vincular esta parte.' : 'Consulta de referencia; no se modifica el diagnóstico.'));
+    if (point && state.data.marcable && state.data.mapa_provisional && !state.configuring) {
+      const edit = el('button','Editar posición','btn btn-outline-primary'); edit.type='button';
+      edit.addEventListener('click',()=>openPosition(point,point));
+      const remove = el('button','Eliminar posición provisional','btn btn-outline-danger'); remove.type='button';
+      remove.addEventListener('click',async()=>{
+        const answer=await window.MasiscamNotificaciones?.confirmar('¿Retirar esta posición del mapa provisional? Se conservarán el componente, la selección y las versiones previas.');
+        if (!answer?.isConfirmed) return;
+        try {await positionRequest({operacion:'retirar',punto_id:point.id});}
+        catch(error){message(error.message,true);}
+      });
+      detail.append(edit,remove);
+    }
   }
   function selected() {
     const container = $('#pl-selected-list'); container.replaceChildren();
     $('#pl-count').textContent = $('#pl-count-mobile').textContent = state.data.piezas.length;
     for (const piece of state.data.piezas) {
       const card = el('article', undefined, 'pl-selected-card');
+      card.dataset.parte = piece.parte;
       card.append(el('strong', piece.codigo || piece.descripcion), el('p', piece.descripcion),
         el('p', `${piece.cantidad} ${piece.unidad} · ${piece.accion}`), el('p', piece.condicion));
       if (piece.observaciones) card.append(el('p', piece.observaciones));
@@ -181,7 +197,75 @@ if (root) {
     if (!state.data.piezas.length) container.append(el('p', 'Aún no hay piezas seleccionadas. Busca un componente para comenzar.'));
     markers();
   }
+  function focusSelected(partId) {
+    if (matchMedia('(max-width:991px)').matches) tab('seleccionados');
+    const card=$(`#pl-selected-list [data-parte="${partId}"]`);
+    if(card){card.tabIndex=-1;card.focus({preventScroll:true});card.scrollIntoView({block:'nearest'});}
+  }
+  async function positionRequest(values, key=crypto.randomUUID()) {
+    if(state.saving) throw new Error('Espera a que termine el guardado.');
+    state.saving=true;
+    try {
+      const response=await request(root.dataset.posiciones,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({clave:key,diagnostico_id:root.dataset.diagnostico,version:state.data.version,
+          mapa_version:state.data.mapa_version,...values})});
+      if(response.posicion_url!==root.dataset.posiciones){location.assign(response.plano_url);return response;}
+      root.dataset.datos=response.datos_url;root.dataset.posiciones=response.posicion_url;root.dataset.mapa=response.mapa_url;
+      history.replaceState(null,'',response.plano_url);
+      await load();
+      if(state.active && state.data.partes.some(p=>p.id===state.active))select(state.active);
+      message(response.mensaje);return response;
+    } finally {state.saving=false;}
+  }
+  async function selectPoint(point) {
+    if(state.saving) return;
+    const piece=state.data.piezas.find(item=>item.parte===point.parte);
+    if(piece){focusSelected(point.parte);return;}
+    const part=state.data.partes.find(item=>item.id===point.parte);
+    if(!part?.cantidad && !part?.cantidad_seleccion){openPosition(point,point);return;}
+    try {await positionRequest({operacion:'seleccionar',punto_id:point.id});focusSelected(point.parte);}
+    catch(error){message(error.message,true);}
+  }
+  function fillPositionPart(part) {
+    for(const [name,value] of Object.entries({posicion:part?.posicion||'',descripcion:part?.descripcion||'',unidad:part?.unidad||''})){
+      positionForm.elements[name].value=value;
+      if(name!=='unidad') positionForm.elements[name].readOnly=Boolean(part);
+    }
+    const piece=state.data.piezas.find(item=>item.parte===part?.id);
+    positionForm.elements.cantidad.value=piece?.cantidad||part?.cantidad_seleccion||part?.cantidad||'';
+    positionForm.elements.condicion.value=piece?.condicion||'';
+  }
+  function openPosition(coords, point=null) {
+    if(!positionDialog || !state.data.marcable || state.saving) return;
+    positionForm.reset();$('#pl-position-error').hidden=true;positionKey=crypto.randomUUID();
+    positionForm.elements.parte_id.replaceChildren(new Option('Nuevo componente del plano',''));
+    positionForm.elements.parte_id.options[0].disabled=Boolean(point);
+    for(const part of state.data.partes)positionForm.elements.parte_id.add(new Option(`${part.posicion} · ${part.descripcion}`,part.id));
+    for(const name of ['pagina','x','y'])positionForm.elements[name].value=coords[name]??state.page;
+    positionForm.elements.punto_id.value=point?.id||'';
+    const part=point?state.data.partes.find(item=>item.id===point.parte):null;
+    positionForm.elements.parte_id.value=part?.id||'';fillPositionPart(part);
+    $('#pl-position-title').textContent=point?'Editar posición provisional':'Registrar pieza en el plano';
+    $('#pl-position-move').hidden=!point;
+    $('#pl-position-move').onclick=()=>{movingPoint=point;movingValues=Object.fromEntries(new FormData(positionForm));positionDialog.close();message('Pulsa la nueva ubicación en el PDF.');};
+    positionDialog.showModal();positionForm.elements[part?'cantidad':'posicion'].focus();
+  }
+  positionForm?.elements.parte_id.addEventListener('change',event=>fillPositionPart(state.data.partes.find(p=>String(p.id)===event.target.value)));
+  $('#pl-position-cancel')?.addEventListener('click',()=>{if(!state.saving)positionDialog.close();});
+  positionDialog?.addEventListener('cancel',event=>{if(state.saving)event.preventDefault();});
+  positionForm?.addEventListener('submit',async event=>{
+    event.preventDefault();if(state.saving||!positionForm.reportValidity())return;
+    $('#pl-position-save').disabled=true;$('#pl-position-error').hidden=true;
+    const data=Object.fromEntries(new FormData(positionForm));
+    try {
+      await positionRequest({operacion:'guardar',...data},positionKey);
+      positionDialog.close();const part=state.data.partes.find(p=>p.posicion===data.posicion);
+      if(part){select(part.id);focusSelected(part.id);}
+    }catch(error){$('#pl-position-error').hidden=false;$('#pl-position-error').textContent=error.message;}
+    finally{$('#pl-position-save').disabled=false;}
+  });
   function openPiece(part, piece = null) {
+    piece ||= state.data.piezas.find(item=>item.parte===part.id) || null;
     form.reset(); $('#pl-form-error').hidden = true;
     form.elements.parte_id.value = part.id;
     form.elements.posicion_plano_id.value = piece ? (piece.posicion || '') : (state.point || '');
@@ -234,22 +318,32 @@ if (root) {
   $('#pl-fit').addEventListener('click', () => {state.zoom = 1; render().catch(error => message(error.message, true));});
   $('#pl-page').addEventListener('change', event => {state.page = Number(event.target.value); render().catch(error => message(error.message, true));});
   let drag = null;
+  let dragged = false;
   viewport.addEventListener('pointerdown', event => {
+    dragged=false;
     if (state.configuring || event.target.closest('button') || event.pointerType !== 'mouse') return;
     drag = {x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop};
-    viewport.setPointerCapture(event.pointerId); viewport.classList.add('is-dragging');
   });
   viewport.addEventListener('pointermove', event => {
     if (!drag) return;
+    if(!dragged && Math.hypot(event.clientX-drag.x,event.clientY-drag.y)<6)return;
+    dragged=true;viewport.setPointerCapture(event.pointerId);viewport.classList.add('is-dragging');
     viewport.scrollLeft = drag.left - event.clientX + drag.x; viewport.scrollTop = drag.top - event.clientY + drag.y;
   });
   const endDrag = () => {drag = null; viewport.classList.remove('is-dragging');};
   viewport.addEventListener('pointerup', endDrag); viewport.addEventListener('pointercancel', endDrag);
   stage.addEventListener('click', event => {
-    if (!state.configuring || !state.active) return;
+    if(dragged){dragged=false;return;}
+    if ((!state.configuring && !state.data?.marcable) || (state.configuring && !state.active)) return;
     const bounds = stage.getBoundingClientRect();
     const x = (event.clientX - bounds.left) / bounds.width, y = (event.clientY - bounds.top) / bounds.height;
     if (x < 0 || x > 1 || y < 0 || y > 1) return;
+    if(!state.configuring){
+      const point=movingPoint, values=movingValues;movingPoint=null;movingValues=null;
+      openPosition({pagina:state.page,x:x.toFixed(8),y:y.toFixed(8)},point);
+      if(values)for(const name of ['cantidad','condicion','unidad'])positionForm.elements[name].value=values[name];
+      return;
+    }
     const part = state.data.partes.find(part => part.id === state.active);
     state.data.puntos.push({id: null, parte: part.id, numero: part.posicion, pagina: state.page, x: x.toFixed(8), y: y.toFixed(8)});
     state.dirty = true; markers(); message(`Posición ${part.posicion} añadida. Guarda una nueva versión del mapa.`);
@@ -297,7 +391,7 @@ if (root) {
       state.image = new Image(); state.image.src = root.dataset.documento; await state.image.decode();
     }
     await render(); root.dataset.ready = 'true';
-    message(state.data.editable ? 'Selecciona una posición o componente para agregarlo al diagnóstico borrador.' : 'Plano autorizado · consulta de componentes y versiones.');
+    message(state.data.marcable ? 'Pulsa un número del PDF para registrar o seleccionar su pieza. También puedes buscar en el listado. No se usa OCR.' : 'Plano autorizado · consulta de componentes y versiones.');
   }
   start().catch(error => {message(`No se pudo abrir el visor: ${error.message} Puedes utilizar el listado o descargar el original.`, true); root.dataset.ready = 'error';});
 }

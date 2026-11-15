@@ -45,6 +45,7 @@ urlpatterns = [
     path('biblioteca-tecnica/<int:pk>/plano/datos/',plano_views.plano_datos,name='plano_datos'),
     path('biblioteca-tecnica/<int:pk>/plano/componentes/',plano_views.plano_componente,name='plano_componente'),
     path('biblioteca-tecnica/<int:pk>/plano/mapa/',plano_views.plano_mapa,name='plano_mapa'),
+    path('biblioteca-tecnica/<int:pk>/plano/posiciones/',plano_views.plano_posicion,name='plano_posicion'),
     path('tecnica/diagnostico/<int:pk>/piezas-plano/',plano_views.plano_pieza,name='plano_pieza'),
     path('biblioteca-tecnica/nueva/',tecnica_views.biblioteca_referencia_form,name='biblioteca_referencia_crear'),
     path('biblioteca-tecnica/componentes/',tecnica_views.biblioteca_componentes,name='biblioteca_componentes'),

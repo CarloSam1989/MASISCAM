@@ -51,8 +51,12 @@ def corregir_plano_trabajo(*, usuario, empresa, referencia_id, clave, archivo):
     if ReferenciaTecnica.objects.filter(empresa=empresa, codigo=ref.codigo, revision__gt=ref.revision).exists():
         raise ValidationError('Ya existe una nueva versión. Continúe desde ella.')
     validar_pdf_trabajo(archivo)
-    doc = tecnica.guardar_archivo(usuario=usuario, empresa=empresa, proyecto=exp.registro.equipo.proyecto,
-        equipo=exp.registro.equipo, archivo=archivo, categoria='PLANOS')
+    if payload['hash'] == ref.documento.hash_sha256:
+        tecnica.documento_valido(ref.documento, empresa)
+        doc = ref.documento
+    else:
+        doc = tecnica.guardar_archivo(usuario=usuario, empresa=empresa, proyecto=exp.registro.equipo.proyecto,
+            equipo=exp.registro.equipo, archivo=archivo, categoria='PLANOS')
     nueva = tecnica._save(ReferenciaTecnica(empresa=empresa, documento=doc, expediente_trabajo=exp,
         autor=usuario, sustituye=ref, revision=ref.revision+1,
         **{f:getattr(ref, f) for f in ('codigo','tipo','titulo','marca','modelo','ratio',
@@ -248,6 +252,123 @@ def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, c
         tecnica._save(punto)
     tecnica._libevent(empresa, usuario, clave, 'PLANO_MAPA_CREADO', payload, mapa.pk)
     return mapa
+
+
+@transaction.atomic
+def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id, clave,
+                            version, mapa_version, operacion, punto_id=None, parte_id=None,
+                            pagina=None, x=None, y=None, posicion='', descripcion='',
+                            cantidad=None, condicion='', unidad=''):
+    """Un gesto manual guarda componente, mapa versionado y selección en conjunto."""
+    from accounts.models import Empresa
+    tecnica.autorizar_tecnica(usuario, empresa, {'TALLER'})
+    Empresa.objects.select_for_update().get(pk=empresa.pk)
+    diag = Diagnostico.objects.get(pk=diagnostico_id)
+    exp = tecnica.expediente_autorizado(usuario, empresa, diag.expediente_id, {'TALLER'}, True)
+    diag.refresh_from_db()
+    ref = ReferenciaTecnica.objects.select_for_update().get(pk=referencia_id, empresa=empresa, tipo='PLANO')
+    if not (tecnica.plano_de_trabajo(ref, exp) or
+            ref.estado == 'PUBLICADA' and ref.aplicabilidades.filter(equipo=exp.registro.equipo, activa=True).exists()):
+        raise PermissionDenied('Plano ajeno o sin aplicabilidad a este equipo.')
+    payload = dict(referencia=ref.pk, diagnostico=diag.pk, version=version, mapa=mapa_version,
+        operacion=operacion, punto=punto_id, parte=parte_id, pagina=pagina, x=x, y=y,
+        posicion=posicion, descripcion=descripcion, cantidad=cantidad, condicion=condicion, unidad=unidad)
+    old = tecnica._retry(exp, clave, 'PLANO_POSICION_TRABAJO', payload)
+    if old:
+        return ReferenciaTecnica.objects.get(pk=old)
+    tecnica._editable(usuario, empresa, diag, version)
+    tecnica.seleccion_editable(diag)
+    mapa = ref.mapas.order_by('-version').first()
+    if int(mapa_version) != (mapa.version if mapa else 0):
+        raise ValidationError('El mapa cambió. Recargue antes de modificarlo.')
+    punto = mapa.posiciones.filter(pk=punto_id).first() if mapa and punto_id else None
+    if punto_id and not punto:
+        raise ValidationError('La posición no pertenece a la versión vigente del mapa.')
+    if operacion not in {'guardar','seleccionar','retirar'}:
+        raise ValidationError('Operación de posición inválida.')
+    if operacion in {'seleccionar','retirar'} and not punto:
+        raise ValidationError('Seleccione una posición registrada.')
+    key = uuid.UUID(str(clave))
+    if operacion == 'retirar' and (not mapa.provisional or ref.estado != 'BORRADOR'):
+        raise PermissionDenied('Solo se retiran posiciones provisionales.')
+    if operacion == 'guardar' and ref.estado == 'PUBLICADA':
+        # No modificar el documento ni los componentes aprobados: continuar en
+        # un borrador sucesor del expediente con el mismo PDF y fuentes.
+        siguiente = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=ref.codigo).aggregate(n=Max('revision'))['n']
+        if siguiente != ref.revision:
+            raise ValidationError('Existe una versión posterior. Abra ese plano desde el expediente.')
+        source = ref
+        ref = tecnica._save(ReferenciaTecnica(empresa=empresa, documento=source.documento,
+            expediente_trabajo=exp, autor=usuario, revision=siguiente+1, sustituye=source,
+            **{f:getattr(source,f) for f in ('codigo','tipo','titulo','marca','modelo','ratio',
+                'version_fabricante','procedencia','autorizacion_uso')}))
+        tecnica.copiar_partes_referencia(source, ref)
+        parts = {p.posicion:p for p in ref.partes.all()}
+        if mapa:
+            originales = list(mapa.posiciones.order_by('pk'))
+            copia = guardar_mapa(usuario=usuario, empresa=empresa, referencia_id=ref.pk,
+                base_version=0, clave=uuid.uuid5(key,'copiar-mapa'),
+                posiciones=[dict(parte=parts[p.parte.posicion].pk,pagina=p.pagina,x=str(p.x),y=str(p.y)) for p in originales])
+            if punto:
+                punto = list(copia.posiciones.order_by('pk'))[next(i for i,p in enumerate(originales) if p.pk==punto.pk)]
+            mapa = copia
+        if parte_id:
+            original = source.partes.filter(pk=parte_id).first()
+            if not original: raise ValidationError('Componente de otro plano.')
+            parte_id = parts[original.posicion].pk
+    if operacion == 'seleccionar':
+        parte = punto.parte
+    elif operacion == 'guardar':
+        if not tecnica.plano_de_trabajo(ref, exp):
+            raise PermissionDenied('El marcado exige un borrador de trabajo propio.')
+        if parte_id or punto:
+            parte = ref.partes.filter(pk=parte_id or punto.parte_id).first()
+            if not parte: raise ValidationError('Componente de otro plano.')
+            if posicion and posicion != parte.posicion or descripcion and descripcion != parte.descripcion:
+                raise ValidationError('El componente fuente se conserva. Seleccione otro componente para cambiar la asociación.')
+        else:
+            parte = ref.partes.filter(posicion=posicion.strip()).first()
+            if parte and parte.descripcion != descripcion.strip():
+                raise ValidationError('Este número ya tiene otra descripción. Seleccione el componente existente.')
+            if not parte:
+                parte = registrar_componente_trabajo(usuario=usuario, empresa=empresa, referencia_id=ref.pk,
+                    diagnostico_id=diag.pk, clave=uuid.uuid5(key,'componente'),
+                    datos=dict(posicion=posicion.strip(), descripcion=descripcion.strip(), unidad=unidad.strip(),
+                               pagina=str(pagina)))
+    if operacion != 'seleccionar':
+        posiciones = [dict(parte=p.parte_id,pagina=p.pagina,x=str(p.x),y=str(p.y))
+                      for p in mapa.posiciones.order_by('pk') if not punto or p.pk != punto.pk] if mapa else []
+        if operacion == 'guardar':
+            posiciones.append(dict(parte=parte.pk,pagina=pagina,x=str(x),y=str(y)))
+        mapa = guardar_mapa(usuario=usuario, empresa=empresa, referencia_id=ref.pk,
+            base_version=mapa.version if mapa else 0, posiciones=posiciones, clave=uuid.uuid5(key,'mapa'))
+        if operacion == 'guardar': punto = mapa.posiciones.order_by('-pk').first()
+    if operacion != 'retirar':
+        pieza = diag.piezas.filter(parte=parte).order_by('pk').first()
+        if operacion != 'seleccionar' or not pieza:
+            qty = cantidad if cantidad is not None else parte.cantidad_referencia
+            if qty is None:
+                from .models import Auditoria
+                anterior = Auditoria.objects.filter(expediente=exp, accion='PLANO_POSICION_TRABAJO',
+                    detalle__diagnostico=diag.pk, detalle__parte=parte.pk,
+                    detalle__operacion='guardar').order_by('-pk').first()
+                if anterior: qty = anterior.detalle.get('cantidad')
+            if qty is None:
+                raise ValidationError('Indique la cantidad antes de seleccionar esta pieza.')
+            guardar_seleccion(usuario=usuario, empresa=empresa, diagnostico_id=diag.pk,
+                version=diag.version_edicion, clave=uuid.uuid5(key,'seleccion'), pieza_id=pieza.pk if pieza else None,
+                datos=dict(origen='BIBLIOTECA', parte_id=parte.pk, posicion_plano_id=punto.pk,
+                    cantidad=qty, unidad=parte.unidad or unidad or (pieza.unidad if pieza else ''),
+                    motivo_unidad_pendiente='Unidad pendiente de identificación' if not (parte.unidad or unidad) else '',
+                    condicion=condicion.strip() or (pieza.condicion if pieza else 'Pendiente de inspección'),
+                    accion=pieza.accion if pieza else 'EVALUAR', observaciones=pieza.observaciones if pieza else ''))
+    tecnica.evento(exp, usuario, 'PLANO_POSICION_TRABAJO', clave=str(clave), huella=tecnica._digest(payload),
+        resultado=ref.pk, diagnostico=diag.pk, operacion=operacion,
+        parte=parte.pk if operacion!='retirar' else punto.parte_id,
+        punto=punto.pk if punto else None, mapa_version=mapa.version,
+        cantidad=str(cantidad) if cantidad is not None else None,
+        pagina=pagina, x=str(x) if x is not None else None, y=str(y) if y is not None else None)
+    return ref
 
 
 @transaction.atomic

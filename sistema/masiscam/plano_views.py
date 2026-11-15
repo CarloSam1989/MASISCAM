@@ -39,9 +39,20 @@ def errores_api(view):
 def contexto(request, pk):
     ref = get_object_or_404(tecnica.referencias_visibles(request.user, request.empresa_activa), pk=pk, tipo='PLANO')
     obj = None
-    if request.GET.get('diagnostico'):
+    diagnostico_raw = request.GET.get('diagnostico')
+    if not diagnostico_raw and request.rol_masiscam.rol == 'TALLER':
+        scope = tecnica.expedientes_operativos(request.user, request.empresa_activa).filter(cierre__isnull=True)
+        if ref.expediente_trabajo_id:
+            scope = scope.filter(pk=ref.expediente_trabajo_id)
+        else:
+            scope = scope.filter(registro__equipo_id__in=ref.aplicabilidades.filter(activa=True).values('equipo_id'))
+        candidatos = list(scope[:2])
+        if len(candidatos) == 1:
+            etapa = tecnica._etapa(candidatos[0], 'DIAGNOSTICO')
+            diagnostico_raw = etapa.diagnostico_id if etapa else None
+    if diagnostico_raw:
         try:
-            diagnostico_id = int(request.GET['diagnostico'])
+            diagnostico_id = int(diagnostico_raw)
         except ValueError:
             raise Http404 from None
         obj = get_object_or_404(Diagnostico, pk=diagnostico_id)
@@ -95,7 +106,16 @@ def plano_datos(request, pk):
     info = svc.documento_info(ref, request.empresa_activa)
     mapa = ref.mapas.order_by('-version').first()
     vigente = mapa and mapa.hash_documento == ref.documento.hash_sha256
+    cantidades = {}
+    if obj:
+        from .models import Auditoria
+        for evento in Auditoria.objects.filter(expediente=obj.expediente,
+                accion='PLANO_POSICION_TRABAJO', detalle__diagnostico=obj.pk,
+                detalle__operacion='guardar', detalle__resultado=ref.pk).order_by('pk'):
+            cantidades[evento.detalle['parte']] = evento.detalle['cantidad']
     return JsonResponse(dict(documento=info, editable=editable, version=obj.version_edicion if obj else None,
+        marcable=bool(editable and (tecnica.plano_de_trabajo(ref, obj.expediente) or
+            ref.estado == 'PUBLICADA' and ref.aplicabilidades.filter(equipo=obj.expediente.registro.equipo, activa=True).exists())),
         seleccionable=bool(editable and (tecnica.plano_de_trabajo(ref, obj.expediente) or
             ref.estado == 'PUBLICADA' and ref.aplicabilidades.filter(equipo=obj.expediente.registro.equipo, activa=True).exists())),
         estado=obj.estado if obj else None, mapa_version=mapa.version if mapa else 0,
@@ -104,7 +124,59 @@ def plano_datos(request, pk):
             x=str(p.x), y=str(p.y)) for p in mapa.posiciones.all()] if vigente else [],
         partes=[dict(id=p.pk, posicion=p.posicion, codigo=p.numero_parte, descripcion=p.descripcion,
             unidad=p.unidad, cantidad=str(p.cantidad_referencia) if p.cantidad_referencia is not None else '',
+            cantidad_seleccion=cantidades.get(p.pk) or '',
             pagina=p.pagina) for p in ref.partes.order_by('pk')], piezas=piezas_json(obj)))
+
+
+class PosicionTrabajoForm(BaseForm):
+    diagnostico_id = forms.IntegerField(min_value=1)
+    version = forms.IntegerField(min_value=1)
+    mapa_version = forms.IntegerField(min_value=0)
+    operacion = forms.ChoiceField(choices=[(s,s) for s in ('guardar','seleccionar','retirar')])
+    punto_id = forms.IntegerField(min_value=1, required=False)
+    parte_id = forms.IntegerField(min_value=1, required=False)
+    pagina = forms.IntegerField(min_value=1, required=False)
+    x = forms.DecimalField(max_digits=9, decimal_places=8, min_value=0, max_value=1, required=False)
+    y = forms.DecimalField(max_digits=9, decimal_places=8, min_value=0, max_value=1, required=False)
+    posicion = forms.CharField(max_length=80, required=False)
+    descripcion = forms.CharField(max_length=20000, required=False)
+    cantidad = forms.DecimalField(max_digits=20, decimal_places=6, min_value=Decimal('0.000001'), required=False)
+    condicion = forms.CharField(max_length=20000, required=False)
+    unidad = forms.CharField(max_length=80, required=False)
+
+    def clean(self):
+        data = super().clean()
+        if data.get('operacion') == 'guardar':
+            for campo in ('pagina','x','y','cantidad'):
+                if data.get(campo) is None: self.add_error(campo, 'Campo obligatorio.')
+            if not data.get('parte_id') and not data.get('punto_id'):
+                for campo in ('posicion','descripcion'):
+                    if not data.get(campo): self.add_error(campo, 'Campo obligatorio.')
+        return data
+
+
+@require_POST
+@local
+@masiscam_access_required
+@errores_api
+def plano_posicion(request, pk):
+    if len(request.body) > 250000: raise ValidationError('Solicitud demasiado grande.')
+    try: data = json.loads(request.body)
+    except (ValueError, TypeError): raise ValidationError('Solicitud de posición inválida.') from None
+    if not isinstance(data, dict): raise ValidationError('Solicitud de posición inválida.')
+    form = PosicionTrabajoForm(data)
+    if not form.is_valid():
+        return JsonResponse(dict(error='Revise número, descripción, cantidad y coordenadas.', campos=form.errors.get_json_data()),status=400)
+    ref = svc.guardar_posicion_trabajo(usuario=request.user, empresa=request.empresa_activa,
+        referencia_id=pk, **form.cleaned_data)
+    obj = Diagnostico.objects.get(pk=form.cleaned_data['diagnostico_id'])
+    query = f'?diagnostico={obj.pk}&flujo=1'
+    return JsonResponse(dict(datos_url=reverse('masiscam:plano_datos',args=[ref.pk])+query,
+        plano_url=reverse('masiscam:plano',args=[ref.pk])+query,
+        posicion_url=reverse('masiscam:plano_posicion',args=[ref.pk]),
+        mapa_url=reverse('masiscam:plano_mapa',args=[ref.pk]),
+        mensaje='Posición y selección guardadas en borrador.' if data['operacion']!='retirar'
+                else 'Posición retirada del mapa provisional. El componente y sus selecciones se conservan.'))
 
 
 @require_POST
