@@ -258,7 +258,7 @@ def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, c
 def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id, clave,
                             version, mapa_version, operacion, punto_id=None, parte_id=None,
                             pagina=None, x=None, y=None, posicion='', descripcion='',
-                            cantidad=None, condicion='', unidad=''):
+                            cantidad=None, condicion='', unidad='', fotografias=()):
     """Un gesto manual guarda componente, mapa versionado y selección en conjunto."""
     from accounts.models import Empresa
     tecnica.autorizar_tecnica(usuario, empresa, {'TALLER'})
@@ -273,6 +273,10 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
     payload = dict(referencia=ref.pk, diagnostico=diag.pk, version=version, mapa=mapa_version,
         operacion=operacion, punto=punto_id, parte=parte_id, pagina=pagina, x=x, y=y,
         posicion=posicion, descripcion=descripcion, cantidad=cantidad, condicion=condicion, unidad=unidad)
+    if fotografias:
+        if operacion != 'guardar':
+            raise ValidationError('Las fotografías se adjuntan al guardar una pieza.')
+        payload['fotos'] = [_hash(f) for f in fotografias]
     old = tecnica._retry(exp, clave, 'PLANO_POSICION_TRABAJO', payload)
     if old:
         return ReferenciaTecnica.objects.get(pk=old)
@@ -357,6 +361,7 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
                 raise ValidationError('Indique la cantidad antes de seleccionar esta pieza.')
             guardar_seleccion(usuario=usuario, empresa=empresa, diagnostico_id=diag.pk,
                 version=diag.version_edicion, clave=uuid.uuid5(key,'seleccion'), pieza_id=pieza.pk if pieza else None,
+                fotografias=fotografias,
                 datos=dict(origen='BIBLIOTECA', parte_id=parte.pk, posicion_plano_id=punto.pk,
                     cantidad=qty, unidad=parte.unidad or unidad or (pieza.unidad if pieza else ''),
                     motivo_unidad_pendiente='Unidad pendiente de identificación' if not (parte.unidad or unidad) else '',

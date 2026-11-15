@@ -70,7 +70,6 @@ def contexto(request,exp,errores=None):
     if not historica and context['rol']=='TALLER' and diag and not diag.enviado_en and t.vigente(diag):
         forms['diagnostico']=RevisionForm(tipo='DIAGNOSTICO',revision=diag)
         if not sol:
-            forms['manual']=PiezaManualForm(initial={'version':diag.version_edicion})
             forms['enviar_piezas']=EnviarPiezasForm(initial={'version':diag.version_edicion})
     if not historica and context['rol']=='TALLER' and not sol:
         forms['plano_trabajo']=PlanoTrabajoForm()
@@ -105,34 +104,12 @@ def contexto(request,exp,errores=None):
         Q(estado='PUBLICADA',aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True) |
         Q(estado='BORRADOR',expediente_trabajo=exp))
         .annotate(partes_count=Count('partes',distinct=True)).distinct().order_by('codigo','-revision') if diag else [])
-    if (context['rol']=='TALLER' and not sol and ins and not ins.enviado_en and diag and not diag.enviado_en):
-        plano=planos.filter(partes_count__gt=0).first()
-        if plano:
-            context['accion']=dict(texto=f'Abrir plano {plano.codigo} · r{plano.revision}',
-                url=reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diag.pk}&flujo=1',op=None)
-            context['mensaje']='Selecciona en el plano los componentes que requieren atención. Zoom, listado y fotografías quedan asociados al diagnóstico; registra el detalle de inspección en “Detalles técnicos”.'
-        else:
-            context['accion']=None
-            plano=planos.first()
-            if plano:
-                context['mensaje']=f'El plano {plano.codigo} está publicado y aplicable, pero no tiene componentes registrados. ADMINISTRADOR debe completar la lista en la biblioteca técnica; puedes agregar piezas manualmente mientras tanto.'
-            else:
-                context['mensaje']='No hay un plano publicado y aplicable a este equipo. ADMINISTRADOR debe publicar el PDF y asignar su aplicabilidad. Puedes agregar piezas manualmente mientras se gestiona.'
-    elif (context['rol']=='ADMIN' and ins and not ins.enviado_en and diag and not diag.enviado_en):
-        plano=planos.filter(partes_count__gt=0).first()
-        if not plano:
-            plano=planos.first()
-            if plano:
-                context['accion']=dict(texto='Completar componentes del plano',
-                    url=reverse('masiscam:biblioteca_referencia',args=[plano.pk]),op=None)
-                context['mensaje']=f'El plano {plano.codigo} está publicado, pero todavía no tiene componentes. ADMINISTRADOR debe registrar la lista de piezas para habilitar la selección por componente.'
-            else:
-                context['accion']=dict(texto='Gestionar planos técnicos',url=reverse('masiscam:biblioteca'),op=None)
-                context['mensaje']='No hay un plano publicado y aplicable a este equipo. Publica el documento de referencia y registra su aplicabilidad desde la biblioteca técnica.'
-        else:
-            context['accion']=dict(texto=f'Revisar posiciones de {plano.codigo}',
-                url=reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diag.pk}&flujo=1',op=None)
-            context['mensaje']='La lista de componentes ya está disponible. ADMINISTRADOR puede configurar las posiciones; TALLER puede seleccionar componentes desde el listado mientras tanto.'
+    if context['rol']=='TALLER' and not sol:
+        context['accion']=None
+        context['mensaje']='Sube un PDF y selecciona las piezas directamente en el visor.'
+    elif context['rol']=='ADMIN' and ins and not ins.enviado_en and diag and not diag.enviado_en:
+        context['accion']=None
+        context['mensaje']='TALLER registra las piezas en el visor. ADMINISTRADOR aprueba o rechaza el plano.'
     versiones_plano = {}
     for plano in planos:
         versiones_plano.setdefault(plano.codigo, plano)
@@ -157,7 +134,9 @@ def contexto(request,exp,errores=None):
         form_principal=forms.get(form_action),clave=uuid.uuid4(),
         envios=sol.envios.select_related('documento','confirmacion').order_by('-pk') if sol else [],
         piezas=diag.piezas.prefetch_related('fotografias__documento').order_by('pk') if diag and (context['rol']=='TALLER' or diag.enviado_en or sol) else [],
-        planos=planos,
+        planos=planos, planos_actuales=list(versiones_plano.values()),
+        taller_simple=context['rol']=='TALLER' and not sol and not historica,
+        plano_activo=next((p for p in versiones_plano.values() if p.expediente_trabajo_id and p.estado=='BORRADOR'),None) or next(iter(versiones_plano.values()),None),
         adquisiciones=sol.adquisiciones.select_related('pieza','documento').order_by('pk') if sol else [])
     return context
 
@@ -203,8 +182,15 @@ def detalle(request,pk):
         diagnostico_para_plano=None
         try:
             if op=='plano_trabajo':
-                from .plano_services import cargar_plano_trabajo
-                ref=cargar_plano_trabajo(**common,expediente_id=exp.pk,clave=key,**data)
+                from .plano_services import cargar_plano_trabajo, corregir_plano_trabajo
+                raw=request.POST.get('referencia_id','')
+                if raw:
+                    from .models import ReferenciaTecnica
+                    if not raw.isascii() or not raw.isdecimal() or len(raw)>18: raise Http404
+                    ref=get_object_or_404(ReferenciaTecnica,pk=raw,empresa=exp.empresa,expediente_trabajo=exp)
+                    ref=corregir_plano_trabajo(**common,referencia_id=ref.pk,clave=key,**data)
+                else:
+                    ref=cargar_plano_trabajo(**common,expediente_id=exp.pk,clave=key,**data)
                 diag=exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
                 return redirect(reverse('masiscam:plano',args=[ref.pk])+f'?diagnostico={diag.pk}&flujo=1')
             elif op=='enviar_piezas' and diag:

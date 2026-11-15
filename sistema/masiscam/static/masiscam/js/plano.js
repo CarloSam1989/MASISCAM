@@ -1,3 +1,9 @@
+document.querySelectorAll('form[data-plano-upload]').forEach(upload => {
+  const picker = upload.querySelector('[type=file]');
+  upload.querySelector('[data-pick-pdf]').addEventListener('click', () => picker.click());
+  picker.addEventListener('change', () => {if (picker.files.length) upload.requestSubmit();});
+});
+
 async function cargarPDF(node) {
   const pdfjs = await import(node.dataset.pdfModule);
   pdfjs.GlobalWorkerOptions.workerSrc = node.dataset.pdfWorker;
@@ -90,6 +96,7 @@ if (root) {
       }
     });
   });
+  $('#pl-select-pieces')?.addEventListener('click', () => tab('plano'));
   function markers() {
     $('#pl-points').replaceChildren();
     if (!state.data) return;
@@ -190,6 +197,11 @@ if (root) {
   function selected() {
     const container = $('#pl-selected-list'); container.replaceChildren();
     $('#pl-count').textContent = $('#pl-count-mobile').textContent = state.data.piezas.length;
+    const send = $('#pl-send-form');
+    if (send) {
+      send.elements.version.value = state.data.version;
+      send.querySelector('button').disabled = !state.data.piezas.length;
+    }
     for (const piece of state.data.piezas) {
       const card = el('article', undefined, 'pl-selected-card');
       card.dataset.parte = piece.parte;
@@ -221,14 +233,23 @@ if (root) {
     const card=$(`#pl-selected-list [data-parte="${partId}"]`);
     if(card){card.tabIndex=-1;card.focus({preventScroll:true});card.scrollIntoView({block:'nearest'});}
   }
-  async function positionRequest(values, key=crypto.randomUUID()) {
+  async function positionRequest(values, key=crypto.randomUUID(), photos=[]) {
     if(state.saving) throw new Error('Espera a que termine el guardado.');
     state.saving=true;
     const scroll = {left:viewport.scrollLeft, top:viewport.scrollTop, x:window.scrollX, y:window.scrollY};
     try {
-      const response=await request(root.dataset.posiciones,{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({clave:key,diagnostico_id:root.dataset.diagnostico,version:state.data.version,
-          mapa_version:state.data.mapa_version,...values})});
+      const payload = {clave:key,diagnostico_id:root.dataset.diagnostico,version:state.data.version,
+        mapa_version:state.data.mapa_version,...values};
+      const options = {method:'POST'};
+      if (photos.length) {
+        options.body = new FormData();
+        Object.entries(payload).forEach(([name,value])=>options.body.set(name,value));
+        photos.forEach(photo=>options.body.append('fotografias',photo));
+      } else {
+        options.headers = {'Content-Type':'application/json'};
+        options.body = JSON.stringify(payload);
+      }
+      const response=await request(root.dataset.posiciones,options);
       root.dataset.datos=response.datos_url;root.dataset.posiciones=response.posicion_url;root.dataset.mapa=response.mapa_url;
       const ref = response.referencia;
       if (ref) {
@@ -271,6 +292,7 @@ if (root) {
   function openPosition(coords, point=null) {
     if(!positionDialog || !state.data.marcable || state.saving) return;
     positionForm.reset();$('#pl-position-error').hidden=true;positionKey=crypto.randomUUID();
+    positionForm.querySelectorAll('details').forEach(section=>{section.open=false;});
     positionForm.elements.parte_id.replaceChildren(new Option('Nuevo componente del plano',''));
     positionForm.elements.parte_id.options[0].disabled=Boolean(point);
     for(const part of state.data.partes)positionForm.elements.parte_id.add(new Option(`${part.posicion} · ${part.descripcion}`,part.id));
@@ -280,7 +302,7 @@ if (root) {
     positionForm.elements.parte_id.value=part?.id||'';fillPositionPart(part);
     $('#pl-position-title').textContent=point?'Editar posición provisional':'Registrar pieza en el plano';
     $('#pl-position-move').hidden=!point;
-    $('#pl-position-move').onclick=()=>{pending.add(positionForm);movingPoint=point;movingValues=Object.fromEntries(new FormData(positionForm));positionDialog.close();message('Pulsa la nueva ubicación en el PDF.');};
+    $('#pl-position-move').onclick=()=>{pending.add(positionForm);movingPoint=point;movingValues={...Object.fromEntries(new FormData(positionForm)),photos:Array.from(positionForm.elements.fotografias.files)};positionDialog.close();message('Pulsa la nueva ubicación en el PDF.');};
     positionDialog.showModal();positionForm.elements[part?'cantidad':'posicion'].focus();
   }
   positionForm?.elements.parte_id.addEventListener('change',event=>fillPositionPart(state.data.partes.find(p=>String(p.id)===event.target.value)));
@@ -289,11 +311,14 @@ if (root) {
   positionForm?.addEventListener('submit',async event=>{
     event.preventDefault();if(state.saving||!positionForm.reportValidity())return;
     $('#pl-position-save').disabled=true;$('#pl-position-error').hidden=true;
-    const data=Object.fromEntries(new FormData(positionForm));
+    const fields = new FormData(positionForm);
+    const data=Object.fromEntries(Array.from(fields).filter(([name])=>name!=='fotografias'));
+    const photos=fields.getAll('fotografias').filter(photo=>photo.size);
     try {
-      await positionRequest({operacion:'guardar',...data},positionKey);
+      await positionRequest({operacion:'guardar',...data},positionKey,photos);
       pending.delete(positionForm);positionDialog.close();const part=state.data.partes.find(p=>p.posicion===data.posicion);
       if(part)select(part.id);
+      positionForm.reset();positionKey=null;
     }catch(error){$('#pl-position-error').hidden=false;$('#pl-position-error').textContent=error.message;message(error.message,true);}
     finally{$('#pl-position-save').disabled=false;}
   });
@@ -339,7 +364,7 @@ if (root) {
     $('#pl-form-error').hidden = true;
     try {
       update(await request(root.dataset.pieza, {method: 'POST', body: new FormData(form)}));
-      pending.delete(form);dialog.close();
+      pending.delete(form);dialog.close();form.reset();
     } catch (error) {$('#pl-form-error').hidden = false; $('#pl-form-error').textContent = error.message;message(error.message,true);}
     finally {state.saving = false; $('#pl-submit').disabled = false; $('#pl-submit').textContent = 'Guardar pieza';}
   });
@@ -376,6 +401,7 @@ if (root) {
       const point=movingPoint, values=movingValues;movingPoint=null;movingValues=null;
       openPosition({pagina:state.page,x:x.toFixed(8),y:y.toFixed(8)},point);
       if(values)for(const name of ['cantidad','condicion','unidad'])positionForm.elements[name].value=values[name];
+      if(values?.photos){const transfer=new DataTransfer();values.photos.forEach(photo=>transfer.items.add(photo));positionForm.elements.fotografias.files=transfer.files;}
       return;
     }
     const part = state.data.partes.find(part => part.id === state.active);

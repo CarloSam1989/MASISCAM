@@ -25,12 +25,52 @@ class DinamicoFixture(TresRolesFixture):
             operacion='guardar', pagina=1,x='.7886',y='.3388',posicion='7',
             descripcion='HEAT EXCHANGER',cantidad='2',unidad='unidad',condicion='Daño observado QA')
         data.update(extra)
+        photos=data.pop('fotografias',None)
+        if photos is not None:
+            return self.client.post(reverse('masiscam:plano_posicion',args=[self.ref.pk]),dict(data,fotografias=photos))
         return self.client.post(reverse('masiscam:plano_posicion',args=[self.ref.pk]),
             json.dumps(data),content_type='application/json')
 
 
 @override_settings(**test_flujo.FLAGS)
 class PlanoDinamicoTests(DinamicoFixture, TestCase):
+    def test_subir_correccion_reutiliza_versionado_y_abre_visor(self):
+        from .plano_services import decidir_plano_trabajo
+        self.cargar()
+        decidir_plano_trabajo(usuario=self.admin,empresa=self.empresa,referencia_id=self.ref.pk,
+            clave=uuid.uuid4(),revision=1,decision='RECHAZADO',motivo='Corregir legibilidad QA')
+        documentos=Documento.objects.count()
+        key=uuid.uuid4()
+        for _ in range(2):
+            response=self.client.post(self.url,dict(op='plano_trabajo',clave=key,
+                referencia_id=self.ref.pk,archivo=qa.pdf_trabajo()))
+            nueva=self.exp.planos_trabajo.get(sustituye=self.ref)
+            self.assertRedirects(response,reverse('masiscam:plano',args=[nueva.pk])+f'?diagnostico={self.diag.pk}&flujo=1')
+        self.assertEqual(self.exp.planos_trabajo.count(),2)  # Fuente y corrección auditada.
+        self.assertEqual(self.exp.diagnostico_set.count(),1)
+        self.assertEqual(Documento.objects.count(),documentos)
+
+    def test_posicion_con_fotos_atomica_reintento_y_ux_sin_duplicados(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        self.cargar()
+        response=self.guardar(fotografias=[SimpleUploadedFile('invalida.png',b'no es una imagen',content_type='image/png')])
+        self.assertEqual(response.status_code,400)
+        self.assertFalse(self.ref.partes.exists());self.assertFalse(self.ref.mapas.exists())
+        self.assertFalse(self.diag.piezas.exists())
+        key=str(uuid.uuid4());self.diag.refresh_from_db();version=self.diag.version_edicion
+        for _ in range(2):
+            response=self.guardar(clave=key,version=version,mapa_version=0,fotografias=[qa.foto_pieza()])
+            self.assertEqual(response.status_code,200,response.content)
+        self.assertEqual(self.ref.partes.count(),1);self.assertEqual(self.ref.mapas.count(),1)
+        self.assertEqual(self.diag.piezas.count(),1)
+        self.assertEqual(self.diag.piezas.get().fotografias.count(),1)
+        response=self.client.get(self.url)
+        for text in ('Subir plano PDF','Seleccionar piezas','Enviar a OFICINA'):
+            self.assertContains(response,text)
+        for text in ('Agregar pieza manualmente','ADMINISTRADOR debe','mf-diagnostico','detalles-tecnicos'):
+            self.assertNotContains(response,text)
+        self.assertNotContains(self.client.get(self.plano_url),'pl-config-toggle')
+
     def test_registrar_seleccionar_editar_retirar_y_conservar_versiones(self):
         self.cargar()
         self.assertFalse(self.ref.partes.exists())
@@ -157,7 +197,7 @@ class PlanoDinamicoBrowserTests(DinamicoFixture, StaticLiveServerTestCase):
                 sheet.locator('[name=posicion]').fill('8')
                 sheet.locator('[name=descripcion]').fill('RADIAL BEARING CARRIER')
                 sheet.locator('[name=cantidad]').fill('1')
-                sheet.get_by_text('Condición y unidad (opcional)',exact=True).click()
+                sheet.get_by_text('Unidad (opcional)',exact=True).click()
                 sheet.locator('[name=condicion]').fill('Daño observado QA')
                 sheet.locator('[name=unidad]').fill('unidad')
                 sheet.get_by_role('button',name='Guardar posición y seleccionar',exact=True).click()
@@ -208,7 +248,7 @@ class PlanoDinamicoBrowserTests(DinamicoFixture, StaticLiveServerTestCase):
                 modal.locator('[name=cantidad]').fill('2')
                 if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
                     page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/'registro-desde-pdf.png'),full_page=True)
-                modal.get_by_text('Condición y unidad (opcional)',exact=True).click()
+                modal.get_by_text('Unidad (opcional)',exact=True).click()
                 modal.locator('[name=condicion]').fill('Daño observado QA')
                 modal.locator('[name=unidad]').fill('unidad')
                 modal.get_by_role('button',name='Guardar posición y seleccionar',exact=True).click()

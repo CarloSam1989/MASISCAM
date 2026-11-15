@@ -95,13 +95,13 @@ def piezas_json(obj):
 @masiscam_access_required
 def plano(request, pk):
     ref, obj, editable = contexto(request, pk)
-    from .flujo_forms import ComponenteTrabajoForm
+    from .flujo_forms import PlanoTrabajoForm, EnviarPiezasForm
     return render(request, 'masiscam/plano.html', dict(referencia=ref, diagnostico=obj,
         revision_plano=svc.revision_plano(ref) if ref.expediente_trabajo_id else None,
-        componente_form=ComponenteTrabajoForm() if editable and tecnica.plano_de_trabajo(ref, obj.expediente) else None,
+        plano_form=PlanoTrabajoForm(auto_id='pl_upload_%s') if editable else None,
+        enviar_form=EnviarPiezasForm(initial={'version':obj.version_edicion}, auto_id='pl_send_%s') if editable else None,
         editable_plano=editable, configurar=(request.rol_masiscam.rol == 'ADMIN' and
-            ref.estado == 'PUBLICADA' and not ref.expediente_trabajo_id
-            or editable and request.rol_masiscam.rol == 'TALLER' and tecnica.plano_de_trabajo(ref, obj.expediente))))
+            ref.estado == 'PUBLICADA' and not ref.expediente_trabajo_id)))
 
 
 @require_GET
@@ -167,15 +167,18 @@ class PosicionTrabajoForm(BaseForm):
 @masiscam_access_required
 @errores_api
 def plano_posicion(request, pk):
-    if len(request.body) > 250000: raise ValidationError('Solicitud demasiado grande.')
-    try: data = json.loads(request.body)
-    except (ValueError, TypeError): raise ValidationError('Solicitud de posición inválida.') from None
-    if not isinstance(data, dict): raise ValidationError('Solicitud de posición inválida.')
+    if request.content_type == 'application/json':
+        if len(request.body) > 250000: raise ValidationError('Solicitud demasiado grande.')
+        try: data = json.loads(request.body)
+        except (ValueError, TypeError): raise ValidationError('Solicitud de posición inválida.') from None
+        if not isinstance(data, dict): raise ValidationError('Solicitud de posición inválida.')
+    else:
+        data = request.POST
     form = PosicionTrabajoForm(data)
     if not form.is_valid():
         return JsonResponse(dict(error='Revise número, descripción, cantidad y coordenadas.', campos=form.errors.get_json_data()),status=400)
     ref = svc.guardar_posicion_trabajo(usuario=request.user, empresa=request.empresa_activa,
-        referencia_id=pk, **form.cleaned_data)
+        referencia_id=pk, fotografias=request.FILES.getlist('fotografias'), **form.cleaned_data)
     obj = Diagnostico.objects.get(pk=form.cleaned_data['diagnostico_id'])
     query = f'?diagnostico={obj.pk}&flujo=1'
     return JsonResponse(dict(datos_url=reverse('masiscam:plano_datos',args=[ref.pk])+query,
