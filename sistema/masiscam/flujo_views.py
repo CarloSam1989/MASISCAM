@@ -79,7 +79,7 @@ def contexto(request,exp,errores=None):
         forms['evidencia_inspeccion']=EvidenciaForm(expediente=exp,revision=ins,
             usuario=request.user,empresa=request.empresa_activa)
     if not historica and sol and context['rol']=='OFICINA':
-        forms['cotizar']=CotizacionForm()
+        forms['cotizar']=CotizacionForm(solicitud=sol,propuesta=prop)
         try:
             s.autorizacion(sol)
         except ValidationError:
@@ -93,6 +93,10 @@ def contexto(request,exp,errores=None):
             forms['aceptacion'].fields['propuesta_id'].queryset=o.PropuestaComercial.objects.filter(pk=prop.pk)
             forms['respaldo']=OperacionForm(op='respaldo',exp=exp,politica=o.politica())
             forms['respaldo'].fields['propuesta_id'].queryset=o.PropuestaComercial.objects.filter(pk=prop.pk)
+            from django.forms import HiddenInput
+            for nombre in ('aceptacion','respaldo'):
+                forms[nombre].initial['propuesta_id']=prop.pk
+                forms[nombre].fields['propuesta_id'].widget=HiddenInput()
     envio=None
     if not historica and sol and context['rol']=='TALLER':
         envio=sol.envios.filter(confirmacion__isnull=True).order_by('pk').first()
@@ -128,7 +132,27 @@ def contexto(request,exp,errores=None):
     for plano in planos:
         ultima = rechazos.get(str(plano.pk), {})
         plano.motivo_rechazo = ultima.get('motivo') if ultima.get('decision') == 'RECHAZADO' else None
+    oficina_estado='Pendiente'; oficina_bloqueo=''; oficina_envio=False
+    if context['rol']=='OFICINA' and sol:
+        if prop and prop.diagnostico_id==sol.diagnostico_id: oficina_estado='Cotizado'
+        try:
+            auth=s.autorizacion(sol)
+        except ValidationError as error:
+            oficina_bloqueo='; '.join(error.messages)
+        else:
+            oficina_estado='Autorizado'
+            if sol.envios.filter(lineas__adquisicion__autorizacion=auth).exists(): oficina_estado='Enviado a TALLER'
+            oficina_envio=any(s.disponible(a)>0 for a in sol.adquisiciones.filter(autorizacion=auth))
+            if not oficina_envio:
+                oficina_bloqueo=('Registre repuestos disponibles para preparar un envío; las salidas existentes se conservan.'
+                    if sol.snapshot['piezas'] else 'Solicitud sin repuestos: no requiere adquisiciones ni envíos; se mantienen los requisitos técnicos antes de reparar.')
+    cotizacion_bloqueo=('ADMINISTRADOR debe aprobar el diagnóstico antes de cotizar.'
+        if not diag or not t._aprobado(diag) else
+        'La cotización con repuestos registrados conserva sus importes y autorización; los cambios requieren una revisión de alcance.'
+        if sol and sol.adquisiciones.exists() else '')
     context.update(expediente=exp,equipo=exp.registro.equipo,inspeccion=ins,forms=forms,envio=envio,
+        oficina_estado=oficina_estado,oficina_bloqueo=oficina_bloqueo,oficina_envio=oficina_envio,
+        cotizacion_habilitada=not bool(cotizacion_bloqueo),cotizacion_bloqueo=cotizacion_bloqueo,
         mantenimientos=t.expedientes_operativos(request.user,request.empresa_activa).filter(registro__equipo=exp.registro.equipo).order_by('-correlativo') if context['rol']=='TALLER' else [],
         errores_generales=[str(error) for form in (errores or {}).values() for errors in form.errors.values() for error in errors],
         form_principal=forms.get(form_action),clave=uuid.uuid4(),
@@ -166,7 +190,7 @@ def detalle(request,pk):
         form=RevisionForm(request.POST,tipo='DIAGNOSTICO',revision=diag);nombre='diagnostico'
     elif op=='manual' and diag:
         form=PiezaManualForm(request.POST,request.FILES);nombre='manual'
-    elif op=='cotizar' and sol: form=CotizacionForm(request.POST,request.FILES);nombre=op
+    elif op=='cotizar' and sol: form=CotizacionForm(request.POST,request.FILES,solicitud=sol,propuesta=ctx['propuesta']);nombre=op
     elif op=='adquirir' and sol: form=AdquisicionForm(request.POST,request.FILES,solicitud=sol);nombre=op
     elif op=='enviar' and sol: form=EnvioForm(request.POST,solicitud=sol);nombre=op
     elif op=='recibir' and sol:
@@ -211,7 +235,7 @@ def detalle(request,pk):
                 fotos=data.pop('fotografias');version=data.pop('version')
                 guardar_seleccion(**common,diagnostico_id=diag.pk,version=version,clave=key,
                     datos=dict(data,origen='MANUAL'),fotografias=fotos)
-            elif op=='cotizar' and sol: s.cotizar(**common,solicitud_id=sol.pk,clave=key,**data)
+            elif op=='cotizar' and sol: s.cotizar(**common,solicitud_id=sol.pk,clave=key,**form.datos())
             elif op=='aceptacion' and sol:
                 vigente=o.PropuestaComercial.objects.filter(expediente=exp).order_by('-version').first()
                 propuesta=data.pop('propuesta_id')

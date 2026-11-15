@@ -1,6 +1,6 @@
 """Orquestación del relevo operativo, sin sustituir las reglas de las fases 2–6."""
 import uuid
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, localcontext
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.base import ContentFile
 from django.db import transaction
@@ -100,14 +100,65 @@ def autorizacion(obj):
     return auth
 
 
+def valorar_cotizacion(diag, detalle):
+    """Importes aportados por OFICINA; cantidades y totales proceden del servidor."""
+    import re
+    from datetime import date
+    if not isinstance(detalle,dict) or not re.fullmatch('[A-Z]{3}',str(detalle.get('moneda',''))):
+        raise ValidationError('Indique la moneda mediante su código de tres letras.')
+    filas=detalle.get('lineas')
+    if not isinstance(filas,list) or len(filas)>500:
+        raise ValidationError('Listado de precios inválido.')
+    piezas={p.pk:p for p in diag.piezas.all()}; vistos=set(); result=[]; total=Decimal('0')
+    for fila in filas:
+        if not isinstance(fila,dict): raise ValidationError('Precio inválido.')
+        pk=fila.get('pieza')
+        if type(pk) is not int or pk not in piezas or pk in vistos: raise ValidationError('Pieza ajena o duplicada.')
+        try: precio=Decimal(str(fila.get('precio_unitario')))
+        except (InvalidOperation,ValueError): raise ValidationError('Precio inválido.') from None
+        if not precio.is_finite() or precio<0 or precio>=Decimal('1000000000000') or precio.as_tuple().exponent < -2:
+            raise ValidationError('Precio no negativo, con un máximo de dos decimales y doce enteros.')
+        p=piezas[pk]
+        with localcontext() as context:
+            context.prec=50
+            subtotal=(p.cantidad*precio).quantize(Decimal('.01')); total+=subtotal
+        result.append(dict(pieza=pk,cantidad=str(p.cantidad),precio_unitario=format(precio,'.2f'),total=format(subtotal,'.2f')))
+        vistos.add(pk)
+    if vistos!=set(piezas): raise ValidationError('Indique el precio de todas las piezas solicitadas.')
+    factura=detalle.get('factura') or {}
+    if not isinstance(factura,dict): raise ValidationError('Referencia de factura inválida.')
+    numero=str(factura.get('numero','')).strip(); fecha=str(factura.get('fecha','')).strip()
+    if len(numero)>200 or bool(numero)!=bool(fecha): raise ValidationError('Indique número y fecha de la factura juntos.')
+    if fecha:
+        try: date.fromisoformat(fecha)
+        except ValueError: raise ValidationError('Fecha de factura inválida.') from None
+    return dict(moneda=detalle['moneda'],lineas=sorted(result,key=lambda row:row['pieza']),
+        total=format(total,'.2f'),factura=dict(numero=numero,fecha=fecha))
+
+
 @transaction.atomic
-def cotizar(*, usuario, empresa, solicitud_id, clave, referencia, observaciones='', archivo=None):
+def cotizar(*, usuario, empresa, solicitud_id, clave, referencia, observaciones='', archivo=None, cotizacion=None):
     obj, exp = solicitud(usuario,empresa,solicitud_id,{'OFICINA'},True)
     vigente(obj)
+    payload=None
+    if cotizacion is not None:
+        cotizacion=valorar_cotizacion(obj.diagnostico,cotizacion)
+        payload=dict(solicitud=obj.pk,referencia=referencia,observaciones=observaciones,cotizacion=cotizacion,
+            hash=_hash(archivo) if archivo else None)
+        old=t._retry(exp,clave,'OFICINA_COTIZACION',payload)
+        if old: return o.PropuestaComercial.objects.get(pk=old)
     # Reuse an existing proposal for this diagnosis; no retyping or parallel budget.
     anterior = o.PropuestaComercial.objects.filter(expediente=exp).order_by('-version').first()
-    if anterior and anterior.diagnostico_id == obj.diagnostico_id:
+    if anterior and anterior.diagnostico_id == obj.diagnostico_id and cotizacion is None:
         return anterior
+    if (anterior and anterior.diagnostico_id==obj.diagnostico_id and cotizacion==anterior.snapshot.get('cotizacion')
+            and referencia.strip()==anterior.snapshot.get('presupuesto_referencia') and observaciones==anterior.observaciones
+            and (not archivo or anterior.evidencias.filter(documento__hash_sha256=_hash(archivo)).exists())
+            and (not hasattr(anterior,'decision') or anterior.decision.decision=='APROBADO')):
+        t._event(exp,usuario,clave,'OFICINA_COTIZACION',payload,anterior.pk)
+        return anterior
+    if cotizacion is not None and obj.adquisiciones.exists():
+        raise ValidationError('La cotización tiene repuestos registrados. Conserve su autorización y tramite una revisión de alcance antes de cambiar los importes.')
     if not t._aprobado(obj.diagnostico):
         raise ValidationError('ADMINISTRADOR debe aprobar el diagnóstico antes de cotizar.')
     informe = t.reservar_informe(usuario=usuario,empresa=empresa,diagnostico_id=obj.diagnostico_id,
@@ -116,8 +167,16 @@ def cotizar(*, usuario, empresa, solicitud_id, clave, referencia, observaciones=
     alcance = '\n'.join(f"{p['cantidad']} {p['unidad']} · {p['codigo'] or 'Código pendiente'} · {p['descripcion']} · {p['accion']}" for p in obj.snapshot['piezas'])
     if not obj.snapshot['piezas']:
         alcance='Trabajo declarado sin repuestos.\n'+obj.diagnostico.recomendaciones+'\n'+obj.diagnostico.conclusiones
-    return o.proponer(usuario=usuario,empresa=empresa,expediente_id=exp.pk,diagnostico_id=obj.diagnostico_id,
-        clave=clave, datos=dict(alcance=alcance,observaciones=observaciones,presupuesto_referencia=referencia),archivo=archivo)
+    datos=dict(alcance=alcance,observaciones=observaciones,presupuesto_referencia=referencia)
+    if cotizacion is not None:
+        datos['cotizacion']=cotizacion
+        alcance+='\n'+cotizacion['moneda']+' · '+ '; '.join(
+            f"Pieza {r['pieza']}: unitario {r['precio_unitario']}, total {r['total']}" for r in cotizacion['lineas'])
+        datos['alcance']=alcance+'\nTotal: '+cotizacion['total']
+    result=o.proponer(usuario=usuario,empresa=empresa,expediente_id=exp.pk,diagnostico_id=obj.diagnostico_id,
+        clave=uuid.uuid5(uuid.UUID(str(clave)),'propuesta') if payload else clave, datos=datos,archivo=archivo)
+    if payload: t._event(exp,usuario,clave,'OFICINA_COTIZACION',payload,result.pk)
+    return result
 
 
 @transaction.atomic
@@ -156,6 +215,8 @@ def enviar_repuestos(*,usuario,empresa,solicitud_id,numero_guia,fecha,lineas,cla
     payload = dict(solicitud=obj.pk,guia=numero_guia,fecha=fecha.isoformat(),lineas=lineas)
     old = t._retry(exp,clave,'REPUESTOS_ENVIADOS',payload)
     if old: return EnvioRepuestos.objects.get(pk=old)
+    if obj.envios.filter(numero_guia=numero_guia.strip()).exists():
+        raise ValidationError('Esta guía ya se registró en la solicitud; no se duplica el envío.')
     if not numero_guia.strip() or not isinstance(lineas,list) or not 1 <= len(lineas) <= 500:
         raise ValidationError('Número de guía y al menos una cantidad enviada obligatorios.')
     filas=[]; ids=set()

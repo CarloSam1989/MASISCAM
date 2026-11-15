@@ -3,3 +3,7 @@
 .mf-app .mf-photos img{display:block;width:72px;height:72px;object-fit:cover;border-radius:9px;margin-bottom:6px}
 .mf-details summary > span{display:block;margin-top:5px;font-size:.85rem;font-weight:400;color:#526a7f}
 .mf-photo-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-top:12px}.mf-photo-choice{display:flex;flex-direction:column;gap:6px;padding:7px;border:1px solid #d8e3ee;border-radius:10px;background:#fff;color:#172b40;text-align:left;overflow-wrap:anywhere}.mf-photo-choice[aria-pressed=true]{border-color:#31577b;box-shadow:0 0 0 2px #31577b}.mf-photo-choice img{display:block;width:100%;aspect-ratio:4/3;object-fit:contain;background:#f2f5f8;border-radius:6px}.mf-receipt-thumb{width:72px;height:54px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:8px}
+#oficina-gestion .table-responsive{max-width:100%;overflow-x:auto;margin:16px 0;border:1px solid #dce5ee;border-radius:9px}
+#oficina-gestion table{width:100%;min-width:520px;border-collapse:collapse}
+#oficina-gestion th,#oficina-gestion td{text-align:left;border-bottom:1px solid #dce5ee}
+#oficina-gestion [data-precio]{width:100%;min-width:120px;max-width:180px}

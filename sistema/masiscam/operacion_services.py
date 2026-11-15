@@ -153,7 +153,7 @@ def estado(exp):
 @transaction.atomic
 def proponer(*, usuario, empresa, expediente_id, diagnostico_id, clave, datos, archivo=None):
     exp = expediente(usuario, empresa, expediente_id, {'OFICINA'}, True)
-    _datos(datos, ('alcance','observaciones','presupuesto_referencia'))
+    _datos(datos, ('alcance','observaciones','presupuesto_referencia','cotizacion'))
     payload = dict(diagnostico=diagnostico_id, datos=datos, hash=_hash(archivo) if archivo else None)
     old = t._retry(exp, clave, 'COMERCIAL_PROPUESTA', payload)
     if old:
@@ -167,15 +167,21 @@ def proponer(*, usuario, empresa, expediente_id, diagnostico_id, clave, datos, a
     t.documento_valido(informe.documento, empresa)
     _texto(datos, ('alcance',))
     data = dict(datos)
+    cotizacion = data.pop('cotizacion', None)
+    if cotizacion is not None:
+        from .flujo_services import valorar_cotizacion
+        cotizacion = valorar_cotizacion(diag, cotizacion)
     referencia = data.pop('presupuesto_referencia', '')
     if not isinstance(referencia, str) or len(referencia) > 200:
         raise ValidationError('Referencia de presupuesto inválida; máximo 200 caracteres.')
     anterior = PropuestaComercial.objects.filter(expediente=exp).order_by('-version').first()
+    snapshot = dict(numero=exp.numero,cliente=exp.recepcion.snapshot,diagnostico=diag.pk,revision=diag.revision,
+        informe=informe.pk,hash=informe.hash_sha256,presupuesto_referencia=referencia.strip())
+    if cotizacion is not None:
+        snapshot['cotizacion'] = cotizacion
     result = t._save(PropuestaComercial(expediente=exp,autor=usuario,clave=clave,diagnostico=diag,informe=informe,
         version=anterior.version+1 if anterior else 1,sustituye=anterior, snapshot=dict(
-            numero=exp.numero,cliente=exp.recepcion.snapshot,diagnostico=diag.pk,revision=diag.revision,
-            informe=informe.pk,hash=informe.hash_sha256,
-            presupuesto_referencia=referencia.strip()), **data))
+            snapshot), **data))
     _evidencia(result, usuario, archivo, 'DOCUMENTO', 'Propuesta / presupuesto aportado; no acredita aceptación.', uuid.uuid4())
     t._event(exp, usuario, clave, 'COMERCIAL_PROPUESTA', payload, result.pk)
     return result
