@@ -33,6 +33,12 @@ if (root) {
   const form = $('#pl-piece-form'), dialog = $('#pl-piece-dialog');
   const positionDialog = $('#pl-position-dialog'), positionForm = $('#pl-position-form');
   let movingPoint = null, movingValues = null, positionKey = null;
+  const pending = new Set();
+  const quantity = value => String(value ?? '').replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
+  for (const sheet of [form, positionForm].filter(Boolean)) {
+    sheet.addEventListener('input', () => pending.add(sheet));
+    sheet.addEventListener('change', () => pending.add(sheet));
+  }
   const csrf = form.querySelector('[name=csrfmiddlewaretoken]').value;
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
@@ -43,6 +49,19 @@ if (root) {
   function message(text, error = false) {
     $('#pl-message').textContent = text;
     $('#pl-message').classList.toggle('is-error', error);
+    if (error) window.MasiscamNotificaciones?.mostrar(text, 'error');
+  }
+  function saved(text) {
+    message(text);
+    requestAnimationFrame(() => window.MasiscamNotificaciones?.mostrar(text, 'success'));
+  }
+  async function closeSheet(sheet, modal) {
+    if (state.saving) return;
+    if (pending.has(sheet)) {
+      const answer = await window.MasiscamNotificaciones?.confirmar('¿Descartar los cambios sin guardar de esta pieza?');
+      if (!answer?.isConfirmed) return;
+    }
+    pending.delete(sheet); modal.close();
   }
   async function request(url, options = {}) {
     const response = await fetch(url, {credentials: 'same-origin', cache: 'no-store', ...options,
@@ -131,7 +150,7 @@ if (root) {
       button.classList.toggle('is-active', part.id === state.active);
       button.setAttribute('aria-pressed', String(part.id === state.active));
       button.append(el('span', part.posicion, 'pl-position'));
-      const body = el('span'); body.append(el('strong', part.codigo || 'Código por verificar'), el('small', part.descripcion));
+      const body = el('span'); body.append(el('strong', part.codigo || `Posición ${part.posicion}`), el('small', part.descripcion));
       button.append(body); button.addEventListener('click', () => select(part.id)); $('#pl-components').append(button);
     }
     if (!items.length) $('#pl-components').append(el('p', state.data.partes.length ? 'No hay componentes con estos criterios.' : 'Aún no hay componentes registrados. Pulsa un número del PDF para registrarlo manualmente; no se usa OCR.'));
@@ -150,7 +169,7 @@ if (root) {
     list(); markers();
     const detail = $('#pl-detail'); detail.replaceChildren();
     detail.append(el('h3', `Posición ${part.posicion} · ${part.codigo || 'Código pendiente'}`), el('p', part.descripcion),
-      el('p', `Fuente: ${part.cantidad || 'cantidad no indicada'} ${part.unidad || '· unidad pendiente'}. La cantidad requerida debe indicarse expresamente.`));
+      el('p', `Fuente: ${quantity(part.cantidad) || 'cantidad no indicada'} ${part.unidad || '· unidad pendiente'}. La cantidad requerida debe indicarse expresamente.`));
     if (state.data.seleccionable && !state.configuring) {
       const button = el('button', 'Agregar al diagnóstico', 'btn btn-primary'); button.type = 'button';
       button.addEventListener('click', () => openPiece(part)); detail.append(button);
@@ -175,7 +194,7 @@ if (root) {
       const card = el('article', undefined, 'pl-selected-card');
       card.dataset.parte = piece.parte;
       card.append(el('strong', piece.codigo || piece.descripcion), el('p', piece.descripcion),
-        el('p', `${piece.cantidad} ${piece.unidad} · ${piece.accion}`), el('p', piece.condicion));
+        el('p', `${quantity(piece.cantidad)} ${piece.unidad} · ${piece.accion}`), el('p', piece.condicion));
       if (piece.observaciones) card.append(el('p', piece.observaciones));
       const source = piece.snapshot;
       if (source.provisional) card.append(el('small', 'Origen: plano provisional de TALLER; sujeto a revisión de ADMINISTRADOR.'));
@@ -205,17 +224,31 @@ if (root) {
   async function positionRequest(values, key=crypto.randomUUID()) {
     if(state.saving) throw new Error('Espera a que termine el guardado.');
     state.saving=true;
+    const scroll = {left:viewport.scrollLeft, top:viewport.scrollTop, x:window.scrollX, y:window.scrollY};
     try {
       const response=await request(root.dataset.posiciones,{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({clave:key,diagnostico_id:root.dataset.diagnostico,version:state.data.version,
           mapa_version:state.data.mapa_version,...values})});
-      if(response.posicion_url!==root.dataset.posiciones){location.assign(response.plano_url);return response;}
       root.dataset.datos=response.datos_url;root.dataset.posiciones=response.posicion_url;root.dataset.mapa=response.mapa_url;
+      const ref = response.referencia;
+      if (ref) {
+        root.dataset.documento = ref.documento_url + '?ver=1';
+        $('#pl-reference-title').textContent = ref.titulo;
+        $('#pl-reference-badge').textContent = ref.estado === 'BORRADOR' ? 'Borrador' : `r${ref.revision}`;
+        $('#pl-original').href = ref.documento_url;
+        $('#pl-original').textContent = ref.estado === 'BORRADOR' ? 'PDF original ↓' : 'Original autorizado ↓';
+        $('#pl-draft-note').hidden = ref.estado !== 'BORRADOR';
+        const manual = $('#pl-manual-component');
+        if (manual) manual.action = ref.componente_url;
+      }
       history.replaceState(null,'',response.plano_url);
       await load();
       if(state.active && state.data.partes.some(p=>p.id===state.active))select(state.active);
-      message(response.mensaje);return response;
-    } finally {state.saving=false;}
+      saved(response.mensaje);return response;
+    } finally {
+      state.saving=false;
+      requestAnimationFrame(()=>{viewport.scrollTo(scroll.left,scroll.top);window.scrollTo(scroll.x,scroll.y);});
+    }
   }
   async function selectPoint(point) {
     if(state.saving) return;
@@ -232,7 +265,7 @@ if (root) {
       if(name!=='unidad') positionForm.elements[name].readOnly=Boolean(part);
     }
     const piece=state.data.piezas.find(item=>item.parte===part?.id);
-    positionForm.elements.cantidad.value=piece?.cantidad||part?.cantidad_seleccion||part?.cantidad||'';
+    positionForm.elements.cantidad.value=quantity(piece?.cantidad||part?.cantidad_seleccion||part?.cantidad||'');
     positionForm.elements.condicion.value=piece?.condicion||'';
   }
   function openPosition(coords, point=null) {
@@ -247,21 +280,21 @@ if (root) {
     positionForm.elements.parte_id.value=part?.id||'';fillPositionPart(part);
     $('#pl-position-title').textContent=point?'Editar posición provisional':'Registrar pieza en el plano';
     $('#pl-position-move').hidden=!point;
-    $('#pl-position-move').onclick=()=>{movingPoint=point;movingValues=Object.fromEntries(new FormData(positionForm));positionDialog.close();message('Pulsa la nueva ubicación en el PDF.');};
+    $('#pl-position-move').onclick=()=>{pending.add(positionForm);movingPoint=point;movingValues=Object.fromEntries(new FormData(positionForm));positionDialog.close();message('Pulsa la nueva ubicación en el PDF.');};
     positionDialog.showModal();positionForm.elements[part?'cantidad':'posicion'].focus();
   }
   positionForm?.elements.parte_id.addEventListener('change',event=>fillPositionPart(state.data.partes.find(p=>String(p.id)===event.target.value)));
-  $('#pl-position-cancel')?.addEventListener('click',()=>{if(!state.saving)positionDialog.close();});
-  positionDialog?.addEventListener('cancel',event=>{if(state.saving)event.preventDefault();});
+  $('#pl-position-cancel')?.addEventListener('click',()=>closeSheet(positionForm,positionDialog));
+  positionDialog?.addEventListener('cancel',event=>{event.preventDefault();closeSheet(positionForm,positionDialog);});
   positionForm?.addEventListener('submit',async event=>{
     event.preventDefault();if(state.saving||!positionForm.reportValidity())return;
     $('#pl-position-save').disabled=true;$('#pl-position-error').hidden=true;
     const data=Object.fromEntries(new FormData(positionForm));
     try {
       await positionRequest({operacion:'guardar',...data},positionKey);
-      positionDialog.close();const part=state.data.partes.find(p=>p.posicion===data.posicion);
-      if(part){select(part.id);focusSelected(part.id);}
-    }catch(error){$('#pl-position-error').hidden=false;$('#pl-position-error').textContent=error.message;}
+      pending.delete(positionForm);positionDialog.close();const part=state.data.partes.find(p=>p.posicion===data.posicion);
+      if(part)select(part.id);
+    }catch(error){$('#pl-position-error').hidden=false;$('#pl-position-error').textContent=error.message;message(error.message,true);}
     finally{$('#pl-position-save').disabled=false;}
   });
   function openPiece(part, piece = null) {
@@ -273,6 +306,7 @@ if (root) {
     form.elements.version.value = state.data.version;
     form.elements.clave.value = crypto.randomUUID();
     for (const name of ['cantidad', 'unidad', 'condicion', 'accion', 'observaciones']) form.elements[name].value = piece?.[name] || (name === 'unidad' ? part.unidad : '');
+    form.elements.cantidad.value = quantity(form.elements.cantidad.value);
     form.elements.unidad.readOnly = Boolean(part.unidad);
     $('#pl-piece-title').textContent = `${piece ? 'Editar' : 'Seleccionar'} posición ${part.posicion}`;
     $('#pl-piece-description').textContent = `${part.codigo || 'Código pendiente'} · ${part.descripcion}`;
@@ -287,7 +321,7 @@ if (root) {
   }
   function update(data) {
     state.data.version = data.version; state.data.piezas = data.piezas; selected();
-    message(data.mensaje || 'Borrador guardado.');
+    saved(data.mensaje || 'Borrador guardado.');
   }
   async function mutate(operation, pieceId, evidenceId) {
     if (state.saving) return false;
@@ -305,12 +339,12 @@ if (root) {
     $('#pl-form-error').hidden = true;
     try {
       update(await request(root.dataset.pieza, {method: 'POST', body: new FormData(form)}));
-      dialog.close();
-    } catch (error) {$('#pl-form-error').hidden = false; $('#pl-form-error').textContent = error.message;}
+      pending.delete(form);dialog.close();
+    } catch (error) {$('#pl-form-error').hidden = false; $('#pl-form-error').textContent = error.message;message(error.message,true);}
     finally {state.saving = false; $('#pl-submit').disabled = false; $('#pl-submit').textContent = 'Guardar pieza';}
   });
-  $('#pl-close-dialog').addEventListener('click', () => {if (!state.saving) dialog.close();});
-  dialog.addEventListener('cancel', event => {if (state.saving) event.preventDefault();});
+  $('#pl-close-dialog').addEventListener('click', () => closeSheet(form,dialog));
+  dialog.addEventListener('cancel', event => {event.preventDefault();closeSheet(form,dialog);});
   $('#pl-search').addEventListener('input', list);
   for (const [selector, delta] of [['#pl-plus', .25], ['#pl-minus', -.25]]) $(selector).addEventListener('click', () => {
     state.zoom = Math.max(.5, Math.min(4, state.zoom + delta)); render().catch(error => message(error.message, true));
@@ -372,7 +406,7 @@ if (root) {
       await load(); state.dirty = false; configure(false); message(data.mensaje);
     } catch (error) {message(error.message, true);} finally {button.disabled = false;}
   });
-  window.addEventListener('beforeunload', event => {if (state.dirty || state.saving) {event.preventDefault(); event.returnValue = '';}});
+  window.addEventListener('beforeunload', event => {if (state.dirty || state.saving || pending.size || movingPoint) {event.preventDefault(); event.returnValue = '';}});
   let resizeTimer;
   window.addEventListener('resize', () => {clearTimeout(resizeTimer); resizeTimer = setTimeout(() => render().catch(error => message(error.message, true)), 200);});
   async function load() {

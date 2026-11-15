@@ -71,16 +71,23 @@ def contexto(request, pk):
     return ref, obj, editable
 
 
+def codigo_parte(parte):
+    if not parte:
+        return ''
+    componente = parte.componente
+    return parte.numero_parte or (componente.numero_parte or componente.codigo if componente else '')
+
+
 def piezas_json(obj):
     if not obj:
         return []
     return [dict(id=p.pk, parte=p.parte_id, posicion=p.posicion_plano_id,
         fuente_url=(reverse('masiscam:plano', args=[p.parte.referencia_id]) + '?diagnostico=' + str(obj.pk)) if p.parte_id else None,
-        descripcion=p.descripcion, codigo=p.numero_parte, cantidad=str(p.cantidad), unidad=p.unidad,
+        descripcion=p.descripcion, codigo=p.numero_parte or codigo_parte(p.parte), cantidad=str(p.cantidad), unidad=p.unidad,
         condicion=p.condicion, accion=p.accion, observaciones=p.observaciones, snapshot=p.snapshot,
         fotos=[dict(id=f.pk, url=reverse('masiscam:tecnica_documento', args=[obj.expediente_id, f.documento_id]),
             leyenda=f.leyenda) for f in p.fotografias.all()])
-        for p in obj.piezas.select_related('parte').prefetch_related('fotografias').order_by('pk')]
+        for p in obj.piezas.select_related('parte__componente').prefetch_related('fotografias').order_by('pk')]
 
 
 @require_GET
@@ -122,10 +129,10 @@ def plano_datos(request, pk):
         mapa_provisional=mapa.provisional if mapa else ref.estado == 'BORRADOR',
         puntos=[dict(id=p.pk, parte=p.parte_id, numero=p.numero, pagina=p.pagina,
             x=str(p.x), y=str(p.y)) for p in mapa.posiciones.all()] if vigente else [],
-        partes=[dict(id=p.pk, posicion=p.posicion, codigo=p.numero_parte, descripcion=p.descripcion,
+        partes=[dict(id=p.pk, posicion=p.posicion, codigo=codigo_parte(p), descripcion=p.descripcion,
             unidad=p.unidad, cantidad=str(p.cantidad_referencia) if p.cantidad_referencia is not None else '',
             cantidad_seleccion=cantidades.get(p.pk) or '',
-            pagina=p.pagina) for p in ref.partes.order_by('pk')], piezas=piezas_json(obj)))
+            pagina=p.pagina) for p in ref.partes.select_related('componente').order_by('pk')], piezas=piezas_json(obj)))
 
 
 class PosicionTrabajoForm(BaseForm):
@@ -175,6 +182,9 @@ def plano_posicion(request, pk):
         plano_url=reverse('masiscam:plano',args=[ref.pk])+query,
         posicion_url=reverse('masiscam:plano_posicion',args=[ref.pk]),
         mapa_url=reverse('masiscam:plano_mapa',args=[ref.pk]),
+        referencia=dict(titulo=ref.titulo, revision=ref.revision, estado=ref.estado,
+            documento_url=reverse('masiscam:biblioteca_documento',args=[ref.pk]),
+            componente_url=reverse('masiscam:plano_componente',args=[ref.pk])+query),
         mensaje='Posición y selección guardadas en borrador.' if data['operacion']!='retirar'
                 else 'Posición retirada del mapa provisional. El componente y sus selecciones se conservan.'))
 

@@ -6,7 +6,7 @@
   const seen = new WeakSet();
   api.mostrar = (text, icon='info') => window.Swal ? Swal.fire({...opciones,target:document.querySelector('dialog[open]') || document.body,text,icon,
     ...(icon==='success'?{toast:true,position:'top-end',timer:3500,timerProgressBar:true,showConfirmButton:false,showCloseButton:true,closeButtonAriaLabel:'Cerrar notificación'}:{})}) : Promise.resolve({isConfirmed:false});
-  api.confirmar = text => window.Swal ? Swal.fire({...opciones,title:'Confirmar acción',text,icon:'question',showCancelButton:true,cancelButtonText:'Cancelar',confirmButtonText:'Sí, continuar',focusCancel:true,allowOutsideClick:false}) : Promise.resolve({isConfirmed:false});
+  api.confirmar = text => window.Swal ? Swal.fire({...opciones,target:document.querySelector('dialog[open]') || document.body,title:'Confirmar acción',text,icon:'question',showCancelButton:true,cancelButtonText:'Cancelar',confirmButtonText:'Sí, continuar',focusCancel:true,allowOutsideClick:false}) : Promise.resolve({isConfirmed:false});
   const preguntas = {solicitud:'¿Enviar la solicitud de repuestos? El listado quedará congelado para revisión.',cotizar:'¿Registrar esta cotización?',adquirir:'¿Registrar esta adquisición y sus cantidades?',enviar:'¿Generar la guía y registrar el envío?',recibir:'¿Confirmar las cantidades realmente recibidas?',aceptacion:'¿Registrar la respuesta verificable del cliente? Se conservarán su respaldo y autoría.'};
   const preguntaPara=(form,op)=>{
     if(form.dataset.confirm) return form.dataset.confirm;
