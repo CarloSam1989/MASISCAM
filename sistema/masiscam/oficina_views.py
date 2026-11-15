@@ -1,3 +1,4 @@
+from .access import paginar_listado
 """Office workspace: projections of existing, authorized commercial records."""
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
@@ -50,8 +51,7 @@ def inicio(request, seccion='inicio'):
         'ventas':decisiones,'guias':envios,'documentos':solicitudes,'cuenta':solicitudes.none()}
     qs=fuentes[seccion].select_related('expediente__registro__equipo','expediente__cliente_contractual').order_by('-pk')
     buscar=request.GET.get('q','').strip()[:120]
-    if buscar: qs=qs.filter(Q(expediente__numero__icontains=buscar)|Q(expediente__cliente_contractual__ruc__icontains=buscar)|Q(expediente__registro__equipo__numero_serie__icontains=buscar))
-    pagina=Paginator(qs,20).get_page(request.GET.get('page'))
+    pagina=paginar_listado(request,qs,{'expediente__numero':'Expediente','expediente__cliente_contractual__ruc':'RUC','expediente__cliente_contractual__nombre_comercial':'Cliente','expediente__registro__equipo__nombre':'Equipo','expediente__registro__equipo__numero_serie':'Serie'})
     for row in pagina:
         row.enlace=reverse('masiscam:flujo_detalle',args=[row.expediente_id])
         row.resumen_comercial=(f'{row.cantidad} {row.unidad} · {row.proveedor}' if seccion=='compras' else

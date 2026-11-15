@@ -466,7 +466,7 @@ from .tecnica_models import (AsignacionTecnica, EtapaExpediente, Inspeccion, Dia
     ParteReferenciaTecnica, AplicabilidadReferenciaEquipo, PiezaRequerida, EmisionInformeTecnico)
 from .operacion_models import (PropuestaComercial, DecisionComercial, RecepcionRepuesto,
     ActividadReparacion, UsoRepuesto, ResultadoReparacion, RevisionReparacion,
-    EvidenciaOperativa, EmisionOperativa)
+    EvidenciaOperativa, EmisionOperativa, RevisionAdministrativa)
 from .calibracion_models import (PlantillaCalibracion, ValidacionPlantillaCalibracion,
     AplicabilidadCalibracion, Calibracion, MedicionCalibracion, EvidenciaCalibracion,
     DecisionCalibracion, EmisionCalibracion)

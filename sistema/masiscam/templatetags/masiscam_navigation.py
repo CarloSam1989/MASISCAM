@@ -8,9 +8,47 @@ register = template.Library()
 
 
 @register.simple_tag(takes_context=True)
+def menu_compartido(context):
+    request=context['request'];rol=getattr(getattr(request,'rol_masiscam',None),'rol','')
+    if not rol and request.user.is_authenticated and getattr(request,'empresa_activa',None):
+        from masiscam.access import rol_masiscam_usuario
+        asignacion=rol_masiscam_usuario(usuario=request.user,empresa=request.empresa_activa)
+        rol=asignacion.rol if asignacion else ''
+    from django.conf import settings
+    def item(label,name,args=None):return dict(label=label,url=reverse('masiscam:'+name,args=args))
+    if rol=='TALLER':
+        items=[item('Inicio','taller_inicio'),dict(label='Equipos',url=reverse('masiscam:taller_inicio')+'#trabajos-titulo'),
+            item('Mis trabajos','taller_estado'),item('Planos y piezas','biblioteca'),item('Mi cuenta','taller_cuenta')]
+    elif rol=='OFICINA':
+        from masiscam.oficina_views import SECCIONES
+        items=[item('Inicio','oficina_inicio'),item('Clientes','clientes')]+[item(label,'oficina_seccion',[key]) for key,label in SECCIONES.items()]
+    elif rol=='ADMIN':
+        items=[item('Inicio','dashboard'),item('Reductores','producto_listado',['reductor']),item('Bombas','producto_listado',['bomba']),
+            item('Clientes','clientes'),item('Proyectos','proyectos'),item('Expedientes','expedientes')]
+        if settings.MASISCAM_TECNICA_LOCAL:items += [item('Aprobaciones','tecnica_inicio'),item('Planos y piezas','biblioteca')]
+        if settings.MASISCAM_CALIBRACION_LOCAL:items += [item('Protocolos','calibracion_plantillas')]
+        if settings.MASISCAM_CIERRE_LOCAL:items += [item('Seguimiento','cierre_dashboard')]
+        if tiene_permiso(request,'usuarios'):items += [item('Usuarios','usuarios')]
+    else:items=[item('Inicio','dashboard')]
+    for entry in items:entry['activo']=request.path==entry['url'].split('#')[0] and '#' not in entry['url']
+    return dict(items=items,rol='ADMINISTRADOR' if rol=='ADMIN' else rol,inicio=items[0]['url'])
+
+
+@register.simple_tag(takes_context=True)
+def listado_config(context):
+    return getattr(context.get('pagina'),'ui_config',None)
+
+
+@register.simple_tag(takes_context=True)
 def puede_ver_cierre(context):
     from django.conf import settings
     return bool(getattr(settings,'MASISCAM_CIERRE_LOCAL',False) and puede_ver_tecnica(context))
+
+
+@register.simple_tag(takes_context=True)
+def puede_ver_historial(context):
+    rol=getattr(getattr(context.get('request'),'rol_masiscam',None),'rol',None)
+    return rol in {'ADMIN','TALLER'} and puede_ver_cierre(context)
 
 
 @register.simple_tag(takes_context=True)

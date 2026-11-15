@@ -95,7 +95,7 @@ def snapshot(exp):
         add(e.documento,'Calibración',e.leyenda,e.clase=='FOTO')
     annexes=[]
     confirmation=ConfirmacionRecepcion.objects.filter(recepcion__expediente=exp).first()
-    reports=[('Informe inicial',auth.propuesta.informe.documento),('Protocolo',cal.plantilla.documento)]
+    reports=[('Informe inicial',o.informe_propuesta(auth.propuesta).documento),('Protocolo',cal.plantilla.documento)]
     if confirmation:
         reports.insert(0,('Guía de ingreso',confirmation.guia.documento))
     for em in EmisionCalibracion.objects.filter(calibracion=cal,estado='GENERADA').select_related('documento').order_by('version'):

@@ -1,3 +1,4 @@
+from .access import paginar_listado
 import uuid
 from django.contrib import messages
 from django.core.exceptions import ValidationError, PermissionDenied
@@ -26,8 +27,7 @@ def bandeja(request):
         'expediente__cliente_contractual','expediente__registro__equipo','autor','diagnostico').order_by('-creado_en')
     qs=qs.exclude(expediente__registro__equipo__estado='INACTIVO')
     buscar=request.GET.get('q','').strip()[:120]
-    if buscar: qs=qs.filter(Q(expediente__numero__icontains=buscar)|Q(expediente__cliente_contractual__ruc__icontains=buscar)|Q(expediente__registro__equipo__numero_serie__icontains=buscar))
-    pagina=Paginator(qs,20).get_page(request.GET.get('page'))
+    pagina=paginar_listado(request,qs,{'expediente__numero':'Expediente','expediente__cliente_contractual__ruc':'RUC','expediente__cliente_contractual__nombre_comercial':'Cliente','expediente__registro__equipo__nombre':'Equipo','expediente__registro__equipo__numero_serie':'Serie'})
     for obj in pagina:
         obj.estado_operativo='Diagnóstico pendiente de ADMINISTRADOR' if not t._aprobado(obj.diagnostico) else 'En gestión de oficina'
         if obj.envios.exists(): obj.estado_operativo='Repuestos enviados' if obj.envios.filter(confirmacion__isnull=True).exists() else 'Recibidos en taller'
@@ -88,7 +88,7 @@ def contexto(request,exp,errores=None):
             if sol.snapshot['piezas']:
                 forms['adquirir']=AdquisicionForm(solicitud=sol)
                 forms['enviar']=EnvioForm(solicitud=sol)
-        if prop and prop.diagnostico_id==sol.diagnostico_id and not hasattr(prop,'decision'):
+        if prop and prop.diagnostico_id==sol.diagnostico_id and not hasattr(prop,'decision') and o._propuesta_vigente(prop):
             forms['aceptacion']=OperacionForm(op='decision',exp=exp,politica=o.politica())
             forms['aceptacion'].fields['propuesta_id'].queryset=o.PropuestaComercial.objects.filter(pk=prop.pk)
             if not prop.evidencias.exists():
@@ -154,14 +154,23 @@ def contexto(request,exp,errores=None):
             documentos_comerciales.append(dict(id=version.pk,version=version.version,referencia=version.snapshot.get('presupuesto_referencia',''),
                 generar=version.snapshot.get('cotizacion',{}).get('moneda')=='USD' and not version.snapshot.get('propuesta_origen') and not any(ev.clave==uuid.uuid5(version.clave,'cotizacion-pdf-v1') for ev in version.evidencias.all()),
                 documentos=[ev for ev in version.evidencias.all() if ev.documento.tipo_mime=='application/pdf']))
-    cotizacion_bloqueo=('ADMINISTRADOR debe aprobar el diagnóstico antes de cotizar.'
-        if not diag or not t._aprobado(diag) else
+    from .models import RevisionAdministrativa
+    revision_administrativa=RevisionAdministrativa.objects.filter(expediente=exp).select_related('autor','propuesta','diagnostico').order_by('-pk').first()
+    revision_vigente=bool(prop and s.aprobacion_conjunta_vigente(prop) and revision_administrativa and revision_administrativa.decision=='APROBADO')
+    if context['rol']=='ADMIN':
+        pdfs=list(prop.evidencias.filter(documento__tipo_mime='application/pdf').select_related('documento')) if prop else []
+        context.update(cotizacion_pdf=next((ev for ev in pdfs if ev.clave==uuid.uuid5(prop.clave,'cotizacion-pdf-v1')),pdfs[0] if pdfs else None),
+            diagnostico_datos=[(diag._meta.get_field(name).verbose_name,getattr(diag,name)) for name in t.DIA_FIELDS if getattr(diag,name)] if diag else [],
+            evidencias_diagnostico=[ev for ev in t._evidencias(diag) if not ev.pieza_id] if diag else [])
+    cotizacion_bloqueo=('TALLER debe completar y enviar el diagnóstico antes de cotizar.'
+        if not diag or not diag.enviado_en else
         'La cotización con repuestos registrados conserva sus importes y autorización; los cambios requieren una revisión de alcance.'
         if sol and sol.adquisiciones.exists() else '')
     context.update(expediente=exp,equipo=exp.registro.equipo,inspeccion=ins,forms=forms,envio=envio,
         oficina_estado=oficina_estado,oficina_bloqueo=oficina_bloqueo,oficina_envio=oficina_envio,
         cotizacion_habilitada=not bool(cotizacion_bloqueo),cotizacion_bloqueo=cotizacion_bloqueo,
         documentos_comerciales=documentos_comerciales,
+        revision_administrativa=revision_administrativa,revision_vigente=revision_vigente,
         mantenimientos=t.expedientes_operativos(request.user,request.empresa_activa).filter(registro__equipo=exp.registro.equipo).order_by('-correlativo') if context['rol']=='TALLER' else [],
         errores_generales=[str(error) for form in (errores or {}).values() for errors in form.errors.values() for error in errors],
         form_principal=forms.get(form_action),clave=uuid.uuid4(),
@@ -187,7 +196,8 @@ def plano_aplicable_url(request,exp,diagnostico):
 @masiscam_access_required
 def detalle(request,pk):
     exp=s.expediente(request.user,request.empresa_activa,pk)
-    if request.method=='GET': return render(request,'masiscam/flujo_detalle.html',contexto(request,exp))
+    template='masiscam/flujo_revision_admin.html' if request.rol_masiscam.rol=='ADMIN' else 'masiscam/flujo_detalle.html'
+    if request.method=='GET': return render(request,template,contexto(request,exp))
     op=request.POST.get('op','');ctx=s.resumen(exp,request.user);diag=ctx['diagnostico'];sol=ctx['solicitud']
     if request.GET.get('solicitud') and (not sol or request.GET['solicitud']!=str(sol.pk)):
         raise PermissionDenied('La solicitud histórica es de solo lectura.')
@@ -245,6 +255,11 @@ def detalle(request,pk):
                 guardar_seleccion(**common,diagnostico_id=diag.pk,version=version,clave=key,
                     datos=dict(data,origen='MANUAL'),fotografias=fotos)
             elif op=='cotizar' and sol: s.cotizar(**common,solicitud_id=sol.pk,clave=key,**form.datos())
+            elif op in {'aprobar_expediente','devolver_expediente'}:
+                s.revisar_expediente(**common,expediente_id=exp.pk,clave=key,
+                    diagnostico_id=int(request.POST.get('diagnostico_id','0')),propuesta_id=int(request.POST.get('propuesta_id','0')),
+                    decision='APROBADO' if op=='aprobar_expediente' else 'DEVUELTO',
+                    motivo=request.POST.get('motivo',''),destino=request.POST.get('destino','AMBOS'))
             elif op=='pdf_cotizacion':
                 raw=request.POST.get('propuesta_id','')
                 if not raw.isascii() or not raw.isdecimal() or len(raw)>18: raise Http404
@@ -281,7 +296,7 @@ def detalle(request,pk):
                 if url_plano:
                     return redirect(url_plano)
             return redirect('masiscam:flujo_detalle',pk=exp.pk)
-    return render(request,'masiscam/flujo_detalle.html',contexto(request,exp,{nombre:form}),status=400)
+    return render(request,template,contexto(request,exp,{nombre:form}),status=400)
 
 
 @require_GET

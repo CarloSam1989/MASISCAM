@@ -1,3 +1,4 @@
+from .access import paginar_listado
 from django.core.paginator import Paginator
 from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Subquery
 from django.shortcuts import render
@@ -35,7 +36,7 @@ def taller_inicio(request):
     indicadores['pendientes'] += equipos.filter(expediente_actual_id__isnull=True).count()
     return render(request, 'masiscam/taller_inicio.html', {
         'tipos': Equipo.TipoProducto.choices,
-        'pagina': Paginator(equipos, 12).get_page(request.GET.get('page')),
+        'pagina': paginar_listado(request,equipos,{'nombre':'Equipo','numero_serie':'Serie','cliente__nombre_comercial':'Cliente','ubicacion':'Ubicacion','tipo_producto':'Tipo'}),
         'indicadores': indicadores,
         'pendientes': estados_autorizados(request).filter(cerrado=False).order_by('-creado_en')[:6],
         'planos_habilitados': settings.MASISCAM_TECNICA_LOCAL,
@@ -51,7 +52,7 @@ def taller_estado(request):
     if numero:
         expedientes = expedientes.filter(numero=numero)
     return render(request, 'masiscam/taller_estado.html', {
-        'pagina': Paginator(expedientes, 25).get_page(request.GET.get('page')), 'numero': numero,
+        'pagina': paginar_listado(request,expedientes,{'numero':'Expediente','cliente_contractual__nombre_comercial':'Cliente','registro__equipo__nombre':'Equipo','registro__equipo__numero_serie':'Serie'}), 'numero': numero,
     })
 
 

@@ -2,6 +2,7 @@
 {% block title %}{{ expediente.numero }} · Trabajo en curso{% endblock %}
 {% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/flujo.css' %}?v=20261114-cotizacion-pdf">{% endblock %}
 {% block content %}<div class="container mf-app">
+  {% if revision_administrativa.decision == 'DEVUELTO' and revision_administrativa.destino == rol or revision_administrativa.decision == 'DEVUELTO' and revision_administrativa.destino == 'AMBOS' %}<div class="alert alert-warning" role="status" data-devolucion-expediente><strong>ADMINISTRADOR devolvió el expediente para corrección.</strong><p>{{ revision_administrativa.motivo }}</p><p>Responsable: {{ revision_administrativa.destino }} · {{ revision_administrativa.creado_en }}</p></div>{% endif %}
   {% if errores_generales %}<div class="alert alert-danger" role="alert"><strong>No se confirmó el avance.</strong><ul>{% for error in errores_generales %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
   <header class="mf-heading"><div><p class="mf-eyebrow">MANTENIMIENTO · {{ expediente.numero }}</p><h1>{{ equipo.nombre }}</h1><p>{{ equipo.marca }} {{ equipo.modelo }} · Serie {{ equipo.numero_serie|default:'Pendiente' }}</p><p>{{ expediente.cliente_contractual.nombre_comercial }} · RUC {{ expediente.cliente_contractual.ruc }}</p></div><span class="mf-role">{{ rol }}{% if solicitud %} · Solicitud v{{ solicitud.version }}{% endif %}</span></header>
   {% include 'masiscam/_flujo_pasos.html' %}

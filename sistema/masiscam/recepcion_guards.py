@@ -8,20 +8,22 @@ from .models import (Auditoria, ConfirmacionRecepcion, FotoRecepcionClasificada,
 
 
 def documento_protegido(pk):
+    return bool(pk and documentos_protegidos().filter(pk=pk).exists())
+
+
+def documentos_protegidos():
+    """Consulta conjunta para ocultar acciones genéricas sobre documentos operativos."""
+    from django.db.models import Q
     from .models import InformeFinal
     from .models import PlantillaCalibracion,EvidenciaCalibracion,EmisionCalibracion
     from .models import EvidenciaTecnica, ReferenciaTecnica, EmisionInformeTecnico, EvidenciaOperativa, EmisionOperativa
-    return bool(pk and (InformeFinal.objects.filter(documento_id=pk).exists()
-                       or EmisionGuiaIngreso.objects.filter(documento_id=pk).exists()
-                       or EvidenciaRecepcion.objects.filter(documento_id=pk).exists()
-                       or EvidenciaTecnica.objects.filter(documento_id=pk).exists()
-                       or ReferenciaTecnica.objects.filter(documento_id=pk).exists()
-                       or EmisionInformeTecnico.objects.filter(documento_id=pk).exists()
-                       or EvidenciaOperativa.objects.filter(documento_id=pk).exists()
-                       or EmisionOperativa.objects.filter(documento_id=pk).exists()
-                       or PlantillaCalibracion.objects.filter(documento_id=pk).exists()
-                       or EvidenciaCalibracion.objects.filter(documento_id=pk).exists()
-                       or EmisionCalibracion.objects.filter(documento_id=pk).exists()))
+    from .models import AdquisicionRepuesto, EnvioRepuestos
+    condicion=Q(pk__in=InformeFinal.objects.values('documento_id'))
+    for model in (EmisionGuiaIngreso,EvidenciaRecepcion,EvidenciaTecnica,ReferenciaTecnica,
+            EmisionInformeTecnico,EvidenciaOperativa,EmisionOperativa,PlantillaCalibracion,
+            EvidenciaCalibracion,EmisionCalibracion,AdquisicionRepuesto,EnvioRepuestos):
+        condicion|=Q(pk__in=model.objects.values('documento_id'))
+    return Documento.objects.filter(condicion)
 
 
 @receiver(pre_save, dispatch_uid="recepcion_inmutabilidad")

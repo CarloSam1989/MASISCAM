@@ -22,10 +22,11 @@ FLAGS=qa_flujo.FLAGS
 
 
 class OficinaFixture(TresRolesFixture):
-    def preparar(self):
+    def preparar(self,aprobar_tecnico=True):
         self.preparar_solicitud()
-        t.decidir_diagnostico(usuario=self.admin,empresa=self.empresa,diagnostico_id=self.diag.pk,
-            decision='APROBADO',motivo='Prueba aislada',clave=uuid.uuid4())
+        if aprobar_tecnico:
+            t.decidir_diagnostico(usuario=self.admin,empresa=self.empresa,diagnostico_id=self.diag.pk,
+                decision='APROBADO',motivo='Prueba aislada',clave=uuid.uuid4())
         self.pieza=self.diag.piezas.get()
         self.url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
         self.client.force_login(self.oficina)
@@ -44,6 +45,9 @@ class OficinaFixture(TresRolesFixture):
         return s.cotizar(**data)
 
     def aceptar(self,propuesta):
+        if not s.aprobacion_conjunta_vigente(propuesta):
+            s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,
+                diagnostico_id=propuesta.diagnostico_id,propuesta_id=propuesta.pk,decision='APROBADO',clave=uuid.uuid4())
         return o.decidir_comercial(usuario=self.oficina,empresa=self.empresa,propuesta_id=propuesta.pk,
             clave=uuid.uuid4(),archivo=pdf_plano(),datos=dict(decision='APROBADO',fecha_cliente=timezone.now(),
                 representante_cliente='Cliente ficticio QA',motivo='Aceptación simulada aislada',**verificacion_qa()))
@@ -209,9 +213,43 @@ class OficinaGestionTests(OficinaFixture,TestCase):
 @skipUnless(os.environ.get('MASISCAM_BROWSER_TESTS')=='1','Navegador aislado explícito')
 @override_settings(**FLAGS)
 class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
+    def test_devolucion_con_motivo_sweetalert_y_destinatario(self):
+        from playwright.sync_api import sync_playwright,expect
+        self.preparar(aprobar_tecnico=False);self.cotizar(archivo=None)
+        admin_client=Client();admin_client.force_login(self.admin)
+        admin_cookie=admin_client.cookies[settings.SESSION_COOKIE_NAME].value
+        oficina_cookie=self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                context=browser.new_context(viewport=dict(width=1440,height=1000))
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=admin_cookie,url=self.live_server_url)])
+                page=context.new_page();page.goto(self.live_server_url+self.url)
+                expect(page.locator('#pl-preview')).to_have_attribute('data-ready','true')
+                for width in (390,1440):
+                    page.set_viewport_size(dict(width=width,height=1000))
+                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+                    if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
+                        from pathlib import Path
+                        page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/f'admin-revision-{width}.png'),full_page=True)
+                page.get_by_role('button',name='Devolver para corrección',exact=True).click()
+                page.get_by_role('button',name='Devolver expediente',exact=True).click()
+                expect(page.locator('.swal2-validation-message')).to_be_visible()
+                page.locator('.swal2-textarea').fill('Corregir condiciones comerciales QA')
+                page.locator('#revision-destino').select_option('OFICINA')
+                page.get_by_role('button',name='Devolver expediente',exact=True).click()
+                expect(page.get_by_text('Devuelto para corrección',exact=True)).to_be_visible()
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=oficina_cookie,url=self.live_server_url)])
+                page.goto(self.live_server_url+self.url)
+                expect(page.locator('[data-devolucion-expediente]')).to_contain_text('Corregir condiciones comerciales QA')
+            finally:browser.close()
+
     def test_cotizar_factura_autorizar_enviar_y_recibir(self):
         from playwright.sync_api import sync_playwright, expect
-        self.preparar()
+        self.preparar(aprobar_tecnico=False)
+        admin_client=Client();admin_client.force_login(self.admin)
+        admin_cookie=admin_client.cookies[settings.SESSION_COOKIE_NAME].value
+        oficina_cookie=self.client.cookies[settings.SESSION_COOKIE_NAME].value
         taller_client=Client();taller_client.force_login(self.taller)
         taller_cookie=taller_client.cookies[settings.SESSION_COOKIE_NAME].value
         with sync_playwright() as pw:
@@ -246,6 +284,21 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                     self.assertEqual(response.status,200)
                     self.assertTrue(response.headers['content-disposition'].startswith(disposition))
                     self.assertTrue(response.body().startswith(b'%PDF-'))
+                expect(page.locator('#oficina-aceptacion')).to_have_count(0)
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=admin_cookie,url=self.live_server_url)])
+                page.goto(self.live_server_url+reverse('masiscam:tecnica_expediente',args=[self.exp.pk]))
+                expect(page.locator('#revision-expediente')).to_be_visible()
+                expect(page.locator('#pl-preview')).to_have_attribute('data-ready','true')
+                expect(page.get_by_role('button',name='Registrar asignación',exact=True)).to_have_count(0)
+                expect(page.get_by_role('button',name='Aprobar expediente',exact=True)).to_be_enabled()
+                page.get_by_role('button',name='Aprobar expediente',exact=True).click()
+                page.get_by_role('button',name='Sí, continuar',exact=True).click()
+                expect(page.get_by_text('Expediente aprobado',exact=True)).to_be_visible()
+                if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
+                    from pathlib import Path
+                    page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/'administrador-expediente.png'),full_page=True)
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=oficina_cookie,url=self.live_server_url)])
+                page.goto(self.live_server_url+self.url)
                 page.locator('#oficina-aceptacion summary').click()
                 accept=page.locator('#oficina-aceptacion form')
                 accept.locator('[name=decision]').select_option('APROBADO')

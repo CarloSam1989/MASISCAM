@@ -1,3 +1,4 @@
+from .access import paginar_listado
 from django.urls import reverse
 from functools import wraps
 from django.conf import settings
@@ -30,7 +31,8 @@ def inicio(request):
     role=s.autorizar(request.user,request.empresa_activa).rol
     from .tecnica_services import expedientes_operativos
     qs=expedientes_operativos(request.user,request.empresa_activa)
-    return render(request,'masiscam/calibracion_inicio.html',dict(expedientes=qs.distinct(),rol=role))
+    pagina=paginar_listado(request,qs.distinct(),{'numero':'Expediente','cliente_contractual__nombre_comercial':'Cliente','registro__equipo__nombre':'Equipo','registro__equipo__numero_serie':'Serie'})
+    return render(request,'masiscam/calibracion_inicio.html',dict(expedientes=pagina,pagina=pagina,rol=role))
 
 
 @require_http_methods(['GET','POST'])
@@ -59,7 +61,7 @@ def plantillas(request):
     if role in s.t.OPERADORES:
         qs=qs.filter(aplicabilidades__equipo__registros__expediente_mantenimiento__asignaciones_tecnicas__tecnico=request.user,
             aplicabilidades__equipo__registros__expediente_mantenimiento__asignaciones_tecnicas__fin__isnull=True).distinct()
-    return render(request,'masiscam/calibracion_plantillas.html',dict(form=form,puntos=points,plantillas=qs,rol=role),status=400 if request.method=='POST' else 200)
+    return render(request,'masiscam/calibracion_plantillas.html',dict(form=form,puntos=points,plantillas=(pagina:=paginar_listado(request,qs)),pagina=pagina,rol=role),status=400 if request.method=='POST' else 200)
 
 
 def _p(request,pk):

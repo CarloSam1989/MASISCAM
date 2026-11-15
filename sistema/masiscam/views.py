@@ -1,3 +1,4 @@
+from .access import paginar_listado
 from base64 import b64encode
 from io import BytesIO
 import mimetypes
@@ -173,7 +174,8 @@ def producto_listado(request, tipo):
             | Q(sector__icontains=q) | Q(nombre__icontains=q) | Q(marca__icontains=q)
             | Q(modelo__icontains=q) | Q(numero_serie__icontains=q)
         )
-    contexto = {"equipos": equipos[:200], "q": q, "producto_nombre": nombre, "producto_codigo": codigo, "producto_singular": Equipo(tipo_producto=codigo).producto_singular, "cliente_seleccionado": cliente, "clientes": clientes,
+    pagina=paginar_listado(request,equipos,{'nombre':'Equipo','proyecto__nombre':'Proyecto','ubicacion':'Ubicacion','sector':'Sector','marca':'Marca','modelo':'Modelo','numero_serie':'Serie','estado':'Estado'})
+    contexto = {"equipos": pagina, "pagina":pagina, "q": q, "producto_nombre": nombre, "producto_codigo": codigo, "producto_singular": Equipo(tipo_producto=codigo).producto_singular, "cliente_seleccionado": cliente, "clientes": clientes,
                 "total": base.count(), "activos": base.filter(estado=Equipo.Estado.ACTIVO).count(),
                 "inactivos": base.filter(estado=Equipo.Estado.INACTIVO).count()}
     contexto.update(_contexto_permisos(request))
@@ -190,7 +192,7 @@ def clientes(request):
         return JsonResponse({"clientes": [datos_cliente(cliente) for cliente in encontrados]})
     if q:
         clientes_qs = clientes_qs.filter(Q(nombre_comercial__icontains=q) | Q(razon_social__icontains=q) | Q(ruc__icontains=q) | Q(correo__icontains=q) | Q(telefono__icontains=q))
-    contexto = {"pagina": Paginator(clientes_qs, 25).get_page(request.GET.get("page")), "q": q}
+    contexto = {"pagina": paginar_listado(request,clientes_qs,{'nombre_comercial':'Cliente','ruc':'RUC','razon_social':'Razon social','correo':'Correo','telefono':'Telefono'}), "q": q}
     contexto.update(_contexto_permisos(request))
     return render(request, "masiscam/clientes.html", contexto)
 
@@ -342,7 +344,7 @@ def equipo_informe(request, pk):
     contexto = {"equipo": equipo, "activo": activo, "privado": True}
     if activo:
         contexto.update(_contexto_documentos_drive(equipo, request))
-    return render(request, "masiscam/equipo_publico.html", contexto)
+    return render(request, "masiscam/equipo_informe.html", contexto)
 
 
 def _render_ficha(request, equipo, registro_form=None, placa_disponible=None, status=200):
@@ -777,8 +779,10 @@ def proyecto_crear(request):
 @masiscam_access_required
 def proyecto_detalle(request, pk):
     proyecto = _proyecto(request, pk)
+    from .recepcion_guards import documentos_protegidos
     contexto = {"proyecto": proyecto, "documento_form": DocumentoForm(proyecto=proyecto), "equipo_form": EquipoForm(empresa=request.empresa_activa, usuario=request.user)}
     contexto.update(_contexto_permisos(request))
+    contexto['documentos_generales']=proyecto.documentos.exclude(pk__in=documentos_protegidos().values('pk')).select_related('equipo')
     return render(request, "masiscam/proyecto_detalle.html", contexto)
 
 
@@ -842,7 +846,8 @@ def equipo_editar(request, pk, equipo_pk):
 def documento_subir(request, pk):
     proyecto = _proyecto(request, pk)
     if request.method == "GET":
-        return render(request, "masiscam/_documento_form.html", {"form": DocumentoForm(proyecto=proyecto), "proyecto": proyecto})
+        template = "masiscam/_documento_form.html" if _es_modal(request) else "masiscam/form.html"
+        return render(request, template, {"form": DocumentoForm(proyecto=proyecto), "proyecto": proyecto, "titulo": "Subir documento"})
     form = DocumentoForm(request.POST, request.FILES, proyecto=proyecto)
     if form.is_valid():
         archivo = form.cleaned_data["archivo"]
@@ -938,7 +943,8 @@ def historial(request, pk):
     if not tiene_permiso(request, "historial"):
         raise PermissionDenied("No tiene permiso para ver el historial.")
     proyecto = _proyecto(request, pk)
-    return render(request, "masiscam/historial.html", {"proyecto": proyecto, "eventos": proyecto.historial.select_related("usuario")[:200]})
+    pagina=paginar_listado(request,proyecto.historial.select_related('usuario').order_by('-creado_en'),{'accion':'Acción','usuario__username':'Usuario','objeto_tipo':'Objeto'})
+    return render(request, "masiscam/historial.html", {"proyecto": proyecto, "eventos":pagina,'pagina':pagina})
 
 
 @require_GET
@@ -1014,6 +1020,7 @@ def documento_privado(request, pk, documento_pk):
 @require_GET
 @masiscam_access_required
 def proyectos(request):
-    contexto = {"proyectos": Proyecto.objects.filter(empresa=request.empresa_activa).order_by("-actualizado_en")[:200]}
+    pagina=paginar_listado(request,Proyecto.objects.filter(empresa=request.empresa_activa).order_by('-actualizado_en'))
+    contexto = {'proyectos':pagina,'pagina':pagina}
     contexto.update(_contexto_permisos(request))
     return render(request, "masiscam/proyectos.html", contexto)

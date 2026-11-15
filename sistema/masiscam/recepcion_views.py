@@ -1,3 +1,4 @@
+from .access import paginar_listado
 from django.urls import reverse
 import hashlib
 import uuid
@@ -24,7 +25,7 @@ def expedientes(request):
     autorizar(request.user, request.empresa_activa)
     from django.core.paginator import Paginator
     qs = expedientes_autorizados(request.user, request.empresa_activa).select_related("cliente_contractual", "registro__equipo")
-    return render(request, "masiscam/recepcion_listado.html", {"pagina": Paginator(qs, 25).get_page(request.GET.get("page")),
+    return render(request, "masiscam/recepcion_listado.html", {"pagina": paginar_listado(request,qs,{'numero':'Expediente','cliente_contractual__nombre_comercial':'Cliente','registro__equipo__nombre':'Equipo','registro__equipo__numero_serie':'Serie'}),
         "puede_recepcion": request.rol_masiscam and request.rol_masiscam.rol in {'OFICINA', 'TALLER'}})
 
 

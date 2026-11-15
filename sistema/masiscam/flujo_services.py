@@ -14,6 +14,79 @@ from .recepcion_services import _hash, verificar_copia_persistente, evento
 LECTORES = {'TALLER', 'OFICINA', 'ADMIN'}
 
 
+def fuentes_revision_conjunta(propuesta):
+    diag=propuesta.diagnostico
+    return dict(diagnostico=diag.pk,revision=diag.revision,edicion=diag.version_edicion,
+        datos={name:str(getattr(diag,name) or '') for name in t.DIA_FIELDS},
+        inspeccion=diag.inspeccion_id,edicion_inspeccion=diag.inspeccion.version_edicion,
+        datos_inspeccion={name:str(getattr(diag.inspeccion,name) or '') for name in t.INS_FIELDS},
+        piezas=_filas(diag),evidencias=[dict(documento=e.documento_id,hash=e.documento.hash_sha256)
+            for e in t._evidencias(diag)],propuesta=propuesta.pk,version=propuesta.version,
+        cotizacion=propuesta.snapshot,alcance=propuesta.alcance,observaciones=propuesta.observaciones,
+        pdfs=[dict(documento=e.documento_id,hash=e.documento.hash_sha256)
+            for e in propuesta.evidencias.select_related('documento').order_by('pk')])
+
+
+def aprobacion_conjunta_vigente(propuesta):
+    from .models import RevisionAdministrativa
+    if o.PropuestaComercial.objects.filter(expediente=propuesta.expediente,version__gt=propuesta.version).exists():return False
+    revision=RevisionAdministrativa.objects.filter(expediente=propuesta.expediente).order_by('-pk').first()
+    # Historic authorizations keep their original rules until explicitly reviewed.
+    if not revision and not propuesta.snapshot.get('revision_conjunta_requerida'): return True
+    return bool(revision and revision.decision=='APROBADO' and revision.propuesta_id==propuesta.pk
+        and revision.diagnostico_id==propuesta.diagnostico_id and t.vigente(propuesta.diagnostico)
+        and revision.huella==t._digest(revision.snapshot)
+        and revision.snapshot==fuentes_revision_conjunta(propuesta))
+
+
+@transaction.atomic
+def revisar_expediente(*,usuario,empresa,expediente_id,diagnostico_id,propuesta_id,decision,motivo='',destino='AMBOS',clave):
+    from .models import RevisionAdministrativa,Diagnostico
+    exp=expediente(usuario,empresa,expediente_id,{'ADMIN'},True)
+    payload=dict(diagnostico=diagnostico_id,propuesta=propuesta_id,decision=decision,motivo=motivo.strip(),destino=destino)
+    old=t._retry(exp,clave,'EXPEDIENTE_REVISADO',payload)
+    if old:return RevisionAdministrativa.objects.get(pk=old)
+    prop=o.PropuestaComercial.objects.filter(expediente=exp).order_by('-version').first()
+    diag=Diagnostico.objects.filter(expediente=exp).order_by('-revision').first()
+    if not prop or not diag or prop.pk!=propuesta_id or diag.pk!=diagnostico_id or prop.diagnostico_id!=diag.pk:
+        raise ValidationError('Falta diagnóstico o cotización vigente, o las versiones fueron sustituidas. Recargue el expediente.')
+    if not t.vigente(diag) or not diag.enviado_en:
+        raise ValidationError('TALLER debe completar y enviar el diagnóstico para revisión.')
+    if usuario.pk in t._autores(diag) or usuario.pk==prop.autor_id:
+        raise PermissionDenied('No puede aprobar ni devolver su propio trabajo o sus fuentes.')
+    if decision not in {'APROBADO','DEVUELTO'} or destino not in {'TALLER','OFICINA','AMBOS'}:
+        raise ValidationError('Decisión o destinatario inválido.')
+    if len(motivo)>2000 or (decision=='DEVUELTO' and not motivo.strip()):
+        raise ValidationError('La devolución exige un motivo de hasta 2000 caracteres.')
+    pdfs=list(prop.evidencias.select_related('documento').filter(documento__tipo_mime='application/pdf'))
+    if decision=='APROBADO':
+        if not pdfs:raise ValidationError('Falta el PDF de la cotización de OFICINA.')
+        if not prop.snapshot.get('presupuesto_referencia'):raise ValidationError('Falta el número de cotización.')
+        for ev in pdfs:t.documento_valido(ev.documento,empresa)
+        if not t._aprobado(diag):
+            t.decidir_diagnostico(usuario=usuario,empresa=empresa,diagnostico_id=diag.pk,decision='APROBADO',
+                motivo='Revisión conjunta de diagnóstico y cotización.',clave=uuid.uuid5(uuid.UUID(str(clave)),'tecnica'))
+        informe=t.reservar_informe(usuario=usuario,empresa=empresa,diagnostico_id=diag.pk,
+            clave=uuid.uuid5(uuid.UUID(str(clave)),'informe'))
+        t.generar_informe(informe.pk)
+        informe.refresh_from_db()
+    else:informe=None
+    prop=o.PropuestaComercial.objects.get(pk=prop.pk)
+    snap=fuentes_revision_conjunta(prop)
+    if decision=='APROBADO' and aprobacion_conjunta_vigente(prop):
+        anterior=RevisionAdministrativa.objects.filter(expediente=exp).order_by('-pk').first()
+        if anterior:
+            t._event(exp,usuario,clave,'EXPEDIENTE_REVISADO',payload,anterior.pk)
+            return anterior
+    result=t._save(RevisionAdministrativa(expediente=exp,autor=usuario,clave=clave,diagnostico=diag,propuesta=prop,
+        informe=informe,decision=decision,destino=destino,motivo=motivo.strip(),snapshot=snap,huella=t._digest(snap)))
+    t._event(exp,usuario,clave,'EXPEDIENTE_REVISADO',payload,result.pk)
+    if decision=='DEVUELTO' and destino in {'TALLER','AMBOS'}:
+        t.crear_revision(usuario=usuario,empresa=empresa,expediente_id=exp.pk,tipo='DIAGNOSTICO',
+            motivo=motivo.strip(),clave=uuid.uuid5(uuid.UUID(str(clave)),'correccion'))
+    return result
+
+
 def expediente(usuario, empresa, pk, roles=None, lock=False):
     # Reception/inspection/parts belong to phase 3, not commercial operation.
     return t.expediente_autorizado(usuario, empresa, pk, roles or LECTORES, lock)
@@ -199,11 +272,12 @@ def cotizar(*, usuario, empresa, solicitud_id, clave, referencia, observaciones=
         return anterior
     if cotizacion is not None and obj.adquisiciones.exists():
         raise ValidationError('La cotización tiene repuestos registrados. Conserve su autorización y tramite una revisión de alcance antes de cambiar los importes.')
-    if not t._aprobado(obj.diagnostico):
-        raise ValidationError('ADMINISTRADOR debe aprobar el diagnóstico antes de cotizar.')
-    informe = t.reservar_informe(usuario=usuario,empresa=empresa,diagnostico_id=obj.diagnostico_id,
-        clave=uuid.uuid5(uuid.UUID(str(clave)), 'informe'))
-    t.generar_informe(informe.pk)
+    if not t.vigente(obj.diagnostico) or not obj.diagnostico.enviado_en:
+        raise ValidationError('TALLER debe completar y enviar el diagnóstico antes de cotizar.')
+    if t._aprobado(obj.diagnostico):
+        informe = t.reservar_informe(usuario=usuario,empresa=empresa,diagnostico_id=obj.diagnostico_id,
+            clave=uuid.uuid5(uuid.UUID(str(clave)), 'informe'))
+        t.generar_informe(informe.pk)
     alcance = '\n'.join(f"{p['cantidad']} {p['unidad']} · {p['codigo'] or 'Código pendiente'} · {p['descripcion']} · {p['accion']}" for p in obj.snapshot['piezas'])
     if not obj.snapshot['piezas']:
         alcance='Trabajo declarado sin repuestos.\n'+obj.diagnostico.recomendaciones+'\n'+obj.diagnostico.conclusiones
@@ -435,13 +509,13 @@ def resumen(exp, usuario):
         if not mensaje and role=='TALLER' and sol.envios.filter(confirmacion__isnull=True).exists():
             mensaje='Repuestos enviados. Confirma las cantidades físicas; la reparación seguirá exigiendo autorización comercial vigente.'
             accion=action('Confirmar repuestos recibidos',op='recibir')
-        elif not mensaje and not t._aprobado(diag):
-            mensaje='Solicitud recibida en OFICINA. ADMINISTRADOR debe aprobar el diagnóstico antes de cotizar.'
-            bloqueo=role!='ADMIN'
-            if role=='ADMIN': accion=action('Revisar diagnóstico',url=reverse('masiscam:tecnica_revision',args=['DIAGNOSTICO',diag.pk])+'?flujo=1')
         elif not mensaje and (not prop or prop.diagnostico_id!=diag.pk):
             mensaje='OFICINA prepara la cotización a partir de las piezas solicitadas, sin reescribirlas.'
             if role=='OFICINA': accion=action('Preparar cotización',op='cotizar')
+        elif not mensaje and not o._propuesta_vigente(prop):
+            mensaje='ADMINISTRADOR debe revisar conjuntamente el diagnóstico y la cotización PDF antes de la aceptación comercial.'
+            bloqueo=True
+            if role=='ADMIN':accion=action('Revisar expediente',url=reverse('masiscam:flujo_detalle',args=[exp.pk]))
         elif not mensaje:
             try: autorizacion(sol); auth=True
             except ValidationError as error: auth=False; mensaje='; '.join(error.messages)

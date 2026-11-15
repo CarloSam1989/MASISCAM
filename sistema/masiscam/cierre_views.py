@@ -6,7 +6,7 @@ from django.db import IntegrityError
 from django.http import Http404,FileResponse
 from django.shortcuts import render,redirect,get_object_or_404
 from django.views.decorators.http import require_GET,require_http_methods
-from .access import masiscam_access_required
+from .access import masiscam_access_required, paginar_listado
 from .models import InformeFinal,Equipo
 from .tecnica_forms import BaseForm
 from . import cierre_services as s
@@ -35,10 +35,12 @@ def local(fn):
 @local
 @masiscam_access_required
 def dashboard(request):
-    try: context=resumen(request.user,request.empresa_activa,request.GET)
+    try: context=resumen(request.user,request.empresa_activa,request.GET,limite=None)
     except ValidationError as exc:
         return render(request,'masiscam/cierre_dashboard.html',{'error':'; '.join(exc.messages),'filtros':request.GET},status=400)
     from .cierre_dashboard import listado
+    pagina=paginar_listado(request,context['expedientes'],{'numero':'Expediente','cliente_contractual__nombre_comercial':'Cliente','registro__equipo__nombre':'Equipo','etapa_actual':'Etapa'})
+    context.update(expedientes=pagina,pagina=pagina)
     from .models import AsignacionTecnica
     scope=listado(request.user,request.empresa_activa)
     options=list(scope.values('cliente_contractual_id','cliente_contractual__nombre_comercial','registro__equipo_id','registro__equipo__nombre'))
@@ -91,6 +93,7 @@ def detalle(request,pk):
     progress.insert(5,('Reparación','FINALIZADO' if projection.reparacion_aprobada else ('EN_PROCESO' if projection.tiene_actividad else 'NO_INICIADO')))
     progress=[(name,state.replace('_',' ')) for name,state in progress]
     return render(request,'masiscam/cierre_detalle.html',dict(expediente=exp,rol=role,form=form,bloqueo=blocked,progreso=progress,
+        puede_revisar=projection.informe_estado=='PENDIENTE_REVISION',puede_cerrar=projection.informe_estado=='APROBADO',
         cerrado=hasattr(exp,'cierre'),informes=exp.informes_finales.select_related('documento','autor','revision__responsable','cierre__responsable').order_by('-version')),
         status=400 if request.method=='POST' else 200)
 

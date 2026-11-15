@@ -1,3 +1,4 @@
+from .access import paginar_listado
 from django.urls import reverse
 import uuid
 from functools import wraps
@@ -49,7 +50,8 @@ def _role(request):
 def tecnica_inicio(request):
     role=_role(request)
     qs=svc.expedientes_operativos(request.user,request.empresa_activa)
-    return render(request,'masiscam/tecnica_inicio.html',{'expedientes':qs.distinct(),'rol_tecnico':role})
+    pagina=paginar_listado(request,qs.distinct(),{'numero':'Expediente','cliente_contractual__nombre_comercial':'Cliente','registro__equipo__nombre':'Equipo','registro__equipo__numero_serie':'Serie'})
+    return render(request,'masiscam/tecnica_inicio.html',dict(expedientes=pagina,pagina=pagina,rol_tecnico=role))
 
 
 @require_http_methods(['GET','POST'])
@@ -57,6 +59,8 @@ def tecnica_inicio(request):
 @masiscam_access_required
 def tecnica_expediente(request,pk):
     exp=svc.expediente_autorizado(request.user,request.empresa_activa,pk)
+    if _role(request)=='ADMIN' and request.GET.get('avanzado')!='1':
+        return redirect('masiscam:flujo_detalle',pk=pk)
     form=AsignacionForm(request.POST or None,empresa=request.empresa_activa)
     if request.method=='POST' and form.is_valid():
         try:
@@ -234,9 +238,8 @@ def biblioteca(request):
         if value:
             qs=qs.filter(**{field+'__icontains':value})
     query=request.GET.get('q','').strip()
-    if query:
-        qs=qs.filter(Q(titulo__icontains=query)|Q(codigo__icontains=query))
-    return render(request,'masiscam/tecnica_biblioteca.html',dict(referencias=qs.order_by('codigo','-revision'),rol_tecnico=_role(request)))
+    pagina=paginar_listado(request,qs.order_by('codigo','-revision'),{'codigo':'Codigo','titulo':'Titulo','marca':'Marca','modelo':'Modelo','estado':'Estado'})
+    return render(request,'masiscam/tecnica_biblioteca.html',dict(referencias=pagina,pagina=pagina,rol_tecnico=_role(request)))
 
 
 @require_http_methods(['GET','POST'])
@@ -346,7 +349,7 @@ def biblioteca_componentes(request,pk=None):
             _error(form,exc)
         else:
             return redirect('masiscam:biblioteca_componentes')
-    return render(request,'masiscam/tecnica_form.html',dict(form=form,titulo='Catálogo de componentes',componentes=ComponenteTecnico.objects.filter(empresa=request.empresa_activa)),status=400 if request.method=='POST' else 200)
+    return render(request,'masiscam/tecnica_form.html',dict(form=form,titulo='Catálogo de componentes',componentes=(pagina:=paginar_listado(request,ComponenteTecnico.objects.filter(empresa=request.empresa_activa))),pagina=pagina),status=400 if request.method=='POST' else 200)
 
 
 @require_GET

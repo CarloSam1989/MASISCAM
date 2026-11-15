@@ -18,7 +18,7 @@ class RegistroOperativo(models.Model):
 
 class PropuestaComercial(RegistroOperativo):
     diagnostico = models.ForeignKey('Diagnostico', on_delete=P)
-    informe = models.ForeignKey('EmisionInformeTecnico', on_delete=P)
+    informe = models.ForeignKey('EmisionInformeTecnico', on_delete=P, null=True, blank=True)
     version = models.PositiveIntegerField()
     alcance = models.TextField()
     observaciones = models.TextField(blank=True)
@@ -36,6 +36,17 @@ class DecisionComercial(RegistroOperativo):
     representante_cliente = models.CharField(max_length=200)
     motivo = models.TextField()
     politica = models.JSONField()
+
+
+class RevisionAdministrativa(RegistroOperativo):
+    diagnostico = models.ForeignKey('Diagnostico', on_delete=P)
+    propuesta = models.ForeignKey(PropuestaComercial, on_delete=P)
+    informe = models.ForeignKey('EmisionInformeTecnico', on_delete=P, null=True, blank=True)
+    decision = models.CharField(max_length=10, choices=[('APROBADO','Aprobado'),('DEVUELTO','Devuelto')])
+    destino = models.CharField(max_length=10, choices=[('TALLER','TALLER'),('OFICINA','OFICINA'),('AMBOS','Ambos')])
+    motivo = models.TextField(blank=True)
+    snapshot = models.JSONField()
+    huella = models.CharField(max_length=64)
 
 
 class RecepcionRepuesto(RegistroOperativo):

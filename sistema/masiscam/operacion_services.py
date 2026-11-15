@@ -95,7 +95,16 @@ def _evidencia(obj, user, archivo, clase, leyenda, clave):
 
 
 def _propuesta_vigente(p):
-    return t._aprobado(p.diagnostico) and not PropuestaComercial.objects.filter(expediente=p.expediente,version__gt=p.version).exists()
+    from .flujo_services import aprobacion_conjunta_vigente
+    return (t._aprobado(p.diagnostico) and not PropuestaComercial.objects.filter(expediente=p.expediente,version__gt=p.version).exists()
+        and aprobacion_conjunta_vigente(p))
+
+
+def informe_propuesta(p):
+    if p.informe_id: return p.informe
+    from .models import RevisionAdministrativa
+    revision=RevisionAdministrativa.objects.filter(propuesta=p,decision='APROBADO').order_by('-pk').first()
+    return revision.informe if revision else None
 
 
 def autorizacion_valida(auth):
@@ -106,11 +115,16 @@ def autorizacion_valida(auth):
         and verificacion.get('presupuesto')==auth.propuesta.snapshot.get('presupuesto_referencia')
         and verificacion.get('diagnostico')==auth.propuesta.diagnostico_id
         and verificacion.get('propuesta')==auth.propuesta_id and verificacion.get('version')==auth.propuesta.version
-        and verificacion.get('informe_hash')==auth.propuesta.informe.hash_sha256
-        and _propuesta_vigente(auth.propuesta))
+        and _propuesta_vigente(auth.propuesta)
+        and informe_propuesta(auth.propuesta) is not None
+        and verificacion.get('informe_hash')==informe_propuesta(auth.propuesta).hash_sha256)
 
 
 def exigir_autorizacion(exp):
+    from .flujo_services import aprobacion_conjunta_vigente
+    actual=PropuestaComercial.objects.filter(expediente=exp).order_by('-version').first()
+    if actual and not aprobacion_conjunta_vigente(actual):
+        raise ValidationError('Pendiente de revisión conjunta: ADMINISTRADOR debe aprobar las versiones actuales del diagnóstico y la cotización.')
     auth = DecisionComercial.objects.filter(expediente=exp, decision='APROBADO').order_by('-propuesta__version').first()
     if not auth or not autorizacion_valida(auth):
         raise ValidationError('Reparación bloqueada: falta política aprobada y autorización comercial vigente para el diagnóstico exacto.')
@@ -124,7 +138,7 @@ def exigir_autorizacion(exp):
     if verificacion.get('calidad')=='REPRESENTANTE' and not auth.evidencias.filter(
             documento__hash_sha256=verificacion.get('facultad_hash')).exists():
         raise ValidationError('Facultades del representante sin respaldo íntegro.')
-    t.documento_valido(auth.propuesta.informe.documento, exp.empresa)
+    t.documento_valido(informe_propuesta(auth.propuesta).documento, exp.empresa)
     return auth
 
 
@@ -159,12 +173,12 @@ def proponer(*, usuario, empresa, expediente_id, diagnostico_id, clave, datos, a
     if old:
         return PropuestaComercial.objects.get(pk=old)
     diag = Diagnostico.objects.filter(pk=diagnostico_id, expediente=exp).first()
-    if not diag or not t._aprobado(diag):
-        raise ValidationError('Se requiere diagnóstico vigente aprobado.')
+    if not diag or not t.vigente(diag) or not diag.enviado_en or diag.estado not in {'PENDIENTE_APROBACION','APROBADO','FINALIZADO'}:
+        raise ValidationError('Se requiere diagnóstico vigente enviado por TALLER.')
     informe = EmisionInformeTecnico.objects.filter(diagnostico=diag,estado='GENERADA').order_by('-version').first()
-    if not informe:
+    if not informe and t._aprobado(diag):
         raise ValidationError('Emita el informe inicial antes de presentar una propuesta.')
-    t.documento_valido(informe.documento, empresa)
+    if informe: t.documento_valido(informe.documento, empresa)
     _texto(datos, ('alcance',))
     data = dict(datos)
     cotizacion = data.pop('cotizacion', None)
@@ -176,7 +190,8 @@ def proponer(*, usuario, empresa, expediente_id, diagnostico_id, clave, datos, a
         raise ValidationError('Referencia de presupuesto inválida; máximo 200 caracteres.')
     anterior = PropuestaComercial.objects.filter(expediente=exp).order_by('-version').first()
     snapshot = dict(numero=exp.numero,cliente=exp.recepcion.snapshot,diagnostico=diag.pk,revision=diag.revision,
-        informe=informe.pk,hash=informe.hash_sha256,presupuesto_referencia=referencia.strip())
+        informe=informe.pk if informe else None,hash=informe.hash_sha256 if informe else None,
+        revision_conjunta_requerida=True,presupuesto_referencia=referencia.strip())
     if cotizacion is not None:
         snapshot['cotizacion'] = cotizacion
     result = t._save(PropuestaComercial(expediente=exp,autor=usuario,clave=clave,diagnostico=diag,informe=informe,
@@ -245,7 +260,7 @@ def decidir_comercial(*, usuario, empresa, propuesta_id, clave, datos, archivo, 
     if datos['decision']=='PARCIAL':
         origen=p
         p=t._save(PropuestaComercial(expediente=exp,autor=usuario,clave=uuid.uuid4(),diagnostico=origen.diagnostico,
-            informe=origen.informe,version=origen.version+1,sustituye=origen,alcance=datos['alcance_autorizado'].strip(),
+            informe=informe_propuesta(origen),version=origen.version+1,sustituye=origen,alcance=datos['alcance_autorizado'].strip(),
             observaciones='Alcance parcial expresamente aceptado; no hereda aprobaciones.',
             snapshot=dict(origen.snapshot,propuesta_origen=origen.pk)))
         for evidencia in origen.evidencias.select_related('documento'):
@@ -254,7 +269,7 @@ def decidir_comercial(*, usuario, empresa, propuesta_id, clave, datos, archivo, 
         t._event(exp,usuario,uuid.uuid4(),'COMERCIAL_PROPUESTA_PARCIAL',dict(origen=origen.pk,alcance=p.alcance),p.pk)
     if positiva:
         verificacion.update(alcance=p.alcance,presupuesto=p.snapshot['presupuesto_referencia'],diagnostico=p.diagnostico_id,
-            propuesta=p.pk,version=p.version,informe_hash=p.informe.hash_sha256)
+            propuesta=p.pk,version=p.version,informe_hash=informe_propuesta(p).hash_sha256)
     data={k:datos[k] for k in basicos}
     data['decision']='APROBADO' if positiva else 'RECHAZADO'
     politica_snapshot=dict(pol or {'estado':'PENDIENTE'},verificacion_cliente=verificacion)

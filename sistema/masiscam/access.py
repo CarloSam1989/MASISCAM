@@ -9,6 +9,47 @@ from accounts.models import Perfil
 from .models import RolMasiscam
 
 
+def paginar_listado(request, queryset, campos=None):
+    """Filtra y pagina un queryset ya autorizado, sin admitir campos SQL del cliente."""
+    from django.core.paginator import Paginator
+    if isinstance(queryset,list):
+        campos=campos or {'numero':'Expediente'}
+        keys={f'c{i}':field for i,field in enumerate(campos)}
+        def value(row,path):
+            for part in path.split('__'):row=getattr(row,part,'')
+            return str(row).casefold()
+        q=request.GET.get('q','').strip()[:120].casefold()
+        field=keys.get(request.GET.get('filtro',''));term=request.GET.get('valor','').strip()[:120].casefold()
+        rows=[row for row in queryset if (not q or any(q in value(row,f) for f in campos)) and (not field or not term or term in value(row,field))]
+        orden=request.GET.get('orden','');field=keys.get(orden.lstrip('-'))
+        if field:rows.sort(key=lambda row:value(row,field),reverse=orden.startswith('-'))
+        pagina=Paginator(rows,10).get_page(request.GET.get('page'))
+        pagina.ui_config=dict(numero=pagina.number,paginas=pagina.paginator.num_pages,total=pagina.paginator.count,
+            campos=[dict(clave=k,label=str(campos[f])) for k,f in keys.items()])
+        return pagina
+    if campos is None:
+        campos={f.name:f.verbose_name.capitalize() for f in queryset.model._meta.fields
+            if f.get_internal_type() in {'CharField','TextField','EmailField'}
+            and not any(secret in f.name for secret in ('hash','token','password','clave','snapshot'))}
+    claves={f'c{i}':field for i,field in enumerate(campos)}
+    q=request.GET.get('q','').strip()[:120]
+    if q and campos:
+        condicion=Q()
+        for field in campos:condicion|=Q(**{field+'__icontains':q})
+        queryset=queryset.filter(condicion)
+    filtro=claves.get(request.GET.get('filtro',''))
+    valor=request.GET.get('valor','').strip()[:120]
+    if filtro and valor:queryset=queryset.filter(**{filtro+'__icontains':valor})
+    orden=request.GET.get('orden','')
+    campo=claves.get(orden.lstrip('-'))
+    if campo:queryset=queryset.order_by(('-' if orden.startswith('-') else '')+campo,'pk')
+    elif not queryset.ordered:queryset=queryset.order_by('-pk')
+    pagina=Paginator(queryset,10).get_page(request.GET.get('page'))
+    pagina.ui_config=dict(numero=pagina.number,paginas=pagina.paginator.num_pages,total=pagina.paginator.count,
+        campos=[dict(clave=key,label=str(campos[field])) for key,field in claves.items()])
+    return pagina
+
+
 class EquipoNoAsignado(PermissionDenied):
     """Denegación de equipo con un mensaje visible, sin exponer sus datos."""
 

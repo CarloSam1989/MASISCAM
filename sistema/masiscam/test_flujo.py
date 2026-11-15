@@ -62,6 +62,8 @@ class FlujoTests(TestCase):
             decision='APROBADO',motivo='QA',clave=uuid.uuid4())
         prop=s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),
             referencia='PRESUPUESTO FICTICIO QA v1',archivo=presupuesto_qa())
+        s.revisar_expediente(usuario=self.usuarios['PLANTA'],empresa=self.empresa,expediente_id=self.exp.pk,
+            diagnostico_id=self.diag.pk,propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
         auth=o.decidir_comercial(usuario=self.oficina,empresa=self.empresa,propuesta_id=prop.pk,clave=uuid.uuid4(),
             archivo=qa.pdf_plano(),datos=dict(decision='APROBADO',fecha_cliente=timezone.now(),representante_cliente='PERSONA FICTICIA QA',
                 motivo='Simulación de aceptación, sin valor real',**verificacion_qa()))
@@ -297,10 +299,12 @@ class FlujoTests(TestCase):
             decision='APROBADO',motivo='QA',clave=uuid.uuid4())
         prop=s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),
             referencia='PRESUPUESTO PARCIAL FICTICIO QA',archivo=presupuesto_qa())
+        s.revisar_expediente(usuario=self.usuarios['PLANTA'],empresa=self.empresa,expediente_id=self.exp.pk,
+            diagnostico_id=self.diag.pk,propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
         auth=o.decidir_comercial(usuario=self.oficina,empresa=self.empresa,propuesta_id=prop.pk,clave=uuid.uuid4(),
             archivo=qa.pdf_plano(),datos=dict(decision='PARCIAL',fecha_cliente=timezone.now(),representante_cliente='FICTICIO QA',
                 motivo='Solo prueba QA',alcance_autorizado='Solo evaluación QA, sin adquisición de la lista completa',**verificacion_qa()))
-        self.assertTrue(o.autorizacion_valida(auth))
+        self.assertFalse(o.autorizacion_valida(auth))  # El alcance reducido exige otra revisión conjunta.
         with self.assertRaises(ValidationError): self.envio()
         self.assertFalse(AdquisicionRepuesto.objects.exists())
         self.assertTrue(s.resumen(self.exp,self.oficina)['bloqueo'])

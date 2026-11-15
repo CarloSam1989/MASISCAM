@@ -1,3 +1,4 @@
+from .access import paginar_listado
 from django.urls import reverse
 import uuid
 from functools import wraps
@@ -31,7 +32,8 @@ def inicio(request):
     rol=svc.autorizar(request.user,request.empresa_activa).rol
     from .tecnica_services import expedientes_operativos
     qs=expedientes_operativos(request.user,request.empresa_activa)
-    return render(request,'masiscam/operacion_inicio.html',dict(expedientes=qs.distinct()))
+    pagina=paginar_listado(request,qs.distinct(),{'numero':'Expediente','cliente_contractual__nombre_comercial':'Cliente','registro__equipo__nombre':'Equipo','registro__equipo__numero_serie':'Serie'})
+    return render(request,'masiscam/operacion_inicio.html',dict(expedientes=pagina,pagina=pagina))
 
 
 @require_GET
@@ -130,7 +132,10 @@ def operar(request,pk,op):
 def documento(request,pk,documento_pk):
     exp=svc.expediente(request.user,request.empresa_activa,pk)
     rol=svc.autorizar(request.user,request.empresa_activa,expediente=exp).rol
-    doc=get_object_or_404(svc.documentos_visibles(exp,rol),pk=documento_pk)
+    visibles=svc.documentos_visibles(exp,rol)
+    if rol=='ADMIN':
+        visibles=visibles | Documento.objects.filter(evidencias_operativas__propuesta__expediente=exp,tipo_mime='application/pdf').distinct()
+    doc=get_object_or_404(visibles.distinct(),pk=documento_pk)
     try:
         svc.t.documento_valido(doc,request.empresa_activa)
         response=FileResponse(doc.archivo.open('rb'),as_attachment=not (request.GET.get('ver')=='1' and doc.tipo_mime=='application/pdf'),filename=doc.nombre_original,content_type=doc.tipo_mime)

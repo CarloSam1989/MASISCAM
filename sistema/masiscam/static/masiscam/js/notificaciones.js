@@ -26,6 +26,26 @@
     const submitter=event.submitter;
     const op=submitter?.name==='op' ? submitter.value : form.querySelector('[name="op"]')?.value;
     const pregunta=preguntaPara(form,op);
+    if (op==='devolver_expediente' && form.closest('#revision-expediente')) {
+      event.preventDefault();event.stopImmediatePropagation();
+      if (form.dataset.mcConfirming==='1' || !window.Swal) return;
+      form.dataset.mcConfirming='1';
+      try {
+        const result=await Swal.fire({...opciones,title:'Devolver para corrección',input:'textarea',
+          inputLabel:'Motivo de la devolución',inputAttributes:{maxlength:'2000'},
+          html:'<label for="revision-destino">Responsable de la corrección</label><select id="revision-destino" class="form-select"><option value="AMBOS">TALLER y OFICINA</option><option value="TALLER">TALLER</option><option value="OFICINA">OFICINA</option></select>',
+          showCancelButton:true,cancelButtonText:'Cancelar',confirmButtonText:'Devolver expediente',
+          inputValidator:value=>!value?.trim()?'Indique el motivo de la devolución.':undefined,
+          preConfirm:value=>({motivo:value.trim(),destino:Swal.getPopup().querySelector('#revision-destino').value}),
+          allowOutsideClick:false});
+        if(result.isConfirmed && form.isConnected) {
+          form.querySelector('[name="motivo"]').value=result.value.motivo;
+          form.querySelector('[name="destino"]').value=result.value.destino;
+          form.dataset.mcConfirmed='1';form.requestSubmit(submitter);
+        }
+      } finally {delete form.dataset.mcConfirming;}
+      return;
+    }
     if (op==='rechazar_plano' && form.closest('#revision-plano')) {
       event.preventDefault();event.stopImmediatePropagation();
       if (form.dataset.mcConfirming==='1' || !window.Swal) return;

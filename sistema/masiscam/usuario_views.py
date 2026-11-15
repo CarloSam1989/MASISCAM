@@ -7,7 +7,7 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from accounts.models import Perfil
-from .access import PERMISOS_ROL, permiso_masiscam_required
+from .access import PERMISOS_ROL, permiso_masiscam_required, paginar_listado
 from .models import RolMasiscam
 from .services import auditar
 from .usuario_forms import AdministradorCrearForm, UsuarioClaveForm, UsuarioEditarForm
@@ -42,16 +42,18 @@ def _rol(request, pk):
 @require_GET
 @permiso_masiscam_required("usuarios")
 def usuarios(request):
-    roles = list(_roles(request).order_by("perfil__user__username"))
+    source=_roles(request).order_by('perfil__user__username')
+    pendientes=source.exclude(rol__in=RolMasiscam.ROLES_OPERATIVOS).count()
+    pagina=paginar_listado(request,source,{'perfil__user__username':'Usuario','perfil__user__first_name':'Nombre','perfil__user__last_name':'Apellido','rol':'Rol'})
+    roles = list(pagina)
     for rol in roles:
         rol.gestionable = _gestionable(request, rol)
         rol.acceso_activo = rol.rol in RolMasiscam.ROLES_OPERATIVOS and rol.activo and rol.perfil.activo and rol.perfil.user.is_active
         rol.permisos_efectivos = sorted(PERMISOS_ROL.get(rol.rol, set())) if rol.acceso_activo else []
         rol.privilegio_tecnico = rol.perfil.user.is_superuser
         rol.alcance_operativo = ALCANCE_OPERATIVO.get(rol.rol, "Sin operaciones autorizadas.") if rol.acceso_activo else "Sin acceso."
-    pendientes = len({rol.perfil.user_id for rol in roles if rol.rol not in RolMasiscam.ROLES_OPERATIVOS})
     return render(request, "masiscam/usuarios.html", {
-        "roles": roles, "consulta_pendientes": pendientes, "empresa_usuarios": request.empresa_activa,
+        "roles": roles, "pagina":pagina, "consulta_pendientes": pendientes, "empresa_usuarios": request.empresa_activa,
     })
 
 
