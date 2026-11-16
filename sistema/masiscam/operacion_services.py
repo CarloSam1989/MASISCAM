@@ -173,7 +173,14 @@ def proponer(*, usuario, empresa, expediente_id, diagnostico_id, clave, datos, a
     if old:
         return PropuestaComercial.objects.get(pk=old)
     diag = Diagnostico.objects.filter(pk=diagnostico_id, expediente=exp).first()
-    if not diag or not t.vigente(diag) or not diag.enviado_en or diag.estado not in {'PENDIENTE_APROBACION','APROBADO','FINALIZADO'}:
+    preliminar=False
+    if diag and not diag.enviado_en and diag.estado=='EN_PROCESO' and datos.get('cotizacion') is not None:
+        from . import flujo_services as flujo
+        solicitud=flujo.SolicitudRepuestos.objects.filter(diagnostico=diag,snapshot__preliminar=True).first()
+        if solicitud:
+            flujo.vigente(solicitud)
+            preliminar=True
+    if not diag or not t.vigente(diag) or (not preliminar and (not diag.enviado_en or diag.estado not in {'PENDIENTE_APROBACION','APROBADO','FINALIZADO'})):
         raise ValidationError('Se requiere diagnóstico vigente enviado por TALLER.')
     informe = EmisionInformeTecnico.objects.filter(diagnostico=diag,estado='GENERADA').order_by('-version').first()
     if not informe and t._aprobado(diag):

@@ -14,6 +14,71 @@ from .models import RevisionAdministrativa, PropuestaComercial, DecisionTecnica,
 class RevisionAdministrativaTests(qa.OficinaFixture,TestCase):
     def preparar(self):super().preparar(aprobar_tecnico=False)
 
+    def preparar_preliminar(self):
+        self.preparar_solicitud(enviar=False)
+        self.pieza=self.diag.piezas.get()
+        self.sol=s.enviar_solicitud(usuario=self.taller,empresa=self.empresa,diagnostico_id=self.diag.pk,
+            version=self.diag.version_edicion,clave=uuid.uuid4(),preliminar=True)
+        self.url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
+        self.client.force_login(self.oficina)
+
+    def test_cotizar_preliminar_formalizar_revisar_aceptar_y_recibir(self):
+        self.preparar_preliminar()
+        response=self.client.get(self.url)
+        self.assertTrue(response.context['cotizacion_habilitada'])
+        self.assertContains(response,'data-diagnostico-pendiente')
+        self.assertContains(response,'Guardar cotización y enviar a ADMINISTRADOR')
+        self.assertNotContains(response,'Aprobar y enviar a TALLER')
+        self.assertNotContains(response,'id="oficina-enviar"')
+        key=uuid.uuid4()
+        prop=self.cotizar(clave=key,archivo=None)
+        self.assertEqual(self.cotizar(clave=key,archivo=None).pk,prop.pk)
+        self.assertEqual(prop.evidencias.count(),1)
+        import os
+        from pathlib import Path
+        if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
+            with prop.evidencias.get().documento.archivo.open('rb') as archivo:
+                (Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/'cotizacion-preliminar-qa.pdf').write_bytes(archivo.read())
+        self.assertTrue(prop.snapshot['revision_conjunta_requerida'])
+        with self.assertRaises(ValidationError):self.revisar(prop)
+        with self.assertRaises(PermissionDenied):self.revisar(prop,usuario=self.oficina)
+        with self.assertRaises(ValidationError):self.aceptar(prop)
+        with self.assertRaises(ValidationError):self.envio()
+        self.diag=t.enviar_revision(usuario=self.taller,empresa=self.empresa,tipo='DIAGNOSTICO',
+            revision_id=self.diag.pk,version=self.diag.version_edicion,clave=uuid.uuid4())
+        prop.refresh_from_db()
+        self.revisar(prop)
+        self.assertTrue(s.aprobacion_conjunta_vigente(prop))
+        self.aceptar(prop);_,envio=self.envio()
+        with self.assertRaises(ValidationError):
+            o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,
+                clave=uuid.uuid4(),datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
+        self.recibir(envio)
+        actividad=o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,
+            clave=uuid.uuid4(),datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
+        self.assertEqual(actividad.autorizacion.propuesta_id,prop.pk)
+
+    def test_cotizacion_borrador_exige_solicitud_congelada_en_servicio_y_bd(self):
+        self.preparar_solicitud(enviar=False)
+        with self.assertRaises(ValidationError):
+            o.proponer(usuario=self.oficina,empresa=self.empresa,expediente_id=self.exp.pk,
+                diagnostico_id=self.diag.pk,clave=uuid.uuid4(),datos=dict(alcance='QA',cotizacion={}))
+        with transaction.atomic(),self.assertRaises(IntegrityError):
+            PropuestaComercial.objects.create(expediente=self.exp,autor=self.oficina,diagnostico=self.diag,
+                clave=uuid.uuid4(),version=1,alcance='QA',snapshot=dict(revision_conjunta_requerida=True,cotizacion=dict(moneda='USD')))
+
+    def test_devolucion_preliminar_conserva_borrador_y_versiona_cotizacion(self):
+        self.preparar_preliminar();prop=self.cotizar(archivo=None)
+        fotos=set(self.pieza.fotografias.values_list('documento_id',flat=True))
+        self.revisar(prop,decision='DEVUELTO',destino='AMBOS',motivo='Completar diagnóstico y precios')
+        self.assertEqual(Diagnostico.objects.filter(expediente=self.exp).count(),1)
+        nueva=self.cotizar(cotizacion=self.detalle('14.00'),archivo=None)
+        self.assertEqual(nueva.version,2)
+        self.assertEqual(nueva.sustituye_id,prop.pk)
+        self.assertEqual(set(self.pieza.fotografias.values_list('documento_id',flat=True)),fotos)
+        self.assertEqual(nueva.evidencias.count(),1)
+        self.assertEqual(prop.evidencias.count(),1)
+
     def revisar(self,propuesta,**changes):
         data=dict(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,
             diagnostico_id=propuesta.diagnostico_id,propuesta_id=propuesta.pk,decision='APROBADO',clave=uuid.uuid4())

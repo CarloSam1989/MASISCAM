@@ -50,7 +50,7 @@ def revisar_expediente(*,usuario,empresa,expediente_id,diagnostico_id,propuesta_
     diag=Diagnostico.objects.filter(expediente=exp).order_by('-revision').first()
     if not prop or not diag or prop.pk!=propuesta_id or diag.pk!=diagnostico_id or prop.diagnostico_id!=diag.pk:
         raise ValidationError('Falta diagnóstico o cotización vigente, o las versiones fueron sustituidas. Recargue el expediente.')
-    if not t.vigente(diag) or not diag.enviado_en:
+    if not t.vigente(diag) or (decision=='APROBADO' and not diag.enviado_en):
         raise ValidationError('TALLER debe completar y enviar el diagnóstico para revisión.')
     if usuario.pk in t._autores(diag) or usuario.pk==prop.autor_id:
         raise PermissionDenied('No puede aprobar ni devolver su propio trabajo o sus fuentes.')
@@ -81,7 +81,7 @@ def revisar_expediente(*,usuario,empresa,expediente_id,diagnostico_id,propuesta_
     result=t._save(RevisionAdministrativa(expediente=exp,autor=usuario,clave=clave,diagnostico=diag,propuesta=prop,
         informe=informe,decision=decision,destino=destino,motivo=motivo.strip(),snapshot=snap,huella=t._digest(snap)))
     t._event(exp,usuario,clave,'EXPEDIENTE_REVISADO',payload,result.pk)
-    if decision=='DEVUELTO' and destino in {'TALLER','AMBOS'}:
+    if decision=='DEVUELTO' and destino in {'TALLER','AMBOS'} and diag.enviado_en:
         t.crear_revision(usuario=usuario,empresa=empresa,expediente_id=exp.pk,tipo='DIAGNOSTICO',
             motivo=motivo.strip(),clave=uuid.uuid5(uuid.UUID(str(clave)),'correccion'))
     return result
@@ -234,7 +234,7 @@ def generar_cotizacion_pdf(*,usuario,empresa,propuesta_id):
         origen=fuente.get('origen') or {}
         lineas.append(dict(precio,posicion=origen.get('posicion',''),codigo=fuente['codigo'],
             descripcion=fuente['descripcion'],condicion=fuente['condicion'],
-            cantidad=format(Decimal(precio['cantidad']).normalize(),'f')))
+            cantidad=format(Decimal(precio['cantidad']).normalize(),'f'),unidad=fuente['unidad']))
     from .flujo_pdf import cotizacion_comercial
     contenido=cotizacion_comercial(dict(referencia=propuesta.snapshot['presupuesto_referencia'],
         version=propuesta.version,fecha=timezone.localtime(propuesta.creado_en).strftime('%d/%m/%Y'),
@@ -272,8 +272,8 @@ def cotizar(*, usuario, empresa, solicitud_id, clave, referencia, observaciones=
         return anterior
     if cotizacion is not None and obj.adquisiciones.exists():
         raise ValidationError('La cotización tiene repuestos registrados. Conserve su autorización y tramite una revisión de alcance antes de cambiar los importes.')
-    if not t.vigente(obj.diagnostico) or not obj.diagnostico.enviado_en:
-        raise ValidationError('TALLER debe completar y enviar el diagnóstico antes de cotizar.')
+    if not t.vigente(obj.diagnostico):
+        raise ValidationError('El diagnóstico fue sustituido; utilice la solicitud vigente.')
     if t._aprobado(obj.diagnostico):
         informe = t.reservar_informe(usuario=usuario,empresa=empresa,diagnostico_id=obj.diagnostico_id,
             clave=uuid.uuid5(uuid.UUID(str(clave)), 'informe'))

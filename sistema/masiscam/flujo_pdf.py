@@ -27,11 +27,11 @@ def cotizacion_comercial(s):
         [p('Expediente: '+s['expediente']),p('Moneda: USD')]],colWidths=[300,215])
     info.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),5)]))
     white=ParagraphStyle('white',parent=small,textColor=colors.white,fontName='Helvetica-Bold')
-    rows=[[p(label,white) for label in ('N.º en\nplano','Código','Descripción','Daño observado','Cantidad','P. unitario\nUSD','Subtotal\nUSD')]]
+    rows=[[p(label,white) for label in ('N.º en\nplano','Código','Descripción','Daño observado','Cantidad','Unidad','P. unitario\nUSD','Subtotal\nUSD')]]
     for row in s['lineas']:
-        rows.append([p(row.get(key,''),small) for key in ('posicion','codigo','descripcion','condicion','cantidad','precio_unitario','total')])
-    if len(rows)==1:rows.append([p('Sin repuestos',small)]+[p('',small) for _ in range(6)])
-    table=LongTable(rows,colWidths=[45,58,126,95,50,65,76],repeatRows=1,splitInRow=1,hAlign='LEFT')
+        rows.append([p(row.get(key,''),small) for key in ('posicion','codigo','descripcion','condicion','cantidad','unidad','precio_unitario','total')])
+    if len(rows)==1:rows.append([p('Sin repuestos',small)]+[p('',small) for _ in range(7)])
+    table=LongTable(rows,colWidths=[40,52,115,80,43,43,65,77],repeatRows=1,splitInRow=1,hAlign='LEFT')
     table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),navy),('TEXTCOLOR',(0,0),(-1,0),colors.white),
         ('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5),
         ('TOPPADDING',(0,0),(-1,-1),9),('BOTTOMPADDING',(0,0),(-1,-1),9),
@@ -45,7 +45,7 @@ def cotizacion_comercial(s):
         p('OBSERVACIONES'),p(s['observaciones'] or 'Sin observaciones registradas.'),Spacer(1,8),
         p('CONDICIONES COMERCIALES'),p(s['condiciones'] or 'No registradas en esta versión.'),Spacer(1,14),
         KeepTogether([p('ACEPTACIÓN DEL CLIENTE'),acceptance,Spacer(1,10),
-            p('La aceptación debe registrarse con respaldo verificable por OFICINA antes de aprobar el envío a TALLER.',small)])]
+            p('La aprobación de ADMINISTRADOR y la aceptación verificable del cliente son obligatorias antes de enviar repuestos a TALLER.',small)])]
     def footer(canvas,doc):
         canvas.saveState();canvas.setStrokeColor(line);canvas.line(40,36,555,36)
         canvas.setFont('Helvetica',7);canvas.setFillColor(navy)

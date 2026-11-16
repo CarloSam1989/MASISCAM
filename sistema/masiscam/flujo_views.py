@@ -162,12 +162,11 @@ def contexto(request,exp,errores=None):
         context.update(cotizacion_pdf=next((ev for ev in pdfs if ev.clave==uuid.uuid5(prop.clave,'cotizacion-pdf-v1')),pdfs[0] if pdfs else None),
             diagnostico_datos=[(diag._meta.get_field(name).verbose_name,getattr(diag,name)) for name in t.DIA_FIELDS if getattr(diag,name)] if diag else [],
             evidencias_diagnostico=[ev for ev in t._evidencias(diag) if not ev.pieza_id] if diag else [])
-    cotizacion_bloqueo=('TALLER debe completar y enviar el diagnóstico antes de cotizar.'
-        if not diag or not diag.enviado_en else
-        'La cotización con repuestos registrados conserva sus importes y autorización; los cambios requieren una revisión de alcance.'
+    cotizacion_bloqueo=('La cotización con repuestos registrados conserva sus importes y autorización; los cambios requieren una revisión de alcance.'
         if sol and sol.adquisiciones.exists() else '')
     context.update(expediente=exp,equipo=exp.registro.equipo,inspeccion=ins,forms=forms,envio=envio,
         oficina_estado=oficina_estado,oficina_bloqueo=oficina_bloqueo,oficina_envio=oficina_envio,
+        diagnostico_pendiente=bool(diag and not diag.enviado_en),
         cotizacion_habilitada=not bool(cotizacion_bloqueo),cotizacion_bloqueo=cotizacion_bloqueo,
         documentos_comerciales=documentos_comerciales,
         revision_administrativa=revision_administrativa,revision_vigente=revision_vigente,
@@ -290,7 +289,7 @@ def detalle(request,pk):
             else: raise ValidationError('Acción no disponible en este paso.')
         except (ValidationError,IntegrityError,OSError,ValueError) as error: _error(form,error)
         else:
-            messages.success(request,'Avance registrado. El siguiente paso está actualizado.')
+            messages.success(request,'Cotización PDF guardada y enviada a revisión de ADMINISTRADOR.' if op=='cotizar' else 'Avance registrado. El siguiente paso está actualizado.')
             if diagnostico_para_plano:
                 url_plano=plano_aplicable_url(request,exp,diagnostico_para_plano)
                 if url_plano:
