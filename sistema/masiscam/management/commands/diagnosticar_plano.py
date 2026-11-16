@@ -30,6 +30,9 @@ class Command(BaseCommand):
                 raise CommandError('Expediente no encontrado; no se sustituyen números ni IDs.')
             result = dict(expediente=exp.numero, id=exp.pk, empresa=exp.empresa_id,
                 equipo=exp.registro.equipo_id, estado_equipo=exp.registro.equipo.estado,
+                identidad=dict(expediente_id=exp.pk, registro_equipo_id=exp.registro_id,
+                    registro_secuencia=exp.registro.secuencia, equipo_fisico_id=exp.registro.equipo_id,
+                    nombre_equipo=exp.registro.equipo.nombre, serie=exp.registro.equipo.numero_serie),
                 operativo=ExpedienteMantenimiento.objects.filter(pk=exp.pk).exists(),
                 configuracion={name: getattr(settings, name, None) for name in (
                     'MASISCAM_TECNICA_LOCAL', 'MASISCAM_RECEPCION_LOCAL', 'MASISCAM_OPERACION_LOCAL')})
@@ -39,6 +42,7 @@ class Command(BaseCommand):
                     ExpedienteMantenimiento.objects.filter(pk=r.expediente_trabajo_id).exists()),
                 documento=r.documento_id, archivo=r.documento.archivo.name,
                 aplicabilidades=list(r.aplicabilidades.values('equipo_id', 'activa')),
+                aplicable_al_equipo_actual=r.aplicabilidades.filter(equipo_id=exp.registro.equipo_id, activa=True).exists(),
                 componentes=r.partes.count()) for r in refs.select_related('documento').order_by('codigo', '-revision')]
             result['aprobaciones'] = list(Auditoria.objects.filter(empresa=exp.empresa,
                 accion='PLANO_REVISADO', objeto_id__in=[str(r['id']) for r in result['planos']])

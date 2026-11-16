@@ -1,13 +1,26 @@
 from decimal import Decimal
 from django import forms
-from .tecnica_forms import BaseForm
-from .models import PiezaRequerida
+from .tecnica_forms import BaseForm, AplicabilidadForm
+from .models import PiezaRequerida, ReferenciaTecnica
 from .flujo_services import disponible
 from .forms import ArchivosRegistroField
 
 
 class PlanoTrabajoForm(BaseForm):
     archivo = forms.FileField(label='Plano PDF', widget=forms.ClearableFileInput(attrs={'accept': '.pdf,application/pdf'}))
+
+
+class AplicarPlanoExistenteForm(AplicabilidadForm):
+    referencia_id = forms.ModelChoiceField(queryset=ReferenciaTecnica.objects.none(), label='Plano publicado existente')
+
+    def __init__(self, *args, empresa, usuario, **kwargs):
+        super().__init__(*args, empresa=empresa, **kwargs)
+        # El destino se obtiene del expediente en servidor, nunca del formulario.
+        self.fields.pop('equipo_id')
+        self.fields.pop('activa')
+        from .tecnica_services import referencias_visibles
+        self.fields['referencia_id'].queryset = referencias_visibles(usuario, empresa).filter(
+            empresa=empresa, tipo='PLANO', estado='PUBLICADA').order_by('codigo', '-revision')
 
 
 class ComponenteTrabajoForm(BaseForm):

@@ -46,6 +46,120 @@ class TresRolesFixture:
 
 
 @override_settings(**flujo.FLAGS)
+class PlanoActivoTests(TresRolesFixture, TransactionTestCase):
+    reset_sequences = True
+
+    def recepcion(self, equipo):
+        import uuid
+        from django.utils import timezone
+        from .recepcion_services import abrir_recepcion
+        return abrir_recepcion(usuario=self.taller, empresa=self.empresa, equipo_id=equipo.pk,
+            cliente_id=self.cliente.pk, clave=uuid.uuid4(), tipo='MANTENIMIENTO', fecha=timezone.now(),
+            condicion_ingreso='QA sin archivos duplicados', fotografias=[])
+
+    def test_visibles_sin_aplicabilidad_y_prioridad_publicada_vigente(self):
+        import uuid
+        import json
+        from io import StringIO
+        from django.core.management import call_command
+        from django.test import RequestFactory
+        from . import flujo_views, plano_services
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT setval(pg_get_serial_sequence('masiscam_equipo','id'),9,false)")
+        self.exp = self.recepcion(self.crear('ORIGEN'))
+        self.assertEqual(self.exp.registro.equipo_id, 9)
+        self.recepcion(self.exp.registro.equipo)
+        self.planta = self.admin
+        primera, _ = tecnica.TecnicaTests.referencia(self)
+        segunda = tecnica.s.guardar_referencia(usuario=self.admin, empresa=self.empresa,
+            clave=uuid.uuid4(), datos=dict(codigo=primera.codigo, tipo='PLANO', titulo='Revisión 2 QA',
+                procedencia='QA', autorizacion_uso='QA', documento_id=primera.documento_id,
+                sustituye_id=primera.pk))
+        tecnica.s.estado_referencia(usuario=self.admin, empresa=self.empresa,
+            referencia_id=segunda.pk, estado='PUBLICADA', clave=uuid.uuid4())
+        tecnica.s.aplicar_referencia(usuario=self.admin, empresa=self.empresa, referencia_id=segunda.pk,
+            equipo_id=self.exp.registro.equipo_id, fundamento='QA origen', clave=uuid.uuid4())
+        destino = self.recepcion(self.crear('DESTINO'))
+        self.assertEqual(destino.numero, 'EXP-E1-00000003')
+        self.assertEqual(destino.registro.equipo_id, 10)
+        request = RequestFactory().get('/')
+        request.user, request.empresa_activa = self.taller, self.empresa
+        visibles = list(tecnica.s.referencias_visibles(self.taller, self.empresa).order_by('pk').values_list('pk', flat=True))
+        self.assertEqual(visibles, [1, 2])
+        self.assertIsNone(flujo_views.contexto(request, destino)['plano_activo'])
+        output = StringIO()
+        call_command('diagnosticar_plano', stdout=output)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report['identidad']['equipo_fisico_id'], 10)
+        self.assertEqual(report['identidad']['registro_equipo_id'], destino.registro_id)
+        self.assertEqual(report['taller'][0]['visibles'], [1, 2])
+        self.assertIsNone(report['taller'][0]['plano_activo'])
+        self.assertTrue(all(not p['aplicable_al_equipo_actual'] for p in report['planos']))
+        # Ser visible para otro trabajo no autoriza su uso en este equipo.
+        url = reverse('masiscam:flujo_detalle', args=[destino.pk])
+        self.client.force_login(self.admin)
+        self.assertContains(self.client.get(url), 'Aplicar plano al equipo actual')
+        self.assertEqual(self.client.post(url, dict(op='aplicar_plano', clave=uuid.uuid4(),
+            referencia_id=segunda.pk, fundamento='')).status_code, 400)
+        counts = {m: m.objects.count() for m in (plano.Documento, plano.ReferenciaTecnica)}
+        key = uuid.uuid4()
+        payload = dict(op='aplicar_plano', clave=key, referencia_id=segunda.pk,
+            fundamento='QA destino autorizado', equipo_id=self.exp.registro.equipo_id)
+        # Un destino enviado por el navegador no sustituye el equipo del expediente.
+        self.assertEqual(self.client.post(url, payload).status_code, 302)
+        self.assertEqual(self.client.post(url, payload).status_code, 302)
+        from .models import AplicabilidadReferenciaEquipo
+        self.assertEqual(AplicabilidadReferenciaEquipo.objects.filter(
+            referencia=segunda, equipo_id=destino.registro.equipo_id, activa=True).count(), 1)
+        for model, count in counts.items():
+            self.assertEqual(model.objects.count(), count)
+        for user in (self.taller, self.oficina):
+            self.client.force_login(user)
+            self.assertEqual(self.client.post(url, payload).status_code, 403)
+        self.client.force_login(self.taller)
+        self.assertEqual(flujo_views.contexto(request, destino)['plano_activo'].pk, segunda.pk)
+        borrador = plano_services.cargar_plano_trabajo(usuario=self.taller, empresa=self.empresa,
+            expediente_id=destino.pk, clave=uuid.uuid4(), archivo=tecnica.pdf_plano())
+        ctx = flujo_views.contexto(request, destino)
+        self.assertEqual(ctx['plano_activo'].pk, segunda.pk)
+        self.assertIn(borrador, list(ctx['planos']))
+        diag = destino.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
+        self.assertEqual(flujo_views.plano_aplicable_url(request, destino, diag),
+            reverse('masiscam:plano', args=[segunda.pk]) + f'?diagnostico={diag.pk}&flujo=1')
+        self.assertContains(self.client.get(url), reverse('masiscam:plano', args=[segunda.pk]) +
+            f'?diagnostico={diag.pk}&amp;flujo=1')
+
+    def test_no_asocia_plano_de_otra_empresa_ni_borrador(self):
+        import uuid
+        from accounts.models import Empresa
+        from django.utils import timezone
+        from .models import AplicabilidadReferenciaEquipo, Proyecto
+        self.exp = self.recepcion(self.crear('DESTINO'))
+        self.planta = self.admin
+        local, _ = tecnica.TecnicaTests.referencia(self)
+        ajena = Empresa.objects.create(nombre='Otra empresa QA')
+        otro_admin = tecnica.usuario(ajena, 'admin-otra-empresa', 'ADMIN')
+        proyecto = Proyecto.objects.create(empresa=ajena, codigo='OTRO', nombre='QA ajeno',
+            cliente='', responsable='QA', fecha_inicio=timezone.localdate(), creado_por=otro_admin)
+        datos = dict(codigo='AJENO', tipo='PLANO', titulo='QA', procedencia='QA', autorizacion_uso='QA',
+            proyecto_id=proyecto.pk)
+        externo = tecnica.s.guardar_referencia(usuario=otro_admin, empresa=ajena,
+            clave=uuid.uuid4(), archivo=tecnica.pdf_plano(), datos=datos)
+        tecnica.s.estado_referencia(usuario=otro_admin, empresa=ajena, referencia_id=externo.pk,
+            estado='PUBLICADA', clave=uuid.uuid4())
+        borrador = tecnica.s.guardar_referencia(usuario=self.admin, empresa=self.empresa,
+            clave=uuid.uuid4(), datos=dict(codigo='BORRADOR', tipo='PLANO', titulo='QA',
+                procedencia='QA', autorizacion_uso='QA', documento_id=local.documento_id))
+        self.client.force_login(self.admin)
+        url = reverse('masiscam:flujo_detalle', args=[self.exp.pk])
+        before = AplicabilidadReferenciaEquipo.objects.count()
+        for ref in (externo, borrador):
+            self.assertEqual(self.client.post(url, dict(op='aplicar_plano', clave=uuid.uuid4(),
+                referencia_id=ref.pk, fundamento='Intento QA')).status_code, 400)
+        self.assertEqual(AplicabilidadReferenciaEquipo.objects.count(), before)
+
+
+@override_settings(**flujo.FLAGS)
 class TresRolesTests(TresRolesFixture, TestCase):
     test_plano_provisional_envio_y_fotos = plano.PlanoTrabajoTests.test_carga_componentes_seleccion_envio_y_aprobaciones_posteriores
     test_posiciones_versiones_y_publicacion = plano.PlanoTrabajoTests.test_marcado_parcial_versionado_publicacion_y_permisos

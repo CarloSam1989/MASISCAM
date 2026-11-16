@@ -3,7 +3,7 @@ import uuid
 from django.contrib import messages
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.db import IntegrityError
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Case, When, Value, IntegerField, Exists, OuterRef
 from django.http import Http404
 from django.shortcuts import render,redirect,get_object_or_404
 from django.urls import reverse
@@ -11,11 +11,24 @@ from django.views.decorators.http import require_GET,require_http_methods
 from .access import masiscam_access_required
 from . import flujo_services as s, tecnica_services as t, operacion_services as o
 from .flujo_forms import CotizacionForm,AdquisicionForm,EnvioForm,ConfirmarEnvioForm,PiezaManualForm
-from .flujo_forms import PlanoTrabajoForm, EnviarPiezasForm
+from .flujo_forms import PlanoTrabajoForm, EnviarPiezasForm, AplicarPlanoExistenteForm
 from .tecnica_forms import BaseForm,RevisionForm,EvidenciaForm
 from .tecnica_views import _error,_archivo
 from .operacion_forms import OperacionForm
-from .models import SolicitudRepuestos,EnvioRepuestos,Documento,ExpedienteMantenimiento
+from .models import (SolicitudRepuestos,EnvioRepuestos,Documento,ExpedienteMantenimiento,
+    ReferenciaTecnica, AplicabilidadReferenciaEquipo)
+
+
+def planos_aplicables(request, exp):
+    visibles = t.referencias_visibles(request.user, request.empresa_activa)
+    aplicabilidad = AplicabilidadReferenciaEquipo.objects.filter(
+        referencia_id=OuterRef('pk'), equipo_id=exp.registro.equipo_id, activa=True)
+    return ReferenciaTecnica.objects.filter(empresa=exp.empresa, empresa_id=request.empresa_activa.pk,
+        tipo='PLANO', pk__in=visibles.values('pk')).annotate(
+            aplicable=Exists(aplicabilidad),
+            prioridad=Case(When(estado='PUBLICADA', then=Value(0)), default=Value(1), output_field=IntegerField()))\
+        .filter(Q(estado='PUBLICADA', aplicable=True) | Q(estado='BORRADOR', expediente_trabajo=exp))\
+        .annotate(partes_count=Count('partes', distinct=True)).order_by('prioridad', '-revision', 'codigo', '-pk')
 
 
 @require_GET
@@ -67,6 +80,8 @@ def contexto(request,exp,errores=None):
                 mensaje='Solicitud histórica congelada. Consulta de piezas y entregas; no admite modificaciones.')
     diag=context['diagnostico'];sol=context['solicitud'];prop=context['propuesta']
     forms={}
+    if context['rol']=='ADMIN':
+        forms['aplicar_plano']=AplicarPlanoExistenteForm(empresa=request.empresa_activa, usuario=request.user)
     if not historica and context['rol']=='TALLER' and diag and not diag.enviado_en and t.vigente(diag):
         forms['diagnostico']=RevisionForm(tipo='DIAGNOSTICO',revision=diag)
         if not sol:
@@ -106,10 +121,7 @@ def contexto(request,exp,errores=None):
     if errores: forms.update(errores)
     for nombre,form in forms.items(): form.auto_id=f'flujo_{nombre}_%s'
     form_action=context['accion']['op'] if context['accion'] else None
-    planos=(t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO').filter(
-        Q(estado='PUBLICADA',aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True) |
-        Q(estado='BORRADOR',expediente_trabajo=exp))
-        .annotate(partes_count=Count('partes',distinct=True)).distinct().order_by('codigo','-revision'))
+    planos=list(planos_aplicables(request, exp))
     if context['rol']=='TALLER' and not sol:
         if ins:
             context['accion']=None
@@ -121,7 +133,8 @@ def contexto(request,exp,errores=None):
         context['mensaje']='TALLER registra las piezas en el visor. ADMINISTRADOR aprueba o rechaza el plano.'
     versiones_plano = {}
     for plano in planos:
-        versiones_plano.setdefault(plano.codigo, plano)
+        if plano.codigo not in versiones_plano or plano.revision > versiones_plano[plano.codigo].revision:
+            versiones_plano[plano.codigo] = plano
     pendientes_plano = [p for p in versiones_plano.values() if p.expediente_trabajo_id and p.estado == 'BORRADOR']
     if context['rol'] == 'ADMIN' and pendientes_plano:
         pendiente = pendientes_plano[0]
@@ -180,15 +193,13 @@ def contexto(request,exp,errores=None):
         piezas=diag.piezas.prefetch_related('fotografias__documento').order_by('pk') if diag and (context['rol']=='TALLER' or diag.enviado_en or sol) else [],
         planos=planos, planos_actuales=list(versiones_plano.values()),
         taller_simple=context['rol']=='TALLER' and not sol and not historica,
-        plano_activo=next((p for p in versiones_plano.values() if p.expediente_trabajo_id and p.estado=='BORRADOR'),None) or next(iter(versiones_plano.values()),None),
+        plano_activo=next(iter(planos),None),
         adquisiciones=sol.adquisiciones.select_related('pieza','documento').order_by('pk') if sol else [])
     return context
 
 
 def plano_aplicable_url(request,exp,diagnostico):
-    plano=t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO').filter(
-        Q(estado='PUBLICADA',aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True) |
-        Q(estado='BORRADOR',expediente_trabajo=exp)).order_by('codigo','-revision').distinct().first()
+    plano=planos_aplicables(request, exp).first()
     if not plano:
         return None
     return reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diagnostico.pk}&flujo=1'
@@ -203,7 +214,10 @@ def detalle(request,pk):
     op=request.POST.get('op','');ctx=s.resumen(exp,request.user);diag=ctx['diagnostico'];sol=ctx['solicitud']
     if request.GET.get('solicitud') and (not sol or request.GET['solicitud']!=str(sol.pk)):
         raise PermissionDenied('La solicitud histórica es de solo lectura.')
-    if op=='plano_trabajo':
+    if op=='aplicar_plano':
+        t.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN'}, exp)
+        form=AplicarPlanoExistenteForm(request.POST, empresa=request.empresa_activa, usuario=request.user);nombre=op
+    elif op=='plano_trabajo':
         form=PlanoTrabajoForm(request.POST,request.FILES);nombre=op
     elif op=='enviar_piezas' and diag:
         form=EnviarPiezasForm(request.POST);nombre=op
@@ -226,7 +240,10 @@ def detalle(request,pk):
         data=dict(form.cleaned_data);key=data.pop('clave');common=dict(usuario=request.user,empresa=request.empresa_activa)
         diagnostico_para_plano=None
         try:
-            if op=='plano_trabajo':
+            if op=='aplicar_plano':
+                t.aplicar_referencia(**common, referencia_id=data['referencia_id'].pk,
+                    equipo_id=exp.registro.equipo_id, fundamento=data['fundamento'], clave=key)
+            elif op=='plano_trabajo':
                 from .plano_services import cargar_plano_trabajo, corregir_plano_trabajo
                 raw=request.POST.get('referencia_id','')
                 if raw:
