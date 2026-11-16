@@ -15,7 +15,7 @@ from .flujo_forms import PlanoTrabajoForm, EnviarPiezasForm
 from .tecnica_forms import BaseForm,RevisionForm,EvidenciaForm
 from .tecnica_views import _error,_archivo
 from .operacion_forms import OperacionForm
-from .models import SolicitudRepuestos,EnvioRepuestos,Documento
+from .models import SolicitudRepuestos,EnvioRepuestos,Documento,ExpedienteMantenimiento
 
 
 @require_GET
@@ -23,7 +23,7 @@ from .models import SolicitudRepuestos,EnvioRepuestos,Documento
 def bandeja(request):
     role=t.autorizar_tecnica(request.user,request.empresa_activa,{'OFICINA', 'ADMIN'}).rol
     from django.core.paginator import Paginator
-    qs=SolicitudRepuestos.objects.filter(expediente__empresa=request.empresa_activa).select_related(
+    qs=SolicitudRepuestos.objects.filter(expediente__in=ExpedienteMantenimiento.objects.filter(empresa=request.empresa_activa)).select_related(
         'expediente__cliente_contractual','expediente__registro__equipo','autor','diagnostico').order_by('-creado_en')
     qs=qs.exclude(expediente__registro__equipo__estado='INACTIVO')
     buscar=request.GET.get('q','').strip()[:120]
@@ -109,7 +109,7 @@ def contexto(request,exp,errores=None):
     planos=(t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO').filter(
         Q(estado='PUBLICADA',aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True) |
         Q(estado='BORRADOR',expediente_trabajo=exp))
-        .annotate(partes_count=Count('partes',distinct=True)).distinct().order_by('codigo','-revision') if diag else [])
+        .annotate(partes_count=Count('partes',distinct=True)).distinct().order_by('codigo','-revision'))
     if context['rol']=='TALLER' and not sol:
         context['accion']=None
         context['mensaje']='Sube un PDF y selecciona las piezas directamente en el visor.'

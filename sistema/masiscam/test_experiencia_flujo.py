@@ -10,7 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from . import test_taller, test_tecnica as qa, flujo_services as flujo, tecnica_services as tecnica
-from .models import AsignacionTecnica, EmisionGuiaIngreso, ConfirmacionRecepcion, Documento
+from .models import AsignacionTecnica, EmisionGuiaIngreso, ConfirmacionRecepcion, Documento, DecisionComercial
 from .recepcion_services import abrir_recepcion, reservar_guia, generar_guia
 from .recepcion_confirmacion import confirmar_recepcion
 from .test_utils import consumir_respuesta
@@ -169,6 +169,33 @@ class ExperienciaTests(TestCase):
                 'Complete y envíe los detalles técnicos de inspección antes de enviar el diagnóstico.'):
             tecnica.enviar_revision(usuario=self.taller,empresa=self.empresa,tipo='DIAGNOSTICO',
                 revision_id=diagnostico.pk,version=diagnostico.version_edicion,clave=uuid.uuid4())
+
+    def test_taller_abre_plano_aprobado_sin_diagnostico_ni_autorizacion_comercial(self):
+        self.ingreso(fotos=False)
+        self.planta=self.usuarios['PLANTA']
+        referencia,parte=qa.TecnicaTests.referencia(self)
+        url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
+        pagina=self.client.get(url)
+        self.assertContains(pagina,'name="op" value="inspeccion"')
+        self.assertNotContains(pagina,'disabled>Seleccionar piezas</button>')
+        self.assertFalse(self.exp.etapas_tecnicas.filter(codigo='DIAGNOSTICO').exists())
+
+        respuesta=self.client.post(url,dict(op='inspeccion',clave=uuid.uuid4()))
+        diagnostico=self.exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
+        self.assertRedirects(respuesta,
+            reverse('masiscam:plano',args=[referencia.pk])+f'?diagnostico={diagnostico.pk}&flujo=1')
+        self.assertEqual(self.exp.diagnostico_set.count(),1)
+        datos=self.client.get(reverse('masiscam:plano_datos',args=[referencia.pk]),
+            {'diagnostico':diagnostico.pk}).json()
+        self.assertTrue(datos['seleccionable'])
+        seleccion=self.client.post(reverse('masiscam:plano_pieza',args=[diagnostico.pk]),dict(
+            version=diagnostico.version_edicion,parte_id=parte.pk,cantidad='1',unidad='unidad',
+            condicion='Desgaste observado QA',accion='EVALUAR',observaciones='Selección QA',
+            clave=uuid.uuid4()))
+        self.assertEqual(seleccion.status_code,200,seleccion.content)
+        self.assertEqual(diagnostico.piezas.count(),1)
+        self.assertFalse(hasattr(diagnostico,'solicitud_repuestos'))
+        self.assertFalse(DecisionComercial.objects.filter(expediente=self.exp).exists())
 
     @override_settings(MASISCAM_TECNICA_LOCAL=False, MASISCAM_OPERACION_LOCAL=False)
     def test_recepcion_incompleta_sigue_accesible_sin_modulo_tecnico(self):
