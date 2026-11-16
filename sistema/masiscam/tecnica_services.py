@@ -525,7 +525,9 @@ def referencias_visibles(usuario,empresa):
     elif rol.rol == 'OFICINA':
         qs = qs | ReferenciaTecnica.objects.filter(empresa=empresa, estado='BORRADOR',
             expediente_trabajo__solicitudrepuestos__snapshot__preliminar=True)
-    return qs.filter(Q(expediente_trabajo__isnull=True) |
+    # La procedencia histórica no invalida una publicación aplicable a un trabajo activo.
+    # Los borradores sí permanecen limitados a expedientes operativos.
+    return qs.filter(~Q(estado='BORRADOR') | Q(expediente_trabajo__isnull=True) |
         Q(expediente_trabajo__in=ExpedienteMantenimiento.objects.filter(empresa=empresa))).distinct()
 
 

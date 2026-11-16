@@ -380,6 +380,34 @@ class DepuracionConfirmadaTests(oficina_qa.OficinaFixture, TransactionTestCase):
     def options(self):
         return dict(confirmados=True, carpeta=self.folder, usuario=self.admin.pk)
 
+    def test_plano_publicado_aplicable_no_depende_del_expediente_origen_retirado(self):
+        import uuid
+        from . import tecnica_services as tecnica, plano_services as planos
+        from .flujo_views import contexto, plano_aplicable_url
+        from django.test import RequestFactory
+        planos.decidir_plano_trabajo(usuario=self.admin, empresa=self.empresa,
+            referencia_id=self.ref.pk, clave=uuid.uuid4(), revision=self.ref.revision, decision='APROBADO')
+        tecnica.aplicar_referencia(usuario=self.admin, empresa=self.empresa, referencia_id=self.ref.pk,
+            equipo_id=self.other_exp.registro.equipo_id, fundamento='Aplicabilidad QA autorizada', clave=uuid.uuid4())
+        _, diag = tecnica.iniciar_inspeccion(usuario=self.taller, empresa=self.empresa,
+            expediente_id=self.other_exp.pk, clave=uuid.uuid4())
+        media = Path(self.temp.name) / 'media'
+        media.mkdir()
+        with override_settings(MEDIA_ROOT=media):
+            self.run_command('retirar')
+        self.assertTrue(tecnica.referencias_visibles(self.taller, self.empresa).filter(pk=self.ref.pk).exists())
+        request = RequestFactory().get('/')
+        request.user, request.empresa_activa = self.taller, self.empresa
+        self.assertEqual(contexto(request, self.other_exp)['plano_activo'].pk, self.ref.pk)
+        self.assertIsNotNone(plano_aplicable_url(request, self.other_exp, diag))
+        before = Auditoria.objects.count()
+        output = StringIO()
+        call_command('diagnosticar_plano', self.other_exp.numero, stdout=output)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report['taller'][0]['plano_activo'], self.ref.pk)
+        self.assertEqual(report['planos'][0]['origen_operativo'], False)
+        self.assertEqual(Auditoria.objects.count(), before)
+
     def test_retiro_no_interactivo_preserva_historico_y_oculta_tres_roles(self):
         from .management.depuracion_confirmada import inspect_confirmed, read_signed
         from .retiro_operativo import ACTION
