@@ -14,13 +14,14 @@ from .models import AsignacionTecnica, EmisionGuiaIngreso, ConfirmacionRecepcion
 from .recepcion_services import abrir_recepcion, reservar_guia, generar_guia
 from .recepcion_confirmacion import confirmar_recepcion
 from .test_utils import consumir_respuesta
+from .test_tres_roles import TresRolesFixture
 
 
 @override_settings(GOOGLE_DRIVE_ENABLED=False, MASISCAM_RECEPCION_LOCAL=True,
     MASISCAM_TECNICA_LOCAL=True, MASISCAM_OPERACION_LOCAL=True,
     MASISCAM_CALIBRACION_LOCAL=True, MASISCAM_CIERRE_LOCAL=True)
 class ExperienciaTests(TestCase):
-    setUp=test_taller.TallerTests.setUp
+    setUp=TresRolesFixture.setUp
     datos=test_taller.TallerTests.datos
     crear=test_taller.TallerTests.crear
     recepcion=test_taller.TallerTests.recepcion
@@ -258,7 +259,7 @@ class ExperienciaTests(TestCase):
     def test_asignacion_pendiente_no_oculta_recepcion_ni_permite_trabajo(self):
         self.ingreso(confirmar=True)
         AsignacionTecnica.objects.filter(expediente=self.exp).update(fin=timezone.now())
-        self.assertContains(self.client.get(self.url),'PLANTA debe asignar el responsable')
+        self.assertContains(self.client.get(self.url),'ADMINISTRADOR debe asignar el responsable')
         self.assertNotContains(self.client.get(self.url),'Continuar al mantenimiento')
         self.assertEqual(self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk])).status_code,403)
 

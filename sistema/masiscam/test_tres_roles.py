@@ -51,6 +51,45 @@ class TresRolesTests(TresRolesFixture, TestCase):
     test_posiciones_versiones_y_publicacion = plano.PlanoTrabajoTests.test_marcado_parcial_versionado_publicacion_y_permisos
     test_plano_permisos = plano.PlanoTrabajoTests.test_permisos_pdf_invalido_fuente_y_componentes_protegidos
 
+    def test_iniciar_inspeccion_reutiliza_borradores_vigentes(self):
+        import uuid
+        from .tecnica_models import Diagnostico, Inspeccion
+        equipo = self.crear('INSPECCION-IDEMPOTENTE')
+        exp = self.recepcion(equipo)
+        clave = uuid.uuid4()
+        primera_inspeccion, primer_diagnostico = tecnica.s.iniciar_inspeccion(
+            usuario=self.taller, empresa=self.empresa, expediente_id=exp.pk, clave=clave)
+        reintento_inspeccion, reintento_diagnostico = tecnica.s.iniciar_inspeccion(
+            usuario=self.taller, empresa=self.empresa, expediente_id=exp.pk, clave=clave)
+        segunda_inspeccion, segundo_diagnostico = tecnica.s.iniciar_inspeccion(
+            usuario=self.taller, empresa=self.empresa, expediente_id=exp.pk, clave=uuid.uuid4())
+        self.assertEqual(reintento_inspeccion.pk, primera_inspeccion.pk)
+        self.assertEqual(reintento_diagnostico.pk, primer_diagnostico.pk)
+        self.assertEqual(segunda_inspeccion.pk, primera_inspeccion.pk)
+        self.assertEqual(segundo_diagnostico.pk, primer_diagnostico.pk)
+        self.assertEqual(Inspeccion.objects.filter(expediente=exp).count(), 1)
+        self.assertEqual(Diagnostico.objects.filter(expediente=exp).count(), 1)
+
+    def test_plano_aprobado_sin_componentes_abre_visor(self):
+        import uuid
+        from .flujo_views import plano_aplicable_url
+        from django.test import RequestFactory
+        self.exp = self.recepcion(self.crear('PLANO-SIN-COMPONENTES'))
+        ref = tecnica.s.guardar_referencia(usuario=self.admin, empresa=self.empresa,
+            clave=uuid.uuid4(), archivo=tecnica.pdf_plano(), datos=dict(
+                codigo='SIN-COMPONENTES', tipo='PLANO', titulo='Plano QA', procedencia='QA',
+                autorizacion_uso='QA', proyecto_id=self.exp.registro.equipo.proyecto_id))
+        tecnica.s.estado_referencia(usuario=self.admin, empresa=self.empresa,
+            referencia_id=ref.pk, estado='PUBLICADA', clave=uuid.uuid4())
+        tecnica.s.aplicar_referencia(usuario=self.admin, empresa=self.empresa, referencia_id=ref.pk,
+            equipo_id=self.exp.registro.equipo_id, fundamento='QA', clave=uuid.uuid4())
+        _, diag = tecnica.s.iniciar_inspeccion(usuario=self.taller, empresa=self.empresa,
+            expediente_id=self.exp.pk, clave=uuid.uuid4())
+        request = RequestFactory().get('/')
+        request.user, request.empresa_activa = self.taller, self.empresa
+        self.assertEqual(plano_aplicable_url(request, self.exp, diag),
+            reverse('masiscam:plano', args=[ref.pk]) + f'?diagnostico={diag.pk}&flujo=1')
+
     def test_recorrido_completo_con_aprobadores_administradores(self):
         crear_usuario = tecnica.usuario
         def usuario_qa(empresa, nombre, rol):

@@ -5,7 +5,25 @@ from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import AdminUserCreationForm
 from accounts.models import Empresa, Perfil
 from .models import Auditoria, Cliente, Documento, Equipo, Proyecto, RolMasiscam
-admin.site.register((Cliente, Proyecto, Documento, Auditoria))
+admin.site.register((Cliente, Proyecto, Documento))
+
+
+@admin.register(Auditoria)
+class AuditoriaAdmin(admin.ModelAdmin):
+    def has_change_permission(self, request, obj=None):
+        from .retiro_operativo import ACTION
+        return not (obj and obj.accion == ACTION) and super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        from .retiro_operativo import ACTION
+        return not (obj and obj.accion == ACTION) and super().has_delete_permission(request, obj)
+
+    def delete_queryset(self, request, queryset):
+        from django.core.exceptions import PermissionDenied
+        from .retiro_operativo import ACTION
+        if queryset.filter(accion=ACTION).exists():
+            raise PermissionDenied('La constancia de retiro operativo debe conservarse.')
+        super().delete_queryset(request, queryset)
 
 
 class RolMasiscamAdminForm(forms.ModelForm):

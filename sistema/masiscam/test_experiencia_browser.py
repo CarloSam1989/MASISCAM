@@ -12,20 +12,24 @@ from django.urls import reverse
 from django.utils import timezone
 
 from . import test_taller, test_tecnica as qa
-from .models import AsignacionTecnica, ConfirmacionRecepcion
+from .models import AsignacionTecnica, ConfirmacionRecepcion, SolicitudRepuestos
 from .recepcion_services import abrir_recepcion
 from .recepcion_confirmacion import confirmar_recepcion
-from .tecnica_models import Inspeccion
+from .tecnica_models import Diagnostico, Inspeccion
+from .test_tres_roles import TresRolesFixture
 
 
 @skipUnless(os.environ.get('MASISCAM_BROWSER_TESTS')=='1','Activar navegador QA explícitamente')
 @override_settings(GOOGLE_DRIVE_ENABLED=False,MASISCAM_RECEPCION_LOCAL=True,MASISCAM_TECNICA_LOCAL=True,
     MASISCAM_OPERACION_LOCAL=True,MASISCAM_CALIBRACION_LOCAL=True,MASISCAM_CIERRE_LOCAL=True)
 class ExperienciaBrowserTests(StaticLiveServerTestCase):
-    setUp=test_taller.TallerTests.setUp
-    datos=test_taller.TallerTests.datos
-    crear=test_taller.TallerTests.crear
-    recepcion=test_taller.TallerTests.recepcion
+    datos=TresRolesFixture.datos
+    crear=TresRolesFixture.crear
+    recepcion=TresRolesFixture.recepcion
+
+    def setUp(self):
+        super().setUp()
+        TresRolesFixture.setUp(self)
 
     def test_recepcion_y_navegacion_en_escritorio_tablet_movil(self):
         from playwright.sync_api import sync_playwright,expect
@@ -156,10 +160,30 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
         exp=self.recepcion(equipo)
         self.exp=exp
         self.planta=self.usuarios['PLANTA']
-        referencia,parte=qa.TecnicaTests.referencia(self)
+        referencia=qa.s.guardar_referencia(usuario=self.planta,empresa=self.empresa,
+            clave=uuid.uuid4(),archivo=qa.pdf_plano(),datos=dict(
+                codigo='REF-QA',tipo='PLANO',titulo='Plano de prueba',procedencia='Fuente QA sintética',
+                autorizacion_uso='Uso y congelación QA expresamente indicados',
+                proyecto_id=exp.registro.equipo.proyecto_id))
+        parte=qa.s.guardar_parte(usuario=self.planta,empresa=self.empresa,
+            referencia_id=referencia.pk,clave=uuid.uuid4(),datos=dict(
+                posicion='A',descripcion='Componente QA',numero_parte='QA-PARTE',unidad='unidad declarada'))
+        segunda_parte=qa.s.guardar_parte(usuario=self.planta,empresa=self.empresa,
+            referencia_id=referencia.pk,clave=uuid.uuid4(),datos=dict(
+                posicion='B',descripcion='Componente QA secundario',numero_parte='QA-PARTE-2',
+                unidad='unidad declarada'))
+        qa.s.estado_referencia(usuario=self.planta,empresa=self.empresa,referencia_id=referencia.pk,
+            estado='PUBLICADA',clave=uuid.uuid4())
+        qa.s.aplicar_referencia(usuario=self.planta,empresa=self.empresa,referencia_id=referencia.pk,
+            equipo_id=equipo.pk,fundamento='Aplicabilidad de prueba declarada',clave=uuid.uuid4())
+        referencia.refresh_from_db()
         plano_services.guardar_mapa(usuario=self.planta,empresa=self.empresa,referencia_id=referencia.pk,
             clave=uuid.uuid4(),base_version=0,
-            posiciones=[dict(parte=parte.pk,pagina=1,x='.5',y='.4')])
+            posiciones=[dict(parte=parte,pagina=1,x='.5',y='.4'),
+                dict(parte=segunda_parte,pagina=1,x='.65',y='.4')])
+        self.assertEqual(referencia.estado,'PUBLICADA')
+        self.assertFalse(Diagnostico.objects.filter(expediente=exp).exists())
+        self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())
         client=Client()
         client.force_login(self.taller)
         cookie=client.cookies[settings.SESSION_COOKIE_NAME].value
@@ -173,6 +197,9 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                 page=context.new_page()
                 self.assertEqual(page.goto(detalle_url).status,200)
                 button=page.get_by_role('button',name='Iniciar inspección',exact=True)
+                select=page.get_by_role('button',name='Seleccionar piezas',exact=True)
+                expect(button).to_be_enabled()
+                expect(select).to_be_enabled()
                 form=button.locator('xpath=ancestor::form')
                 self.assertEqual(form.get_attribute('action'),reverse('masiscam:flujo_detalle',args=[exp.pk]))
                 self.assertEqual(form.locator('[name=csrfmiddlewaretoken]').count(),1)
@@ -182,72 +209,55 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                 expect(page).to_have_url(re.compile(r'.*/app/biblioteca-tecnica/\d+/plano/\?diagnostico=\d+&flujo=1'))
                 expect(page.locator('#pl-app')).to_have_attribute('data-ready','true',timeout=20000)
                 expect(page.locator('#pl-canvas')).to_be_visible()
-                page.locator('.pl-part').first.click()
-                page.get_by_role('button',name='Agregar al diagnóstico').click()
-                page.locator('#pl-quantity').fill('2')
-                page.locator('#pl-condition').fill('Desgaste observado en navegador QA')
-                page.locator('#pl-action').select_option('EVALUAR')
-                photo=BytesIO()
-                Image.new('RGB',(43,31),'purple').save(photo,'PNG')
-                page.locator('#pl-photos').set_input_files(dict(name='pieza-qa.png',mimeType='image/png',
-                    buffer=photo.getvalue()))
-                invalid=page.locator('#pl-piece-form').evaluate(
-                    "form => Array.from(form.elements).filter(field => !field.checkValidity()).map(field => `${field.name}: ${field.validationMessage}`)")
-                self.assertEqual(invalid,[])
-                piece_url=page.locator('#pl-app').get_attribute('data-pieza')
-                with page.expect_response(lambda response:response.url.endswith(piece_url),timeout=15000) as saved:
-                    page.get_by_role('button',name='Guardar pieza').click()
-                self.assertEqual(saved.value.status,200,saved.value.text())
-                self.assertEqual(page.locator('#pl-count').inner_text(),'1',
-                    page.locator('#pl-message').inner_text()+' '+page.locator('#pl-form-error').inner_text())
                 page.get_by_role('link',name='Volver al trabajo').click()
                 expect(page).to_have_url(flujo_url)
-                details=page.locator('#detalles-tecnicos')
-                details.locator('summary').click()
-                details.locator('[name=fecha]').fill(timezone.localdate().isoformat())
-                details.locator('[name=estado_fisico]').fill('Equipo inspeccionado en QA')
-                details.locator('[name=condiciones_generales]').fill('Condiciones registradas en QA')
-                details.locator('[name=hallazgos]').fill('Desgaste observado en componente QA')
-                details.locator('[name=motivo_sin_evidencia]').fill('La fotografía está asociada a la pieza seleccionada')
-                with page.expect_navigation(url=flujo_url) as saved_inspection:
-                    details.get_by_role('button',name='Guardar detalles técnicos').click()
-                self.assertEqual(saved_inspection.value.status,200)
+                select_link=page.get_by_role('link',name='Seleccionar piezas',exact=True)
+                expect(select_link).to_be_enabled()
+                select_link.click()
+                expect(page.locator('#pl-app')).to_have_attribute('data-ready','true',timeout=20000)
+                photo=BytesIO()
+                Image.new('RGB',(43,31),'purple').save(photo,'PNG')
+                for index in range(2):
+                    page.locator('.pl-part').nth(index).click()
+                    page.get_by_role('button',name='Agregar al diagnóstico').click()
+                    page.locator('#pl-quantity').fill('2')
+                    page.locator('#pl-condition').fill(f'Desgaste observado en componente QA {index+1}')
+                    page.locator('#pl-action').select_option('EVALUAR')
+                    photo.seek(0)
+                    page.locator('#pl-photos').set_input_files(dict(name=f'pieza-qa-{index+1}.png',
+                        mimeType='image/png',buffer=photo.getvalue()))
+                    invalid=page.locator('#pl-piece-form').evaluate(
+                        "form => Array.from(form.elements).filter(field => !field.checkValidity()).map(field => `${field.name}: ${field.validationMessage}`)")
+                    self.assertEqual(invalid,[])
+                    piece_url=page.locator('#pl-app').get_attribute('data-pieza')
+                    with page.expect_response(lambda response:response.url.endswith(piece_url),timeout=15000) as saved:
+                        page.get_by_role('button',name='Guardar pieza').click()
+                    self.assertEqual(saved.value.status,200,saved.value.text())
+                    self.assertEqual(page.locator('#pl-count').inner_text(),str(index+1),
+                        page.locator('#pl-message').inner_text()+' '+page.locator('#pl-form-error').inner_text())
+                page.get_by_role('link',name='Volver al trabajo').click()
                 expect(page).to_have_url(flujo_url)
-                page.locator('#detalles-tecnicos').locator('summary').click()
-                send_form_state=details.locator('form').nth(2).evaluate(
-                    "form => ({valid:form.checkValidity(),open:form.closest('details').open,buttonOwnsForm:form.querySelector('button').form===form,fields:Array.from(form.elements).map(field=>[field.name,field.value,field.validity.valid])})")
-                self.assertTrue(send_form_state['valid'],str(send_form_state))
-                self.assertTrue(send_form_state['open'],str(send_form_state))
-                self.assertTrue(send_form_state['buttonOwnsForm'],str(send_form_state))
-                with page.expect_navigation() as sent_inspection:
-                    details.get_by_role('button',name='Validar y enviar inspección').click()
-                    page.get_by_role('button',name='Sí, continuar',exact=True).click()
-                self.assertEqual(sent_inspection.value.status,200)
-                expect(page).to_have_url(flujo_url)
-                page.locator('#diagnostico-tecnico > summary').click()
-                diagnosis=page.locator('#mf-diagnostico')
-                diagnosis.locator('[name=fecha]').fill(timezone.localdate().isoformat())
-                diagnosis.locator('[name=fallas]').fill('Desgaste por verificar')
-                diagnosis.locator('[name=causas]').fill('Pendiente de análisis técnico')
-                diagnosis.locator('[name=componentes_afectados]').fill('Componente QA')
-                diagnosis.locator('[name=recomendaciones]').fill('Solicitar cotización de la pieza')
-                diagnosis.locator('[name=conclusiones]').fill('Pendiente de aprobación independiente de PLANTA')
-                diagnosis.locator('[name=motivo_sin_evidencia]').fill('Fotografía adjunta a la pieza')
-                diagnosis.locator('[name=repuestos]').select_option('REQUERIDOS')
+                send=page.get_by_role('button',name='Enviar a OFICINA',exact=True)
+                expect(send).to_be_enabled()
                 with page.expect_navigation(url=flujo_url) as sent_request:
-                    diagnosis.get_by_role('button',name='Enviar solicitud de repuestos a oficina').click()
+                    send.click()
                     page.get_by_role('button',name='Sí, continuar',exact=True).click()
                 self.assertEqual(sent_request.value.status,200)
                 expect(page.get_by_text('Solicitud v1 enviada',exact=False)).to_be_visible()
                 context.close()
             finally:
                 browser.close()
-        diagnostico=exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
-        self.assertTrue(diagnostico.enviado_en)
+        diagnostico=Diagnostico.objects.get(expediente=exp)
+        solicitud=SolicitudRepuestos.objects.get(expediente=exp)
+        self.assertFalse(diagnostico.enviado_en)
+        self.assertEqual(len(solicitud.snapshot['piezas']),2)
         self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())
         self.assertFalse(qa.s._aprobado(diagnostico))
         oficina=Client()
         oficina.force_login(self.usuarios['OFICINA'])
-        self.assertContains(oficina.get(reverse('masiscam:flujo_detalle',args=[exp.pk])),'Componente QA')
-        self.assertTrue(Inspeccion.objects.filter(expediente=exp,enviado_en__isnull=False).exists())
+        respuesta=oficina.get(reverse('masiscam:flujo_detalle',args=[exp.pk]))
+        self.assertContains(respuesta,'Componente QA')
+        self.assertContains(respuesta,'Componente QA secundario')
+        self.assertEqual(Inspeccion.objects.filter(expediente=exp).count(),1)
+        self.assertFalse(Inspeccion.objects.get(expediente=exp).enviado_en)
         self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())

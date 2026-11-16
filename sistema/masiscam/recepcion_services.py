@@ -152,8 +152,10 @@ def abrir_recepcion(*, usuario, empresa, equipo_id, cliente_id, clave, tipo, fec
             from .access import equipos_taller
             if not equipos_taller(usuario=usuario, empresa=empresa).filter(pk=equipo.pk).exists():
                 raise PermissionDenied("Equipo no vinculado a su trabajo.")
-        registro = RegistroEquipo.objects.filter(equipo=equipo, clave_creacion=clave).first()
+        registro = RegistroEquipo._base_manager.filter(equipo=equipo, clave_creacion=clave).first()
         if registro:
+            if not RegistroEquipo.objects.filter(pk=registro.pk).exists():
+                raise PermissionDenied('El registro pertenece a un expediente retirado de la operación.')
             exp = ExpedienteMantenimiento.objects.filter(registro=registro).first()
             if not exp or exp.huella_solicitud != huella:
                 raise ValidationError("Clave de envío utilizada con datos diferentes.")

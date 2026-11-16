@@ -7,6 +7,7 @@ from django.core.validators import FileExtensionValidator
 from django.db import models
 
 from accounts.models import Empresa, Perfil
+from .retiro_operativo import OperativosManager
 
 
 def generar_token_publico():
@@ -230,6 +231,7 @@ class Equipo(models.Model):
 
 
 class RegistroEquipo(models.Model):
+    objects = OperativosManager()
     class Tipo(models.TextChoices):
         NUEVO = "NUEVO", "Nuevo"
         ASISTENCIA = "ASISTENCIA", "Asistencia"
@@ -356,6 +358,7 @@ class ContadorExpediente(models.Model):
 
 
 class ExpedienteMantenimiento(models.Model):
+    objects = OperativosManager()
     registro = models.OneToOneField(RegistroEquipo, on_delete=models.PROTECT, related_name="expediente_mantenimiento")
     empresa = models.ForeignKey(Empresa, on_delete=models.PROTECT)
     cliente_contractual = models.ForeignKey(Cliente, on_delete=models.PROTECT)

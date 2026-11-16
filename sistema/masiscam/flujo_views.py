@@ -111,8 +111,11 @@ def contexto(request,exp,errores=None):
         Q(estado='BORRADOR',expediente_trabajo=exp))
         .annotate(partes_count=Count('partes',distinct=True)).distinct().order_by('codigo','-revision'))
     if context['rol']=='TALLER' and not sol:
-        context['accion']=None
-        context['mensaje']='Sube un PDF y selecciona las piezas directamente en el visor.'
+        if ins:
+            context['accion']=None
+            context['mensaje']='Selecciona las piezas directamente en el visor; no necesitas confirmación de recepción ni autorización comercial.'
+        else:
+            context['mensaje']='Inicia la inspección o selecciona piezas desde el plano. No necesitas confirmación de recepción ni autorización comercial.'
     elif context['rol']=='ADMIN' and ins and not ins.enviado_en and diag and not diag.enviado_en:
         context['accion']=None
         context['mensaje']='TALLER registra las piezas en el visor. ADMINISTRADOR aprueba o rechaza el plano.'
@@ -184,7 +187,7 @@ def contexto(request,exp,errores=None):
 
 def plano_aplicable_url(request,exp,diagnostico):
     plano=t.referencias_visibles(request.user,request.empresa_activa).filter(tipo='PLANO').filter(
-        Q(estado='PUBLICADA',aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True,partes__isnull=False) |
+        Q(estado='PUBLICADA',aplicabilidades__equipo=exp.registro.equipo,aplicabilidades__activa=True) |
         Q(estado='BORRADOR',expediente_trabajo=exp)).order_by('codigo','-revision').distinct().first()
     if not plano:
         return None

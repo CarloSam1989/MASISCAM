@@ -75,15 +75,15 @@ def exp_ids(model, row, using, seen=None):
             found.add(pk)
         elif (parent._meta.app_label == 'masiscam' and parent.__name__ not in KEEP
                 and (parent._meta.label, pk) not in seen):
-            data = parent.objects.using(using).filter(pk=pk).values().first()
+            data = parent._base_manager.using(using).filter(pk=pk).values().first()
             if data:
                 found.update(exp_ids(parent, data, using, seen))
     return found
 
 
 def inspect_confirmed(using='default'):
-    records = list(RegistroEquipo.objects.using(using).filter(pk__in=ROOT_RECORDS).order_by('pk').values())
-    files = list(ExpedienteMantenimiento.objects.using(using).filter(pk__in=ROOT_FILES).order_by('pk').values())
+    records = list(RegistroEquipo._base_manager.using(using).filter(pk__in=ROOT_RECORDS).order_by('pk').values())
+    files = list(ExpedienteMantenimiento._base_manager.using(using).filter(pk__in=ROOT_FILES).order_by('pk').values())
     if len(records) != 2 or len(files) != 2 or {x['registro_id'] for x in files} != ROOT_RECORDS:
         raise CommandError('El perfil exige exactamente registros 22/23 vinculados a expedientes 1/2. Sin sustituciones.')
     companies = {x['empresa_id'] for x in files}
@@ -123,7 +123,7 @@ def inspect_confirmed(using='default'):
             if model is None or model._meta.app_label != 'masiscam':
                 blocked.append(f'Dependencia externa no autorizada: {child_schema}.{child}: {ids}.')
                 continue
-            for data in model.objects.using(using).filter(pk__in=ids).order_by('pk').values():
+            for data in model._base_manager.using(using).filter(pk__in=ids).order_by('pk').values():
                 key = (child, data['id'])
                 if model.__name__ in KEEP:
                     if ((model is Auditoria and col == 'expediente_id') or

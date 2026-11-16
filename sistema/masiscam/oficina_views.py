@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET
 from .access import masiscam_access_required
 from .models import (SolicitudRepuestos, PropuestaComercial, DecisionComercial,
-    AdquisicionRepuesto, DetalleEnvio, EnvioRepuestos)
+    AdquisicionRepuesto, DetalleEnvio, EnvioRepuestos, ExpedienteMantenimiento)
 
 SECCIONES = {
     'solicitudes':'Solicitudes de taller', 'cotizaciones':'Cotizaciones',
@@ -18,7 +18,7 @@ SECCIONES = {
 
 
 def datos(empresa):
-    scope=Q(expediente__empresa=empresa)&~Q(expediente__registro__equipo__estado='INACTIVO')
+    scope=Q(expediente__in=ExpedienteMantenimiento.objects.filter(empresa=empresa))&~Q(expediente__registro__equipo__estado='INACTIVO')
     solicitudes=SolicitudRepuestos.objects.filter(scope)
     propuestas=PropuestaComercial.objects.filter(scope).annotate(
         sustituida=Exists(PropuestaComercial.objects.filter(expediente_id=OuterRef('expediente_id'),version__gt=OuterRef('version')))).filter(sustituida=False)
@@ -47,7 +47,7 @@ def inicio(request, seccion='inicio'):
         ('Repuestos pendientes de envío',compras.count(),'guias'),
         ('Autorizaciones comerciales pendientes',por_aceptar.count(),'ventas')]
     fuentes={'inicio':solicitudes,'solicitudes':solicitudes,'cotizaciones':propuestas,'compras':AdquisicionRepuesto.objects.filter(
-        expediente__empresa=request.empresa_activa).exclude(expediente__registro__equipo__estado='INACTIVO'),
+        expediente__in=ExpedienteMantenimiento.objects.filter(empresa=request.empresa_activa)).exclude(expediente__registro__equipo__estado='INACTIVO'),
         'ventas':decisiones,'guias':envios,'documentos':solicitudes,'cuenta':solicitudes.none()}
     qs=fuentes[seccion].select_related('expediente__registro__equipo','expediente__cliente_contractual').order_by('-pk')
     buscar=request.GET.get('q','').strip()[:120]

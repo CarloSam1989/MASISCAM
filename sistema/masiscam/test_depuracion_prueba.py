@@ -380,6 +380,64 @@ class DepuracionConfirmadaTests(oficina_qa.OficinaFixture, TransactionTestCase):
     def options(self):
         return dict(confirmados=True, carpeta=self.folder, usuario=self.admin.pk)
 
+    def test_retiro_no_interactivo_preserva_historico_y_oculta_tres_roles(self):
+        from .management.depuracion_confirmada import inspect_confirmed, read_signed
+        from .retiro_operativo import ACTION
+        from .oficina_views import datos
+        from . import tecnica_services as tecnica
+        from django.urls import reverse
+        from django.core.exceptions import PermissionDenied
+        before = fingerprint(inspect_confirmed())
+        users = list(get_user_model().objects.order_by('pk').values())
+        media = Path(self.temp.name) / 'media'
+        media.mkdir()
+        with override_settings(MEDIA_ROOT=media), patch('builtins.input', side_effect=AssertionError('Sin interacción')):
+            result = self.run_command('retirar')
+            again = self.run_command('retirar')
+        self.assertEqual(result['visibles'], 0)
+        self.assertEqual(result['auditoria'], again['auditoria'])
+        self.assertEqual(fingerprint(inspect_confirmed()), before)
+        self.assertEqual(list(get_user_model().objects.order_by('pk').values()), users)
+        self.assertEqual(RegistroEquipo._base_manager.filter(pk__in=[22, 23]).count(), 2)
+        self.assertEqual(ExpedienteMantenimiento._base_manager.filter(pk__in=[1, 2]).count(), 2)
+        self.assertTrue(ExpedienteMantenimiento.objects.filter(pk=3).exists())
+        self.assertEqual(Auditoria.objects.filter(accion=ACTION).count(), 1)
+        event = Auditoria.objects.get(pk=result['auditoria'])
+        self.assertIsNone(event.usuario_id)
+        self.assertEqual(event.detalle['identidad'], 'MANTENIMIENTO_TECNICO')
+        self.assertEqual(fingerprint(read_signed(result['ruta_custodia'])['plan']), before)
+        for qs in datos(self.empresa):
+            self.assertFalse(qs.filter(expediente_id__in=[1, 2]).exists())
+        for user in (self.admin, self.taller, self.oficina):
+            self.client.force_login(user)
+            self.assertFalse(tecnica.expedientes_operativos(user, self.empresa).filter(pk__in=[1, 2]).exists())
+            with self.assertRaises(PermissionDenied):
+                tecnica.autorizar_tecnica(user, self.empresa, expediente=self.exp)
+            self.assertIn(self.client.get(reverse('masiscam:flujo_detalle', args=[self.exp.pk])).status_code, (403, 404))
+            response = self.client.get(reverse('masiscam:expedientes'))
+            self.assertEqual(response.status_code, 200)
+            self.assertNotContains(response, self.exp.numero)
+        self.assertFalse(tecnica.referencias_visibles(self.admin, self.empresa).filter(pk=self.ref.pk).exists())
+
+    def test_retiro_falla_custodia_o_auditoria_sin_cambios(self):
+        from .management.depuracion_confirmada import inspect_confirmed
+        from .retiro_operativo import ACTION
+        before = fingerprint(inspect_confirmed())
+        with override_settings(MEDIA_ROOT=Path(self.temp.name) / 'inexistente'):
+            with self.assertRaises(CommandError):
+                self.run_command('retirar')
+        media = Path(self.temp.name) / 'media'
+        media.mkdir()
+        with override_settings(MEDIA_ROOT=media), patch.object(Auditoria.objects, 'create', side_effect=RuntimeError('QA')):
+            with self.assertRaises(RuntimeError):
+                self.run_command('retirar')
+        self.assertEqual(fingerprint(inspect_confirmed()), before)
+        self.assertFalse(Auditoria.objects.filter(accion=ACTION).exists())
+        self.assertEqual(ExpedienteMantenimiento.objects.filter(pk__in=[1, 2]).count(), 2)
+        for opts in ({'ids': [24, 25]}, {'mes': '2026-11'}, {'empresa': self.empresa.pk}):
+            with self.assertRaises(CommandError):
+                self.run_command('retirar', **opts)
+
     def verified(self):
         self.run_command('simular', **self.options())
         dump, restore = self.tools()

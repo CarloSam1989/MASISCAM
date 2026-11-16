@@ -34,6 +34,8 @@ def autorizar_tecnica(usuario, empresa, roles=None, expediente=None):
     if not rol or rol.rol not in (roles or LECTORES):
         raise PermissionDenied('El rol no permite esta operación técnica.')
     if expediente:
+        if not ExpedienteMantenimiento.objects.filter(pk=expediente.pk, empresa=empresa).exists():
+            raise PermissionDenied('Expediente retirado de la operación o fuera del ámbito autorizado.')
         from .access import validar_consulta_equipo
         validar_consulta_equipo(expediente.registro.equipo, rol.rol)
         if expediente.empresa_id != empresa.pk or expediente.registro.equipo.proyecto.empresa_id != empresa.pk:
@@ -230,10 +232,27 @@ def preparar_diagnostico(*, usuario, empresa, expediente_id, clave):
 @transaction.atomic
 def iniciar_inspeccion(*, usuario, empresa, expediente_id, clave):
     key = uuid.UUID(str(clave))
+    exp = expediente_autorizado(usuario, empresa, expediente_id, {'TALLER', 'ADMIN'}, True)
+    diagnostico_key = uuid.uuid5(key, 'diagnostico-inicial')
+    inspeccion_payload = dict(tipo='INSPECCION', motivo='')
+    anterior = _retry(exp, key, 'INSPECCION_CREADA', inspeccion_payload)
+    if anterior:
+        resultado_diagnostico = _retry(exp, diagnostico_key, 'DIAGNOSTICO_CREADA',
+            dict(tipo='DIAGNOSTICO', motivo=''))
+        return (Inspeccion.objects.get(pk=anterior),
+            Diagnostico.objects.get(pk=resultado_diagnostico))
+    etapa = _etapa(exp, 'INSPECCION')
+    vigente_actual = etapa.inspeccion if etapa and etapa.inspeccion_id else None
+    rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa).rol
+    if (rol == 'TALLER' and vigente_actual and vigente_actual.tecnico_id == usuario.pk
+            and not vigente_actual.enviado_en and vigente(vigente_actual)):
+        diagnostico = preparar_diagnostico(usuario=usuario, empresa=empresa,
+            expediente_id=exp.pk, clave=diagnostico_key)
+        return vigente_actual, diagnostico
     inspeccion = _crear_revision(usuario=usuario, empresa=empresa, expediente_id=expediente_id,
         tipo='INSPECCION', clave=key)
     diagnostico = _crear_revision(usuario=usuario, empresa=empresa, expediente_id=expediente_id,
-        tipo='DIAGNOSTICO', clave=uuid.uuid5(key, 'diagnostico-inicial'),
+        tipo='DIAGNOSTICO', clave=diagnostico_key,
         permitir_inspeccion_pendiente=True)
     return inspeccion, diagnostico
 
@@ -506,7 +525,8 @@ def referencias_visibles(usuario,empresa):
     elif rol.rol == 'OFICINA':
         qs = qs | ReferenciaTecnica.objects.filter(empresa=empresa, estado='BORRADOR',
             expediente_trabajo__solicitudrepuestos__snapshot__preliminar=True)
-    return qs.distinct()
+    return qs.filter(Q(expediente_trabajo__isnull=True) |
+        Q(expediente_trabajo__in=ExpedienteMantenimiento.objects.filter(empresa=empresa))).distinct()
 
 
 def _parte_aplicable(parte,exp):

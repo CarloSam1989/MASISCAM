@@ -214,7 +214,7 @@ class Command(BaseCommand):
     help = 'Depuración segura de dos equipos o inventario de noviembre 2026 por empresa, conservando protecciones.'
 
     def add_arguments(self, parser):
-        parser.add_argument('accion', choices=['consultar', 'simular', 'verificar-respaldo', 'eliminar'])
+        parser.add_argument('accion', choices=['consultar', 'simular', 'verificar-respaldo', 'eliminar', 'retirar'])
         parser.add_argument('--empresa', type=int)
         parser.add_argument('--confirmados', action='store_true', help='Perfil fijo RegistroEquipo 22/23 y expediente 1/2.')
         parser.add_argument('--carpeta', help='Custodia local del perfil confirmado; nunca se sobrescriben constancias.')
@@ -266,6 +266,10 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         if connections['default'].vendor != 'postgresql':
             raise CommandError('Este procedimiento requiere PostgreSQL.')
+        if opts['accion'] == 'retirar':
+            from masiscam.retiro_operativo import retirar_confirmados
+            self.stdout.write(canonical(retirar_confirmados(opts)))
+            return
         if opts.get('mes') and not opts['empresa']:
             raise CommandError('--mes exige --empresa explícita; no se permite limpieza global.')
         if opts.get('confirmados'):
