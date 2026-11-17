@@ -12,7 +12,7 @@
 </form>
 <div class="table-responsive"><table class="table ap-table" data-principal>
 <caption class="visually-hidden">La última decisión corresponde a la versión indicada; no sustituye la validación de vigencia ni la aceptación del cliente.</caption>
-<thead><tr><th>Expediente / equipo</th><th>Cliente / responsable</th><th>Mantenimiento</th><th>Diagnóstico / piezas</th><th>Cotización / administración</th><th>Próxima acción</th><th>Última actividad</th><th>Acciones</th></tr></thead>
+<thead><tr><th>Expediente / equipo</th><th>Cliente / responsable</th><th>Mantenimiento</th><th>Diagnóstico / piezas</th><th>Cotización / administración</th><th>Próxima acción</th><th>Acciones</th></tr></thead>
 <tbody>{% for e in expedientes %}<tr data-expediente="{{ e.pk }}">
 <td data-label="Expediente / equipo"><strong>{{ e.numero }}</strong><span>{{ e.registro.equipo.nombre }}</span><small>Serie: {{ e.registro.equipo.numero_serie|default:'Sin registrar' }}</small></td>
 <td data-label="Cliente / responsable"><strong>{{ e.cliente_contractual.nombre_comercial }}</strong><small>Responsable: {{ e.responsable|default:'Sin asignación activa' }}</small></td>
@@ -20,9 +20,8 @@
 <td data-label="Diagnóstico / piezas">{% include 'masiscam/_ap_estado.html' with estado=e.diagnostico_estado %}<small>{{ e.piezas_total }} pieza{{ e.piezas_total|pluralize:'s' }} seleccionada{{ e.piezas_total|pluralize:'s' }}</small><small>{% if e.solicitud_enviada %}Solicitud enviada{% else %}Sin solicitud enviada{% endif %}</small></td>
 <td data-label="Cotización / administración">{% if e.propuesta_actual %}<strong>Cotización v{{ e.propuesta_version }}</strong>{% if e.revision_pendiente %}<span class="ap-badge ap-review">Pendiente de revisión</span>{% endif %}{% else %}<span>Sin cotización</span>{% endif %}{% if e.decision_admin %}<small>Última decisión · cotización v{{ e.version_revisada }}</small>{% include 'masiscam/_ap_estado.html' with estado=e.decision_admin %}{% else %}<small>Sin decisión administrativa</small>{% endif %}</td>
 <td data-label="Próxima acción">{{ e.proxima_accion }}</td>
-<td data-label="Última actividad"><time datetime="{{ e.ultima_actividad|date:'c' }}">{{ e.ultima_actividad|date:'d/m/Y H:i' }}</time></td>
 <td data-label="Acciones"><a class="btn btn-outline-primary btn-sm" href="{% url 'masiscam:tecnica_expediente' e.pk %}" aria-label="Revisar {{ e.numero }}">Revisar</a></td>
-</tr>{% empty %}<tr><td colspan="8">Sin expedientes para estos filtros.</td></tr>{% endfor %}</tbody>
+</tr>{% empty %}<tr><td colspan="7">Sin expedientes para estos filtros.</td></tr>{% endfor %}</tbody>
 </table></div>
 <noscript><p>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }} · 10 registros por página.</p>{% if pagina.has_previous %}<a href="{% querystring page=pagina.previous_page_number %}">Anterior</a>{% endif %} {% if pagina.has_next %}<a href="{% querystring page=pagina.next_page_number %}">Siguiente</a>{% endif %}</noscript>
 </section>
