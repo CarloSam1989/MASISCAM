@@ -1,1 +1,29 @@
-{% extends 'masiscam/base.html' %}{% block content %}<div class="container py-4"><h1>Trabajo técnico</h1><p>Inspección, diagnóstico e informe inicial. La reparación permanece bloqueada hasta autorización comercial en una fase posterior.</p><a class="btn btn-outline-primary mb-3" href="{% url 'masiscam:biblioteca' %}">Biblioteca técnica</a><ul class="list-group" data-listado>{% for e in expedientes %}<li class="list-group-item"><a href="{% url 'masiscam:tecnica_expediente' e.pk %}">{{ e.numero }}</a> · {{ e.registro.equipo }} · {{ e.cliente_contractual }}</li>{% empty %}<li class="list-group-item">Sin expedientes autorizados o asignados.</li>{% endfor %}</ul></div>{% endblock %}
+﻿{% extends 'masiscam/base.html' %}{% load static %}
+{% block title %}{% if rol_tecnico == 'ADMIN' %}Aprobaciones{% else %}Trabajo técnico{% endif %} · MASISCAM{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/aprobaciones.css' %}">{% endblock %}
+{% block breadcrumbs %}{% if rol_tecnico == 'ADMIN' %}<nav class="masiscam-breadcrumbs no-print" aria-label="Migas de pan"><ol class="breadcrumb mb-0 small"><li class="breadcrumb-item"><a href="{% url 'masiscam:dashboard' %}">Inicio</a></li><li class="breadcrumb-item active" aria-current="page">Aprobaciones</li></ol></nav>{% else %}{{ block.super }}{% endif %}{% endblock %}
+{% block content %}
+<section class="container ap-listado">
+<header class="ap-heading"><h1>{% if rol_tecnico == 'ADMIN' %}Aprobaciones{% else %}Trabajo técnico{% endif %}</h1><p>Cotizaciones pendientes primero · {{ pagina.paginator.count }} expedientes</p></header>
+<form method="get" class="mc-toolbar">
+<label>Buscar<input type="search" name="q" value="{{ request.GET.q }}" maxlength="120" placeholder="Expediente, equipo, cliente o responsable"></label>
+<label>Mostrar<select name="estado"><option value="">Todos</option><option value="revision" {% if request.GET.estado == 'revision' %}selected{% endif %}>Cotización pendiente de revisión</option><option value="sin_cotizacion" {% if request.GET.estado == 'sin_cotizacion' %}selected{% endif %}>Sin cotización</option><option value="devuelto" {% if request.GET.estado == 'devuelto' %}selected{% endif %}>Con devolución registrada</option><option value="finalizado" {% if request.GET.estado == 'finalizado' %}selected{% endif %}>Finalizados</option></select></label>
+<button class="btn btn-primary" type="submit">Aplicar</button>
+</form>
+<div class="table-responsive"><table class="table ap-table" data-principal>
+<caption class="visually-hidden">La última decisión corresponde a la versión indicada; no sustituye la validación de vigencia ni la aceptación del cliente.</caption>
+<thead><tr><th>Expediente / equipo</th><th>Cliente / responsable</th><th>Mantenimiento</th><th>Diagnóstico / piezas</th><th>Cotización / administración</th><th>Próxima acción</th><th>Última actividad</th><th>Acciones</th></tr></thead>
+<tbody>{% for e in expedientes %}<tr data-expediente="{{ e.pk }}">
+<td data-label="Expediente / equipo"><strong>{{ e.numero }}</strong><span>{{ e.registro.equipo.nombre }}</span><small>Serie: {{ e.registro.equipo.numero_serie|default:'Sin registrar' }}</small></td>
+<td data-label="Cliente / responsable"><strong>{{ e.cliente_contractual.nombre_comercial }}</strong><small>Responsable: {{ e.responsable|default:'Sin asignación activa' }}</small></td>
+<td data-label="Mantenimiento"><strong>{{ e.mantenimiento }}</strong>{% if e.cerrado %}{% include 'masiscam/_ap_estado.html' with estado='FINALIZADO' %}{% elif e.informe_estado %}{% include 'masiscam/_ap_estado.html' with estado=e.informe_estado %}{% elif e.calibracion_estado %}{% include 'masiscam/_ap_estado.html' with estado=e.calibracion_estado %}{% elif not e.diagnostico_estado and e.inspeccion_estado %}{% include 'masiscam/_ap_estado.html' with estado=e.inspeccion_estado %}{% endif %}</td>
+<td data-label="Diagnóstico / piezas">{% include 'masiscam/_ap_estado.html' with estado=e.diagnostico_estado %}<small>{{ e.piezas_total }} pieza{{ e.piezas_total|pluralize:'s' }} seleccionada{{ e.piezas_total|pluralize:'s' }}</small><small>{% if e.solicitud_enviada %}Solicitud enviada{% else %}Sin solicitud enviada{% endif %}</small></td>
+<td data-label="Cotización / administración">{% if e.propuesta_actual %}<strong>Cotización v{{ e.propuesta_version }}</strong>{% if e.revision_pendiente %}<span class="ap-badge ap-review">Pendiente de revisión</span>{% endif %}{% else %}<span>Sin cotización</span>{% endif %}{% if e.decision_admin %}<small>Última decisión · cotización v{{ e.version_revisada }}</small>{% include 'masiscam/_ap_estado.html' with estado=e.decision_admin %}{% else %}<small>Sin decisión administrativa</small>{% endif %}</td>
+<td data-label="Próxima acción">{{ e.proxima_accion }}</td>
+<td data-label="Última actividad"><time datetime="{{ e.ultima_actividad|date:'c' }}">{{ e.ultima_actividad|date:'d/m/Y H:i' }}</time></td>
+<td data-label="Acciones"><a class="btn btn-outline-primary btn-sm" href="{% url 'masiscam:tecnica_expediente' e.pk %}" aria-label="Revisar {{ e.numero }}">Revisar</a></td>
+</tr>{% empty %}<tr><td colspan="8">Sin expedientes para estos filtros.</td></tr>{% endfor %}</tbody>
+</table></div>
+<noscript><p>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }} · 10 registros por página.</p>{% if pagina.has_previous %}<a href="{% querystring page=pagina.previous_page_number %}">Anterior</a>{% endif %} {% if pagina.has_next %}<a href="{% querystring page=pagina.next_page_number %}">Siguiente</a>{% endif %}</noscript>
+</section>
+{% endblock %}

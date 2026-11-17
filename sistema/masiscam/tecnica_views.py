@@ -5,7 +5,8 @@ from functools import wraps
 from django.contrib import messages
 from django.core.exceptions import ValidationError, ObjectDoesNotExist
 from django.db import IntegrityError
-from django.db.models import Q
+from django.db.models import Q, F, Value, Case, When, IntegerField, OuterRef, Subquery, Exists, Count
+from django.db.models.functions import Greatest, Coalesce, Cast
 from django.http import FileResponse, Http404
 from django.shortcuts import render,redirect,get_object_or_404
 from django.views.decorators.http import require_GET,require_POST,require_http_methods
@@ -50,7 +51,60 @@ def _role(request):
 def tecnica_inicio(request):
     role=_role(request)
     qs=svc.expedientes_operativos(request.user,request.empresa_activa)
-    pagina=paginar_listado(request,qs.distinct(),{'numero':'Expediente','cliente_contractual__nombre_comercial':'Cliente','registro__equipo__nombre':'Equipo','registro__equipo__numero_serie':'Serie'})
+    # Read-only projection: never use the list's badges to authorize an operation.
+    def ultimo(model, field, order='-pk'):
+        return Subquery(model.objects.filter(expediente_id=OuterRef('pk')).order_by(order).values(field)[:1])
+    etapa=EtapaExpediente.objects.filter(expediente_id=OuterRef('pk'),codigo='DIAGNOSTICO')
+    asignacion=AsignacionTecnica.objects.filter(expediente_id=OuterRef('pk'),fin__isnull=True)
+    qs=qs.select_related('registro__equipo','cliente_contractual').annotate(
+        responsable=Subquery(asignacion.order_by('-pk').values('tecnico__username')[:1]),
+        diagnostico_estado=Subquery(etapa.values('diagnostico__estado')[:1]),
+        diagnostico_id_actual=Subquery(etapa.values('diagnostico_id')[:1]),
+        diagnostico_edicion=Subquery(etapa.values('diagnostico__version_edicion')[:1]),
+        diagnostico_enviado=Subquery(etapa.values('diagnostico__enviado_en')[:1]),
+        inspeccion_estado=ultimo(Inspeccion,'estado','-revision'),
+        calibracion_estado=ultimo(Calibracion,'estado','-revision'),
+        informe_estado=ultimo(InformeFinal,'estado','-version'),
+        cerrado=Exists(CierreExpediente.objects.filter(expediente_id=OuterRef('pk'))),
+        propuesta_actual=ultimo(PropuestaComercial,'pk','-version'),
+        propuesta_version=ultimo(PropuestaComercial,'version','-version'),
+        decision_admin=ultimo(RevisionAdministrativa,'decision'),
+        propuesta_revisada=ultimo(RevisionAdministrativa,'propuesta_id'),
+        version_revisada=ultimo(RevisionAdministrativa,'propuesta__version'),
+        diagnostico_revisado=ultimo(RevisionAdministrativa,'diagnostico_id'),
+        edicion_revisada=Cast(ultimo(RevisionAdministrativa,'snapshot__edicion'),IntegerField()),
+        reparacion_iniciada=Exists(ActividadReparacion.objects.filter(expediente_id=OuterRef('pk'))),
+        ultima_actividad=Greatest(F('creado_en'),ultimo(Auditoria,'creado_en'),
+            ultimo(PropuestaComercial,'creado_en'),ultimo(RevisionAdministrativa,'creado_en'),
+            ultimo(Inspeccion,'creado_en'),ultimo(Diagnostico,'creado_en'),
+            ultimo(Calibracion,'creado_en'),ultimo(InformeFinal,'creado_en'),ultimo(CierreExpediente,'creado_en')),
+    ).annotate(
+        piezas_total=Coalesce(Subquery(PiezaRequerida.objects.filter(diagnostico_id=OuterRef('diagnostico_id_actual'))
+            .order_by().values('diagnostico_id').annotate(total=Count('pk')).values('total')[:1]),Value(0)),
+        solicitud_enviada=Exists(SolicitudRepuestos.objects.filter(diagnostico_id=OuterRef('diagnostico_id_actual'))),
+        revision_pendiente=Case(When(propuesta_actual__isnull=True,then=Value(0)),
+            When(propuesta_actual=F('propuesta_revisada'),diagnostico_id_actual=F('diagnostico_revisado'),
+                 diagnostico_edicion=F('edicion_revisada'),then=Value(0)),default=Value(1),output_field=IntegerField()),
+    )
+    estado=request.GET.get('estado','')
+    if estado=='revision':qs=qs.filter(revision_pendiente=1,cerrado=False)
+    elif estado=='sin_cotizacion':qs=qs.filter(propuesta_actual__isnull=True,cerrado=False)
+    elif estado=='devuelto':qs=qs.filter(decision_admin='DEVUELTO',cerrado=False)
+    elif estado=='finalizado':qs=qs.filter(cerrado=True)
+    qs=qs.order_by('cerrado','-revision_pendiente','-ultima_actividad','-pk')
+    pagina=paginar_listado(request,qs.distinct(),{'numero':'Expediente','cliente_contractual__nombre_comercial':'Cliente',
+        'registro__equipo__nombre':'Equipo','registro__equipo__numero_serie':'Serie','responsable':'Responsable',
+        'diagnostico_estado':'Estado de diagnóstico','ultima_actividad':'Última actividad'})
+    for e in pagina:
+        e.mantenimiento='Finalizado' if e.cerrado else ('Informe final' if e.informe_estado else
+            'Calibración' if e.calibracion_estado else 'Reparación' if e.reparacion_iniciada else 'Diagnóstico' if e.diagnostico_estado else
+            'Inspección' if e.inspeccion_estado else 'Recepción')
+        e.proxima_accion=('Consultar informe final' if e.cerrado else
+            'TALLER: enviar diagnóstico para revisión' if e.revision_pendiente and not e.diagnostico_enviado else
+            'Revisar diagnóstico y cotización' if e.revision_pendiente else
+            'Corregir devolución' if e.decision_admin=='DEVUELTO' else 'Revisar requisitos comerciales y operativos' if e.propuesta_actual else
+            'Preparar cotización' if e.solicitud_enviada else 'Completar diagnóstico y selección' if e.diagnostico_estado else
+            'Completar inspección' if e.inspeccion_estado else 'Completar recepción e iniciar inspección')
     return render(request,'masiscam/tecnica_inicio.html',dict(expedientes=pagina,pagina=pagina,rol_tecnico=role))
 
 
