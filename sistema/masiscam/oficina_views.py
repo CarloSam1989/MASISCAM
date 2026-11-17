@@ -52,7 +52,12 @@ def inicio(request, seccion='inicio'):
     qs=fuentes[seccion].select_related('expediente__registro__equipo','expediente__cliente_contractual').order_by('-pk')
     buscar=request.GET.get('q','').strip()[:120]
     pagina=paginar_listado(request,qs,{'expediente__numero':'Expediente','expediente__cliente_contractual__ruc':'RUC','expediente__cliente_contractual__nombre_comercial':'Cliente','expediente__registro__equipo__nombre':'Equipo','expediente__registro__equipo__numero_serie':'Serie'})
+    actuales={p.expediente_id:p for p in propuestas.filter(expediente_id__in=[row.expediente_id for row in pagina])}
+    from .flujo_services import aprobacion_conjunta_vigente
     for row in pagina:
+        propuesta=actuales.get(row.expediente_id)
+        row.estado_revision=('Aprobado por ADMINISTRADOR' if aprobacion_conjunta_vigente(propuesta)
+            else 'Pendiente de aprobación') if propuesta else 'Pendiente de cotización'
         row.enlace=reverse('masiscam:flujo_detalle',args=[row.expediente_id])
         row.resumen_comercial=(f'{row.cantidad} {row.unidad} · {row.proveedor}' if seccion=='compras' else
             f'Guía {row.numero_guia}' if seccion=='guias' else

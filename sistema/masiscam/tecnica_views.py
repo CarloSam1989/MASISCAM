@@ -220,8 +220,9 @@ def _archivo(doc,empresa,inline=False):
         stream=doc.archivo.open('rb')
     except (ValidationError,OSError):
         from django.http import HttpResponse
-        return HttpResponse('Copia persistente no disponible o corrupta; requiere recuperación.',status=503)
-    response=FileResponse(stream,as_attachment=not (inline and doc.tipo_mime in {'application/pdf','image/jpeg','image/png','image/webp'}),filename=doc.nombre_original,content_type=doc.tipo_mime)
+        response=HttpResponse('El archivo no está disponible o no supera la verificación de integridad. Solicita su recuperación al responsable.',status=503,content_type='text/plain; charset=utf-8')
+    else:
+        response=FileResponse(stream,as_attachment=not (inline and doc.tipo_mime in {'application/pdf','image/jpeg','image/png','image/webp'}),filename=doc.nombre_original,content_type=doc.tipo_mime)
     response['Cache-Control']='private, no-store'
     response['X-Content-Type-Options']='nosniff'
     response['X-Frame-Options']='SAMEORIGIN'

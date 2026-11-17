@@ -14,8 +14,7 @@ async function cargarPDF(node) {
     standardFontDataUrl: assets+'standard_fonts/', wasmUrl: assets+'wasm/', iccUrl: assets+'iccs/'}).promise;
 }
 
-const preview = document.querySelector('#pl-preview');
-if (preview) {
+document.querySelectorAll('#pl-preview, [data-pdf-preview]').forEach(preview => {
   (async () => {
     const pdf = await cargarPDF(preview), page = await pdf.getPage(1);
     const canvas = preview.querySelector('canvas'), base = page.getViewport({scale:1});
@@ -28,7 +27,7 @@ if (preview) {
     preview.dataset.ready = 'error';
     preview.querySelector('[role=status]').textContent = 'No se pudo visualizar el PDF. Puedes abrir el visor o descargar el original.';
   });
-}
+});
 
 const root = document.querySelector('#pl-app');
 if (root) {

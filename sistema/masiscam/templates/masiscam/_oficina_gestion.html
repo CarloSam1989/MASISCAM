@@ -3,7 +3,7 @@
   <p>Preparar cotización → ADMINISTRADOR revisa → Cliente acepta → Gestionar y enviar repuestos</p>
   {% if diagnostico_pendiente %}<p class="alert alert-warning" role="status" data-diagnostico-pendiente>TALLER debe completar y enviar el diagnóstico antes de que ADMINISTRADOR apruebe el expediente. Puedes preparar, guardar y enviar la cotización a revisión mientras tanto.</p>{% endif %}
   {% if propuesta and not revision_vigente %}<p role="status" data-revision-pendiente>Cotización enviada a revisión de ADMINISTRADOR. La aceptación del cliente y el envío de repuestos requieren la aprobación conjunta vigente.</p>{% endif %}
-  <form id="oficina-cotizacion" method="post" enctype="multipart/form-data" data-confirm="¿Guardar la cotización PDF y enviar el expediente a ADMINISTRADOR? No autoriza la reparación ni sustituye la aceptación del cliente.">
+  <form id="oficina-cotizacion" method="post" action="{% url 'masiscam:flujo_detalle' expediente.pk %}" enctype="multipart/form-data" data-confirm="¿Guardar la cotización PDF y enviar el expediente a ADMINISTRADOR? No autoriza la reparación ni sustituye la aceptación del cliente.">
     {% csrf_token %}<input type="hidden" name="op" value="cotizar">{{ forms.cotizar.clave }}
     {{ forms.cotizar.non_field_errors }}
     <div class="table-responsive"><table class="table align-middle"><thead><tr><th scope="col">Número / posición del plano</th><th scope="col">Código</th><th scope="col">Descripción</th><th scope="col">Daño</th><th scope="col">Cantidad</th><th scope="col">Unidad registrada</th><th scope="col">Precio unitario (USD)</th><th scope="col">Subtotal (USD)</th></tr></thead><tbody>
@@ -16,12 +16,7 @@
       <div class="col-12"><button class="btn btn-primary"{% if not cotizacion_habilitada %} disabled{% endif %}>Guardar cotización y enviar a ADMINISTRADOR</button>{% if cotizacion_bloqueo %}<p>{{ cotizacion_bloqueo }}</p>{% endif %}</div>
     </div>
   </form>
-  {% if documentos_comerciales %}<details class="mf-details" id="oficina-documentos" open><summary>Cotizaciones PDF y respaldos comerciales</summary>
-    {% for version in documentos_comerciales %}<h3>{{ version.referencia }} · Versión {{ version.version }}</h3>
-      {% if version.generar %}<form method="post">{% csrf_token %}<input type="hidden" name="op" value="pdf_cotizacion"><input type="hidden" name="propuesta_id" value="{{ version.id }}"><input type="hidden" name="clave" value="{{ clave }}"><button class="btn btn-outline-primary">Generar PDF de esta versión</button></form>{% endif %}
-      {% for ev in version.documentos %}<p>{{ ev.leyenda }} · {{ ev.documento.nombre_original }} <a target="_blank" rel="noopener" href="{% url 'masiscam:operacion_documento' expediente.pk ev.documento_id %}?ver=1">Visualizar PDF</a> · <a href="{% url 'masiscam:operacion_documento' expediente.pk ev.documento_id %}">Descargar PDF</a></p>{% empty %}<p>Esta versión histórica no contiene PDF de respaldo.</p>{% endfor %}
-    {% endfor %}
-  </details>{% endif %}
+  {% include 'masiscam/_cotizacion_documentos.html' %}
   {% if forms.respaldo %}<details class="mf-details mt-3"><summary>Adjuntar presupuesto pendiente</summary><form method="post" enctype="multipart/form-data" class="row g-3">{% csrf_token %}<input type="hidden" name="op" value="respaldo">{% include 'masiscam/_tecnica_campos.html' with form=forms.respaldo %}<div class="col-12"><button class="btn btn-outline-primary">Guardar respaldo</button></div></form></details>{% endif %}
   {% if forms.aceptacion %}<details class="mf-details mt-3" id="oficina-aceptacion"><summary>Registrar aceptación verificable del cliente</summary><form method="post" enctype="multipart/form-data" class="row g-3">{% csrf_token %}<input type="hidden" name="op" value="aceptacion">{% include 'masiscam/_tecnica_campos.html' with form=forms.aceptacion %}<div class="col-12"><button class="btn btn-primary">Registrar respuesta del cliente</button></div></form></details>{% endif %}
   {% if forms.adquirir %}<details class="mf-details mt-3" id="oficina-disponibles"><summary>Registrar repuestos disponibles</summary><form method="post" enctype="multipart/form-data" class="row g-3">{% csrf_token %}<input type="hidden" name="op" value="adquirir">{% include 'masiscam/_tecnica_campos.html' with form=forms.adquirir %}<div class="col-12"><button class="btn btn-outline-primary">Guardar disponibilidad</button></div></form></details>{% endif %}

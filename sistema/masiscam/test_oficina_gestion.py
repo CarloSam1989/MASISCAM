@@ -1,5 +1,6 @@
 import os
 import uuid
+from pathlib import Path
 from decimal import Decimal
 from unittest import skipUnless
 
@@ -55,6 +56,69 @@ class OficinaFixture(TresRolesFixture):
 
 @override_settings(**FLAGS)
 class OficinaGestionTests(OficinaFixture,TestCase):
+    @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
+    def test_pdf_privado_ambos_roles_sin_fase4_y_archivo_ausente(self):
+        from django.test import Client
+        from accounts.models import Empresa
+        from .test_tecnica import usuario
+        self.preparar()
+        propuesta=self.cotizar(archivo=None)
+        doc=propuesta.evidencias.get().documento
+        with doc.archivo.open('rb') as archivo: contenido=archivo.read()
+        urls=[reverse('masiscam:'+name,args=[self.exp.pk,doc.pk])
+            for name in ('flujo_documento','operacion_documento')]
+        for user in (self.oficina,self.admin):
+            self.client.force_login(user)
+            for url in urls:
+                for suffix,disposition in (('?ver=1','inline'),('','attachment')):
+                    response=self.client.get(url+suffix)
+                    self.assertEqual(response.status_code,200)
+                    self.assertEqual(response['Content-Type'],'application/pdf')
+                    self.assertTrue(response['Content-Disposition'].startswith(disposition))
+                    self.assertEqual(response['Cache-Control'],'private, no-store')
+                    self.assertEqual(response['X-Frame-Options'],'SAMEORIGIN')
+                    self.assertEqual(response['X-Content-Type-Options'],'nosniff')
+                    self.assertEqual(b''.join(response.streaming_content),contenido)
+        self.assertEqual(Client().get(urls[0]).status_code,302)
+        ajena=usuario(Empresa.objects.create(nombre='Ajena PDF QA'),'ajena-documentos-pdf','OFICINA')
+        for user in (self.taller,ajena):
+            self.client.force_login(user)
+            for url in urls:self.assertIn(self.client.get(url).status_code,(403,404))
+        self.client.force_login(self.oficina)
+        doc.archivo.storage.delete(doc.archivo.name)
+        try:
+            for url in urls:
+                response=self.client.get(url+'?ver=1')
+                self.assertEqual(response.status_code,503)
+                self.assertContains(response,'El archivo no está disponible',status_code=503)
+                self.assertEqual(response['Cache-Control'],'private, no-store')
+        finally:
+            with doc.archivo.storage.open(doc.archivo.name,'wb') as archivo:archivo.write(contenido)
+        self.assertEqual(propuesta.evidencias.count(),1)
+
+    @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
+    def test_error_no_redirige_e_historial_conserva_versiones(self):
+        self.preparar()
+        response=self.client.post(self.url,dict(op='cotizar',clave=uuid.uuid4(),referencia='QA',
+            **{f'precio_{self.pieza.pk}':'invalido'}),follow=True)
+        self.assertEqual(response.status_code,400)
+        self.assertEqual(response.redirect_chain,[])
+        self.assertEqual(PropuestaComercial.objects.count(),0)
+        primera=self.cotizar(archivo=None)
+        doc=primera.evidencias.get().documento
+        segunda=self.cotizar(archivo=None,cotizacion=self.detalle('15.00'))
+        for user in (self.oficina,self.admin):
+            self.client.force_login(user)
+            page=self.client.get(self.url)
+            self.assertContains(page,'data-quote-version="2" data-current="true"')
+            self.assertContains(page,'data-quote-version="1" data-current="false"')
+            self.assertContains(page,'Historial de cotizaciones y documentos anteriores')
+            self.assertContains(page,'Ver PDF')
+            self.assertContains(page,'Descargar PDF')
+        self.assertEqual(PropuestaComercial.objects.count(),2)
+        self.assertEqual(primera.evidencias.get().documento_id,doc.pk)
+        self.assertNotEqual(segunda.evidencias.get().documento_id,doc.pk)
+
     def test_precios_factura_versiones_y_reintento(self):
         self.preparar();key=uuid.uuid4()
         propuesta=self.cotizar(clave=key)
@@ -83,7 +147,7 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         for user in (self.taller,self.admin,self.otro):
             with self.assertRaises(PermissionDenied):self.cotizar(usuario=user)
         response=self.client.get(self.url)
-        self.assertContains(response,'Cotizado');self.assertNotContains(response,'Recepción y documentos')
+        self.assertContains(response,'Pendiente de aprobación');self.assertNotContains(response,'Recepción y documentos')
         self.assertNotContains(response,'<footer class="mf-links">')
 
     def test_autorizacion_disponibilidad_envio_y_recepcion(self):
@@ -213,6 +277,69 @@ class OficinaGestionTests(OficinaFixture,TestCase):
 @skipUnless(os.environ.get('MASISCAM_BROWSER_TESTS')=='1','Navegador aislado explícito')
 @override_settings(**FLAGS)
 class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
+    @override_settings(MASISCAM_OPERACION_LOCAL=False,MASISCAM_CALIBRACION_LOCAL=False,MASISCAM_CIERRE_LOCAL=False)
+    def test_envio_pdf_privado_y_tarjetas_escritorio_movil(self):
+        from playwright.sync_api import sync_playwright, expect
+        import hashlib
+        self.preparar()
+        cookies={}
+        for name,user in [('OFICINA',self.oficina),('ADMIN',self.admin)]:
+            client=Client();client.force_login(user)
+            cookies[name]=client.cookies[settings.SESSION_COOKIE_NAME].value
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                context=browser.new_context(viewport=dict(width=1440,height=1000))
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookies['OFICINA'],url=self.live_server_url)])
+                page=context.new_page();page.goto(self.live_server_url+self.url)
+                quote=page.locator('#oficina-cotizacion')
+                quote.locator('[name=referencia]').fill('COT-NAVEGADOR-QA')
+                quote.locator('[data-precio]').fill('12.35')
+                quote.get_by_role('button',name='Guardar cotización y enviar a ADMINISTRADOR',exact=True).click()
+                page.get_by_role('button',name='Sí, continuar',exact=True).click()
+                expect(page).to_have_url(self.live_server_url+reverse('masiscam:oficina_inicio'))
+                expect(page.locator('.swal2-popup')).to_contain_text('Cotización enviada correctamente. Pendiente de aprobación del ADMINISTRADOR')
+                expect(page.locator('[data-estado-revision]')).to_have_text('Pendiente de aprobación')
+                context.close()
+            finally:
+                browser.close()
+        propuesta=PropuestaComercial.objects.get(expediente=self.exp)
+        doc=propuesta.evidencias.get().documento
+        doc_path=reverse('masiscam:flujo_documento',args=[self.exp.pk,doc.pk])
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                for role in ('OFICINA','ADMIN'):
+                    for width in (1440,390):
+                        context=browser.new_context(viewport=dict(width=width,height=1000))
+                        context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookies[role],url=self.live_server_url)])
+                        page=context.new_page();page.goto(self.live_server_url+self.url)
+                        expect(page.locator('[data-pdf-preview]')).to_have_attribute('data-ready','true',timeout=20000)
+                        expect(page.locator('[data-current=true]')).to_be_visible()
+                        expect(page.get_by_role('link',name='Ver PDF',exact=True)).to_be_visible()
+                        self.assertTrue(page.evaluate('document.documentElement.scrollWidth <= innerWidth'))
+                        response=context.request.get(self.live_server_url+doc_path+'?ver=1')
+                        self.assertEqual(response.status,200)
+                        self.assertTrue(response.headers['content-disposition'].startswith('inline'))
+                        self.assertEqual(response.headers['content-type'],'application/pdf')
+                        self.assertEqual(hashlib.sha256(response.body()).hexdigest(),doc.hash_sha256)
+                        with page.expect_download() as saved:
+                            page.get_by_role('link',name='Descargar PDF',exact=True).click()
+                        self.assertEqual(hashlib.sha256(Path(saved.value.path()).read_bytes()).hexdigest(),doc.hash_sha256)
+                        if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
+                            output=Path(os.environ['MASISCAM_UI_EVIDENCE_DIR']);output.mkdir(parents=True,exist_ok=True)
+                            page.screenshot(path=str(output/f'cotizacion-{role.lower()}-{width}.png'),full_page=True)
+                        if role=='ADMIN' and width==390:
+                            page.route(self.live_server_url+doc_path+'?ver=1',lambda route:route.fulfill(status=503,body='QA archivo ausente'))
+                            page.reload()
+                            expect(page.locator('[data-pdf-preview]')).to_have_attribute('data-ready','error')
+                            expect(page.get_by_role('link',name='Ver PDF',exact=True)).to_be_visible()
+                        context.close()
+            finally:
+                browser.close()
+        self.assertEqual(PropuestaComercial.objects.filter(expediente=self.exp).count(),1)
+        self.assertEqual(propuesta.evidencias.count(),1)
+
     def test_devolucion_con_motivo_sweetalert_y_destinatario(self):
         from playwright.sync_api import sync_playwright,expect
         self.preparar(aprobar_tecnico=False);self.cotizar(archivo=None)
@@ -282,11 +409,13 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 quote.locator('[name=archivo]').set_input_files(dict(name=pdf.name,mimeType='application/pdf',buffer=pdf.read()))
                 quote.get_by_role('button',name='Guardar cotización y enviar a ADMINISTRADOR',exact=True).click()
                 page.get_by_role('button',name='Sí, continuar',exact=True).click()
-                expect(page.locator('#oficina-estado')).to_have_text('Cotizado')
+                expect(page).to_have_url(self.live_server_url+reverse('masiscam:oficina_inicio'))
+                page.goto(self.live_server_url+self.url)
+                expect(page.locator('#oficina-estado')).to_have_text('Pendiente de aprobación')
                 expect(page.locator('[name=factura_numero]')).to_have_value('FACTURA-UI-QA')
                 documents=page.locator('#oficina-documentos')
                 expect(documents.get_by_text('Cotización MASISCAM v1',exact=False)).to_be_visible()
-                for name,disposition in (('Visualizar PDF','inline'),('Descargar PDF','attachment')):
+                for name,disposition in (('Ver PDF','inline'),('Descargar PDF','attachment')):
                     link=documents.get_by_role('link',name=name,exact=True).last
                     response=context.request.get(self.live_server_url+link.get_attribute('href'))
                     self.assertEqual(response.status,200)

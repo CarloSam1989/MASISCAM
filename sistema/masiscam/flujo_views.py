@@ -165,14 +165,22 @@ def contexto(request,exp,errores=None):
                 oficina_bloqueo=('Registre repuestos disponibles para preparar un envío; las salidas existentes se conservan.'
                     if sol.snapshot['piezas'] else 'Solicitud sin repuestos: no requiere adquisiciones ni envíos; se mantienen los requisitos técnicos antes de reparar.')
     documentos_comerciales=[]
-    if context['rol']=='OFICINA':
+    if context['rol'] in {'OFICINA', 'ADMIN'}:
         for version in o.PropuestaComercial.objects.filter(expediente=exp).prefetch_related('evidencias__documento').order_by('-version'):
             documentos_comerciales.append(dict(id=version.pk,version=version.version,referencia=version.snapshot.get('presupuesto_referencia',''),
+                actual=bool(prop and version.pk==prop.pk), fecha=version.creado_en,
+                total=version.snapshot.get('cotizacion',{}).get('total',''),
+                pdf=next((ev for ev in version.evidencias.all() if ev.clave==uuid.uuid5(version.clave,'cotizacion-pdf-v1')),
+                    next((ev for ev in version.evidencias.all() if ev.documento.tipo_mime=='application/pdf'),None)),
                 generar=version.snapshot.get('cotizacion',{}).get('moneda')=='USD' and not version.snapshot.get('propuesta_origen') and not any(ev.clave==uuid.uuid5(version.clave,'cotizacion-pdf-v1') for ev in version.evidencias.all()),
                 documentos=[ev for ev in version.evidencias.all() if ev.documento.tipo_mime=='application/pdf']))
     from .models import RevisionAdministrativa
     revision_administrativa=RevisionAdministrativa.objects.filter(expediente=exp).select_related('autor','propuesta','diagnostico').order_by('-pk').first()
     revision_vigente=bool(prop and s.aprobacion_conjunta_vigente(prop) and revision_administrativa and revision_administrativa.decision=='APROBADO')
+    if context['rol']=='OFICINA' and prop and prop.snapshot.get('revision_conjunta_requerida') and not revision_vigente:
+        oficina_estado='Pendiente de aprobación'
+        context['pasos'][2]=dict(nombre='Revisión de ADMINISTRADOR',estado='Pendiente')
+        context['paso']=3
     if context['rol']=='ADMIN':
         pdfs=list(prop.evidencias.filter(documento__tipo_mime='application/pdf').select_related('documento')) if prop else []
         context.update(cotizacion_pdf=next((ev for ev in pdfs if ev.clave==uuid.uuid5(prop.clave,'cotizacion-pdf-v1')),pdfs[0] if pdfs else None),
@@ -309,7 +317,10 @@ def detalle(request,pk):
             else: raise ValidationError('Acción no disponible en este paso.')
         except (ValidationError,IntegrityError,OSError,ValueError) as error: _error(form,error)
         else:
-            messages.success(request,'Cotización PDF guardada y enviada a revisión de ADMINISTRADOR.' if op=='cotizar' else 'Avance registrado. El siguiente paso está actualizado.')
+            if op=='cotizar':
+                messages.success(request,'Cotización enviada correctamente. Pendiente de aprobación del ADMINISTRADOR')
+                return redirect('masiscam:oficina_inicio')
+            messages.success(request,'Avance registrado. El siguiente paso está actualizado.')
             if diagnostico_para_plano:
                 url_plano=plano_aplicable_url(request,exp,diagnostico_para_plano)
                 if url_plano:
@@ -330,5 +341,7 @@ def documento(request,pk,documento_pk):
     ids.update(EnvioRepuestos.objects.filter(expediente=exp).values_list('documento_id',flat=True))
     if role in {'OFICINA'}:
         ids.update(s.AdquisicionRepuesto.objects.filter(expediente=exp,documento__isnull=False).values_list('documento_id',flat=True))
+    if role in {'OFICINA', 'ADMIN'}:
+        ids.update(o.PropuestaComercial.objects.filter(expediente=exp).values_list('evidencias__documento_id',flat=True))
     doc=get_object_or_404(Documento,pk=documento_pk,pk__in=ids)
     return _archivo(doc,request.empresa_activa,inline=request.GET.get('ver')=='1')

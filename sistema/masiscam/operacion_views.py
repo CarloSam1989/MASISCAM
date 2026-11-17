@@ -13,7 +13,7 @@ from .models import (ExpedienteMantenimiento,PropuestaComercial,DecisionComercia
     ActividadReparacion,EmisionOperativa,PiezaRequerida,Auditoria,Documento)
 from . import operacion_services as svc
 from .operacion_forms import OperacionForm,AREAS,LABELS
-from .tecnica_views import _error
+from .tecnica_views import _error, _archivo
 
 
 def local(view):
@@ -127,9 +127,15 @@ def operar(request,pk,op):
 
 
 @require_GET
-@local
 @masiscam_access_required
 def documento(request,pk,documento_pk):
+    # Compatibilidad de enlaces privados de cotización anteriores a la fase operativa.
+    exp=svc.t.expediente_autorizado(request.user,request.empresa_activa,pk)
+    rol=svc.t.autorizar_tecnica(request.user,request.empresa_activa,expediente=exp).rol
+    comercial=Documento.objects.filter(pk=documento_pk,proyecto__empresa=request.empresa_activa,
+        evidencias_operativas__propuesta__expediente=exp,tipo_mime='application/pdf')
+    if rol in {'OFICINA','ADMIN'} and comercial.exists():
+        return _archivo(comercial.first(),request.empresa_activa,inline=request.GET.get('ver')=='1')
     exp=svc.expediente(request.user,request.empresa_activa,pk)
     rol=svc.autorizar(request.user,request.empresa_activa,expediente=exp).rol
     visibles=svc.documentos_visibles(exp,rol)
