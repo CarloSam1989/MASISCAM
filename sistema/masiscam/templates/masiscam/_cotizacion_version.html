@@ -1,0 +1,13 @@
+{% load static l10n %}
+<article class="mf-document-card" data-quote-version="{{ version.version|unlocalize }}" data-current="{{ version.actual|yesno:'true,false' }}">
+  <header class="mf-document-heading"><div><h3>{{ version.referencia|default:'Cotización' }}</h3><p>Versión {{ version.version }} · {{ version.fecha|date:'d/m/Y H:i' }}</p></div><div class="mf-document-badges"><span class="mf-badge">{% if version.actual %}Versión vigente{% else %}Histórica{% endif %}</span>{% if version.actual %}<span class="mf-badge">{% if revision_vigente %}Aprobada por ADMINISTRADOR{% else %}Pendiente de aprobación{% endif %}</span>{% endif %}</div></header>
+  {% if version.total %}<p class="mf-document-total">Total: USD {{ version.total }}</p>{% endif %}
+  <div class="mf-document-list">{% for ev in version.documentos %}<div class="mf-document-row"><div><strong>{{ ev.leyenda|default:'Documento comercial' }}</strong><small>{{ ev.documento.nombre_original }}</small></div><div class="mf-document-actions">
+    <a class="btn btn-outline-primary btn-sm" target="_blank" rel="noopener" href="{% url 'masiscam:flujo_documento' expediente.pk ev.documento_id %}?ver=1">Ver PDF</a>
+    <a class="btn btn-outline-secondary btn-sm" href="{% url 'masiscam:flujo_documento' expediente.pk ev.documento_id %}">Descargar PDF</a>
+  </div></div>{% empty %}<p>Esta versión no contiene PDF de respaldo.</p>{% endfor %}</div>
+  {% if version.generar and rol == 'OFICINA' %}<form method="post" action="{% url 'masiscam:flujo_detalle' expediente.pk %}">{% csrf_token %}<input type="hidden" name="op" value="pdf_cotizacion"><input type="hidden" name="propuesta_id" value="{{ version.id|unlocalize }}"><input type="hidden" name="clave" value="{{ clave }}"><button class="btn btn-outline-primary btn-sm">Generar PDF de esta versión</button></form>{% endif %}
+  {% if version.actual and version.pdf %}<details class="mf-details" open><summary>Vista previa de la cotización</summary><p>Primera página. «Ver PDF» abre el documento completo en una ruta privada autorizada.</p>
+    <div id="pl-preview" class="mf-pdf-preview" data-pdf-preview data-documento="{% url 'masiscam:flujo_documento' expediente.pk version.pdf.documento_id %}?ver=1" data-pdf-module="{% static 'vendor/pdfjs/pdf.js' %}" data-pdf-worker="{% static 'vendor/pdfjs/pdf.worker.js' %}" data-pdf-renderer="{% static 'vendor/pdfjs/pdf.renderer.js' %}"><p role="status">Cargando cotización PDF…</p><canvas aria-label="Primera página de la cotización"></canvas></div>
+  </details>{% endif %}
+</article>

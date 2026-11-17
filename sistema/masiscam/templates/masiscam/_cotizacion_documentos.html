@@ -1,0 +1,6 @@
+<section id="oficina-documentos" class="mf-commercial-documents" aria-label="Cotizaciones PDF y respaldos comerciales">
+  {% for version in documentos_comerciales %}{% if version.actual %}{% include 'masiscam/_cotizacion_version.html' %}{% endif %}{% empty %}<p>Falta la cotización PDF de OFICINA.</p>{% endfor %}
+  {% if documentos_comerciales|length > 1 %}<details class="mf-details mf-document-history"><summary>Historial de cotizaciones y documentos anteriores</summary><div class="mf-document-list">
+    {% for version in documentos_comerciales %}{% if not version.actual %}{% include 'masiscam/_cotizacion_version.html' %}{% endif %}{% endfor %}
+  </div></details>{% endif %}
+</section>
