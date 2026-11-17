@@ -98,6 +98,8 @@ class PlanoActivoTests(TresRolesFixture, TransactionTestCase):
         # Ser visible para otro trabajo no autoriza su uso en este equipo.
         url = reverse('masiscam:flujo_detalle', args=[destino.pk])
         self.client.force_login(self.admin)
+        self.assertContains(self.client.get(reverse('masiscam:tecnica_inicio')), destino.numero)
+        self.assertRedirects(self.client.get(reverse('masiscam:tecnica_expediente', args=[destino.pk])), url)
         self.assertContains(self.client.get(url), 'Aplicar plano al equipo actual')
         self.assertEqual(self.client.post(url, dict(op='aplicar_plano', clave=uuid.uuid4(),
             referencia_id=segunda.pk, fundamento='')).status_code, 400)
@@ -118,6 +120,18 @@ class PlanoActivoTests(TresRolesFixture, TransactionTestCase):
             self.assertEqual(self.client.post(url, payload).status_code, 403)
         self.client.force_login(self.taller)
         self.assertEqual(flujo_views.contexto(request, destino)['plano_activo'].pk, segunda.pk)
+        _, diagnostico = tecnica.s.iniciar_inspeccion(usuario=self.taller, empresa=self.empresa,
+            expediente_id=destino.pk, clave=uuid.uuid4())
+        self.assertEqual(self.client.get(reverse('masiscam:plano', args=[segunda.pk]),
+            {'diagnostico': diagnostico.pk, 'flujo': '1'}).status_code, 200)
+        datos = self.client.get(reverse('masiscam:plano_datos', args=[segunda.pk]),
+            {'diagnostico': diagnostico.pk})
+        self.assertTrue(datos.json()['seleccionable'])
+        seleccion = self.client.post(reverse('masiscam:plano_pieza', args=[diagnostico.pk]), dict(
+            clave=uuid.uuid4(), version=diagnostico.version_edicion, parte_id=segunda.partes.first().pk,
+            cantidad='1', unidad='unidad', condicion='Desgaste observado QA', accion='EVALUAR', observaciones='QA'))
+        self.assertEqual(seleccion.status_code, 200, seleccion.content)
+        self.assertEqual(diagnostico.piezas.count(), 1)
         borrador = plano_services.cargar_plano_trabajo(usuario=self.taller, empresa=self.empresa,
             expediente_id=destino.pk, clave=uuid.uuid4(), archivo=tecnica.pdf_plano())
         ctx = flujo_views.contexto(request, destino)

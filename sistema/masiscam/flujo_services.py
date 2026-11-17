@@ -92,8 +92,11 @@ def expediente(usuario, empresa, pk, roles=None, lock=False):
     return t.expediente_autorizado(usuario, empresa, pk, roles or LECTORES, lock)
 
 
-def solicitud(usuario, empresa, pk, roles=None, lock=False):
-    o.autorizar(usuario, empresa, roles or LECTORES)
+def solicitud(usuario, empresa, pk, roles=None, lock=False, *, para_cotizacion=False):
+    if para_cotizacion:
+        t.autorizar_tecnica(usuario, empresa, {'OFICINA'})
+    else:
+        o.autorizar(usuario, empresa, roles or LECTORES)
     obj = SolicitudRepuestos.objects.filter(pk=pk).first()
     if not obj:
         raise PermissionDenied('Solicitud no disponible.')
@@ -251,7 +254,7 @@ def generar_cotizacion_pdf(*,usuario,empresa,propuesta_id):
 
 @transaction.atomic
 def cotizar(*, usuario, empresa, solicitud_id, clave, referencia, observaciones='', archivo=None, cotizacion=None):
-    obj, exp = solicitud(usuario,empresa,solicitud_id,{'OFICINA'},True)
+    obj, exp = solicitud(usuario,empresa,solicitud_id,{'OFICINA'},True,para_cotizacion=True)
     vigente(obj)
     payload=None
     if cotizacion is not None:
@@ -501,7 +504,7 @@ def resumen(exp, usuario):
         else: mensaje='Diagnóstico sin solicitud de repuestos. Conserva su flujo técnico existente.'
     elif not settings.MASISCAM_OPERACION_LOCAL:
         paso=3; pasos[1]['estado']='Listo'; bloqueo=True
-        mensaje='Solicitud registrada. La gestión de oficina está pendiente de habilitación; comunícalo al responsable del sistema. Las aprobaciones siguen siendo obligatorias.'
+        mensaje='OFICINA puede preparar la cotización y enviarla a ADMINISTRADOR. Las operaciones posteriores permanecen deshabilitadas y conservan sus aprobaciones obligatorias.'
     else:
         paso=3; pasos[1]['estado']='Listo'
         try: vigente(sol)

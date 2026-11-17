@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import uuid
 from io import StringIO
 from unittest.mock import patch
 
@@ -446,6 +447,11 @@ class DepuracionConfirmadaTests(oficina_qa.OficinaFixture, TransactionTestCase):
             self.assertEqual(response.status_code, 200)
             self.assertNotContains(response, self.exp.numero)
         self.assertFalse(tecnica.referencias_visibles(self.admin, self.empresa).filter(pk=self.ref.pk).exists())
+        from . import flujo_services
+        with override_settings(DEBUG=False, MASISCAM_OPERACION_LOCAL=False):
+            with self.assertRaisesMessage(PermissionDenied, 'Expediente no disponible'):
+                flujo_services.cotizar(usuario=self.oficina, empresa=self.empresa,
+                    solicitud_id=self.sol.pk, clave=uuid.uuid4(), referencia='Intento retirado QA')
 
     def test_retiro_falla_custodia_o_auditoria_sin_cambios(self):
         from .management.depuracion_confirmada import inspect_confirmed

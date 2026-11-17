@@ -14,6 +14,51 @@ from .models import RevisionAdministrativa, PropuestaComercial, DecisionTecnica,
 class RevisionAdministrativaTests(qa.OficinaFixture,TestCase):
     def preparar(self):super().preparar(aprobar_tecnico=False)
 
+    test_cotizacion_sin_fase4_respeta_empresa = override_settings(
+        DEBUG=False, MASISCAM_OPERACION_LOCAL=False)(qa.OficinaGestionTests.test_multiempresa)
+
+    @override_settings(DEBUG=False, MASISCAM_OPERACION_LOCAL=False,
+        MASISCAM_CALIBRACION_LOCAL=False, MASISCAM_CIERRE_LOCAL=False)
+    def test_oficina_post_cotizacion_redireccion_y_revision_admin(self):
+        self.preparar_preliminar()
+        self._verificar_post_cotizacion_oficina()
+
+    @override_settings(DEBUG=False, MASISCAM_OPERACION_LOCAL=False,
+        MASISCAM_CALIBRACION_LOCAL=False, MASISCAM_CIERRE_LOCAL=False)
+    def test_oficina_post_cotizacion_con_diagnostico_aprobado(self):
+        qa.OficinaFixture.preparar(self)
+        self._verificar_post_cotizacion_oficina()
+
+    def _verificar_post_cotizacion_oficina(self):
+        payload = dict(op='cotizar', clave=uuid.uuid4(), referencia='COT-POST-QA',
+            **{f'precio_{self.pieza.pk}': '12.35'})
+        response = self.client.post(self.url, payload, follow=True)
+        self.assertEqual(response.redirect_chain, [(self.url, 302)])
+        self.assertEqual(response.status_code, 200)
+        prop = PropuestaComercial.objects.get(expediente=self.exp)
+        self.assertEqual(prop.autor_id, self.oficina.pk)
+        self.assertTrue(prop.snapshot['revision_conjunta_requerida'])
+        self.assertEqual(prop.evidencias.count(), 1)
+        self.assertFalse(RevisionAdministrativa.objects.filter(expediente=self.exp).exists())
+        self.client.force_login(self.admin)
+        self.assertContains(self.client.get(self.url), 'Cotización de OFICINA')
+        # El envío no concede acceso a TALLER ni atribuciones de aprobación.
+        self.client.force_login(self.oficina)
+        self.assertEqual(self.client.get(reverse('masiscam:taller_inicio')).status_code, 403)
+        self.assertEqual(self.client.post(self.url, dict(op='aprobar_expediente', clave=uuid.uuid4(),
+            diagnostico_id=self.diag.pk, propuesta_id=prop.pk)).status_code, 403)
+        # Cotizar no habilita las operaciones de la fase desactivada.
+        if not o.settings.MASISCAM_OPERACION_LOCAL:
+            with self.assertRaisesMessage(PermissionDenied, 'Fase 4 deshabilitada'):
+                o.autorizar(self.oficina, self.empresa, {'OFICINA'})
+            with self.assertRaisesMessage(PermissionDenied, 'Fase 4 deshabilitada'):
+                s.adquirir(usuario=self.oficina, empresa=self.empresa, solicitud_id=self.sol.pk,
+                    pieza_id=self.pieza.pk, cantidad='1', proveedor='QA', referencia='QA',
+                    fecha=timezone.now(), clave=uuid.uuid4())
+            with self.assertRaisesMessage(PermissionDenied, 'Fase 4 deshabilitada'):
+                o.iniciar_actividad(usuario=self.taller, empresa=self.empresa, expediente_id=self.exp.pk,
+                    clave=uuid.uuid4(), datos={})
+
     def preparar_preliminar(self):
         self.preparar_solicitud(enviar=False)
         self.pieza=self.diag.piezas.get()

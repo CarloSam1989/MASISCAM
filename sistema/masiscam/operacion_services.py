@@ -166,7 +166,8 @@ def estado(exp):
 
 @transaction.atomic
 def proponer(*, usuario, empresa, expediente_id, diagnostico_id, clave, datos, archivo=None):
-    exp = expediente(usuario, empresa, expediente_id, {'OFICINA'}, True)
+    # Preparar la propuesta comercial no habilita la fase de reparación.
+    exp = t.expediente_autorizado(usuario, empresa, expediente_id, {'OFICINA'}, True)
     _datos(datos, ('alcance','observaciones','presupuesto_referencia','cotizacion'))
     payload = dict(diagnostico=diagnostico_id, datos=datos, hash=_hash(archivo) if archivo else None)
     old = t._retry(exp, clave, 'COMERCIAL_PROPUESTA', payload)
