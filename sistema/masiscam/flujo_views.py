@@ -84,8 +84,8 @@ def contexto(request,exp,errores=None):
         forms['aplicar_plano']=AplicarPlanoExistenteForm(empresa=request.empresa_activa, usuario=request.user)
     if not historica and context['rol']=='TALLER' and diag and not diag.enviado_en and t.vigente(diag):
         forms['diagnostico']=RevisionForm(tipo='DIAGNOSTICO',revision=diag)
-        if not sol:
-            forms['enviar_piezas']=EnviarPiezasForm(initial={'version':diag.version_edicion})
+    if not historica and context['rol']=='TALLER' and diag and not sol and t.vigente(diag):
+        forms['enviar_piezas']=EnviarPiezasForm(initial={'version':diag.version_edicion})
     if not historica and context['rol']=='TALLER' and not sol:
         forms['plano_trabajo']=PlanoTrabajoForm()
     ins=context['inspeccion']
@@ -185,7 +185,7 @@ def contexto(request,exp,errores=None):
         pdfs=list(prop.evidencias.filter(documento__tipo_mime='application/pdf').select_related('documento')) if prop else []
         faltantes=[]
         if not diag or not t.vigente(diag) or not diag.enviado_en:
-            faltantes.append('TALLER debe completar y enviar el diagnóstico vigente para revisión.')
+            faltantes.append('TALLER debe completar el diagnóstico vigente y pulsar «Validar diagnóstico para ADMINISTRADOR» para enviarlo a revisión.')
         if not prop:
             faltantes.append('OFICINA debe presentar la cotización vigente para revisión.')
         else:
@@ -287,7 +287,9 @@ def detalle(request,pk):
                 diag=exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
                 return redirect(reverse('masiscam:plano',args=[ref.pk])+f'?diagnostico={diag.pk}&flujo=1')
             elif op=='enviar_piezas' and diag:
-                s.enviar_solicitud(**common,diagnostico_id=diag.pk,clave=key,preliminar=True,**data)
+                if not diag.enviado_en:
+                    raise ValidationError('TALLER debe validar y enviar el diagn\u00f3stico antes de enviar las piezas a OFICINA.')
+                s.enviar_solicitud(**common,diagnostico_id=diag.pk,clave=key,**data)
             elif op=='inspeccion':
                 _,diagnostico_para_plano=t.iniciar_inspeccion(**common,expediente_id=exp.pk,clave=key)
             elif op=='diagnostico':

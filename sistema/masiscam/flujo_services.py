@@ -486,7 +486,7 @@ def resumen(exp, usuario):
         mensaje='Registra la inspección inicial. No se solicitan reparaciones ni calibraciones en esta etapa.'
         if role=='TALLER': accion=action('Iniciar inspección',op='inspeccion')
     elif not ins.enviado_en and not sol:
-        mensaje='Puedes seleccionar piezas en el plano y enviarlas a OFICINA. Los detalles técnicos se completan para la aprobación posterior de ADMINISTRADOR.'
+        mensaje='Selecciona las piezas y completa y envía la inspección antes de validar el diagnóstico.'
         if role=='TALLER' and not diag:
             accion=action('Continuar a selección de piezas',op='diagnostico')
         elif role=='TALLER' and diag and not sol:
@@ -495,8 +495,7 @@ def resumen(exp, usuario):
         mensaje='Prepara la selección de piezas sobre un plano aplicable o mediante registro manual.'
         if role=='TALLER': accion=action('Seleccionar piezas',op='diagnostico')
     elif not sol and not diag.enviado_en:
-        mensaje='Selecciona las piezas y documenta tus observaciones. Al enviar se congela la solicitud y se avisa a OFICINA.'
-        if role=='TALLER': accion=action('Enviar solicitud de repuestos a oficina',op='solicitud')
+        mensaje='Completa y valida el diagnóstico antes de enviar las piezas a OFICINA.'
     elif not sol:
         mensaje='El diagnóstico está enviado. Puedes entregar a OFICINA su listado congelado sin duplicar piezas.'
         if role=='TALLER' and diag.piezas.exists(): accion=action('Enviar solicitud de repuestos a oficina',op='solicitud')
