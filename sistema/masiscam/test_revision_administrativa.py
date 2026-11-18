@@ -157,6 +157,31 @@ class RevisionAdministrativaTests(qa.OficinaFixture,TestCase):
             datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
         self.assertEqual(actividad.autorizacion.propuesta_id,prop.pk)
 
+    @override_settings(DEBUG=False)
+    def test_requisitos_visibles_y_aprobacion_sin_aceptacion_cliente(self):
+        self.preparar_preliminar()
+        prop=self.cotizar(archivo=None)
+        self.client.force_login(self.admin)
+        page=self.client.get(self.url)
+        self.assertContains(page, 'TALLER debe completar y enviar el diagnóstico vigente para revisión.')
+        self.assertTrue(page.context['revision_faltantes'])
+        self.diag=t.enviar_revision(usuario=self.taller,empresa=self.empresa,tipo='DIAGNOSTICO',
+            revision_id=self.diag.pk,version=self.diag.version_edicion,clave=uuid.uuid4())
+        page=self.client.get(self.url)
+        self.assertEqual(page.context['revision_faltantes'], [])
+        response=self.client.post(self.url,dict(op='aprobar_expediente',clave=uuid.uuid4(),
+            diagnostico_id=self.diag.pk,propuesta_id=prop.pk))
+        self.assertEqual(response.status_code,302)
+        prop.refresh_from_db()
+        revision=RevisionAdministrativa.objects.get(expediente=self.exp)
+        self.assertEqual((revision.decision, revision.diagnostico_id, revision.propuesta_id),
+            ('APROBADO', self.diag.pk, prop.pk))
+        self.assertTrue(Auditoria.objects.filter(expediente=self.exp,accion='EXPEDIENTE_REVISADO').exists())
+        self.assertTrue(s.aprobacion_conjunta_vigente(prop))
+        self.assertFalse(hasattr(prop,'decision'))
+        self.revisar(prop,decision='DEVUELTO',destino='OFICINA',motivo='Corregir condiciones')
+        self.assertFalse(s.aprobacion_conjunta_vigente(prop))
+
     def test_faltantes_versiones_desactualizadas_y_permisos(self):
         self.preparar()
         with self.assertRaises(ValidationError):

@@ -183,7 +183,30 @@ def contexto(request,exp,errores=None):
         context['paso']=3
     if context['rol']=='ADMIN':
         pdfs=list(prop.evidencias.filter(documento__tipo_mime='application/pdf').select_related('documento')) if prop else []
-        context.update(cotizacion_pdf=next((ev for ev in pdfs if ev.clave==uuid.uuid5(prop.clave,'cotizacion-pdf-v1')),pdfs[0] if pdfs else None),
+        faltantes=[]
+        if not diag or not t.vigente(diag) or not diag.enviado_en:
+            faltantes.append('TALLER debe completar y enviar el diagnóstico vigente para revisión.')
+        if not prop:
+            faltantes.append('OFICINA debe presentar la cotización vigente para revisión.')
+        else:
+            if diag and prop.diagnostico_id != diag.pk:
+                faltantes.append('OFICINA debe presentar una cotización vinculada al diagnóstico vigente.')
+            if not pdfs:
+                faltantes.append('OFICINA debe adjuntar el PDF de la cotización vigente.')
+            if not prop.snapshot.get('presupuesto_referencia'):
+                faltantes.append('OFICINA debe registrar el número de cotización.')
+            for ev in pdfs:
+                try:
+                    t.documento_valido(ev.documento, exp.empresa)
+                except (ValidationError, PermissionDenied):
+                    faltantes.append('OFICINA debe corregir el PDF de cotización: no está disponible o válido.')
+                    break
+        if diag and prop and (request.user.pk in t._autores(diag) or request.user.pk == prop.autor_id):
+            faltantes.append('Otro ADMINISTRADOR debe revisar el expediente: no puede revisar su propio trabajo.')
+        if revision_vigente:
+            faltantes.append('ADMINISTRADOR ya aprobó conjuntamente las versiones vigentes.')
+        context.update(revision_faltantes=faltantes,
+            cotizacion_pdf=next((ev for ev in pdfs if ev.clave==uuid.uuid5(prop.clave,'cotizacion-pdf-v1')),pdfs[0] if pdfs else None),
             diagnostico_datos=[(diag._meta.get_field(name).verbose_name,getattr(diag,name)) for name in t.DIA_FIELDS if getattr(diag,name)] if diag else [],
             evidencias_diagnostico=[ev for ev in t._evidencias(diag) if not ev.pieza_id] if diag else [])
     cotizacion_bloqueo=('La cotización con repuestos registrados conserva sus importes y autorización; los cambios requieren una revisión de alcance.'
