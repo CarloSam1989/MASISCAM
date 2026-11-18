@@ -21,7 +21,12 @@ FLAGS=dict(cq.FLAGS,MASISCAM_CIERRE_LOCAL=True)
 
 @override_settings(**FLAGS)
 class FlujoTests(TestCase):
-    setUp=test_taller.TallerTests.setUp
+    def setUp(self):
+        if self._testMethodName == 'test_recorrido_completo_plano_oficina_reparacion_calibracion_pdf':
+            from .test_tres_roles import TresRolesFixture
+            TresRolesFixture.setUp(self)
+        else:
+            test_taller.TallerTests.setUp(self)
     datos=test_taller.TallerTests.datos
     crear=test_taller.TallerTests.crear
     recepcion=test_taller.TallerTests.recepcion
@@ -99,17 +104,24 @@ class FlujoTests(TestCase):
         self.assertEqual(RecepcionRepuesto.objects.count(),1)
         self.assertEqual(RecepcionLineaEnvio.objects.get().recepcion_id,RecepcionRepuesto.objects.get().pk)
         common=dict(usuario=self.taller,empresa=self.empresa)
-        act=o.iniciar_actividad(**common,expediente_id=self.exp.pk,clave=uuid.uuid4(),datos=dict(trabajo='Montaje ficticio QA',componentes='Pieza QA',inicio=timezone.now()))
+        act=o.iniciar_actividad(**common,expediente_id=self.exp.pk,clave=uuid.uuid4(),datos=dict(trabajo='Prensado, armado, pintura, acople y rectificaci\u00f3n; aceite ISO VG 220, 2 litros',componentes='Pieza QA',inicio=timezone.now(),observaciones='Trabajo ficticio QA'))
         o.usar_repuesto(**common,actividad_id=act.pk,recepcion_id=RecepcionRepuesto.objects.get().pk,cantidad='2',observaciones='QA',clave=uuid.uuid4())
         o.evidencia_actividad(**common,actividad_id=act.pk,clave=uuid.uuid4(),clase='DURANTE',leyenda='Trabajo ficticio QA',archivo=foto_pieza())
-        resultado=o.terminar_actividad(**common,actividad_id=act.pk,clave=uuid.uuid4(),datos=dict(fin=timezone.now(),trabajo_realizado='Trabajo QA',resultado='Resultado QA'))
+        resultado=o.terminar_actividad(**common,actividad_id=act.pk,clave=uuid.uuid4(),datos=dict(fin=timezone.now(),trabajo_realizado='Prensado, armado, pintura, acople, rectificaci\u00f3n; aceite ISO VG 220, 2 litros',resultado='Resultado QA'))
+        act.refresh_from_db()
+        resultado.refresh_from_db()
+        for item in ('Prensado','armado','pintura','acople','rectificaci\u00f3n','aceite ISO VG 220, 2 litros'):
+            self.assertIn(item,act.trabajo)
+            self.assertIn(item,resultado.trabajo_realizado)
+        self.assertEqual(act.componentes,'Pieza QA')
+        self.assertEqual(act.evidencias.count(),1)
         o.revisar_actividad(usuario=self.usuarios['PLANTA'],empresa=self.empresa,resultado_id=resultado.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='Revisión independiente QA')
         definicion=cq.definicion_qa();definicion['aplicacion'].update(marca=self.equipo.marca,modelo=self.equipo.modelo)
         protocolo=c.crear_plantilla(usuario=self.usuarios['PLANTA'],empresa=self.empresa,clave=uuid.uuid4(),archivo=cq.protocolo_pdf(),
             datos=dict(codigo='FLUJO-QA',titulo='PROTOCOLO FICTICIO QA',tipo_equipo=self.equipo.tipo_producto,definicion=definicion,proyecto_id=self.equipo.proyecto_id))
         c.aplicar_plantilla(usuario=self.usuarios['PLANTA'],empresa=self.empresa,plantilla_id=protocolo.pk,equipo_id=self.equipo.pk,
             clave=uuid.uuid4(),fundamento='Solo QA',version_equipo=definicion['aplicacion']['version_equipo'])
-        revisor=qa.usuario(self.empresa,'validador-flujo-qa','PLANTA')
+        revisor=qa.usuario(self.empresa,'validador-flujo-qa','ADMIN')
         with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[cq.anchor_qa(protocolo)]):
             cq.validar_qa(self.empresa,revisor,protocolo)
             cal=c.iniciar(**common,expediente_id=self.exp.pk,plantilla_id=protocolo.pk,clave=uuid.uuid4())

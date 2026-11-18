@@ -77,6 +77,8 @@ class OperacionForm(BaseForm):
             qty(); date('fecha'); file('archivo'); file('fotografia')
         elif op=='actividad':
             text('trabajo'); text('componentes'); date('inicio'); text('observaciones',False)
+            F['trabajo'].help_text='Describa las operaciones efectuadas, como prensado, armado, pintura, acople o rectificaci\u00f3n, y el aceite y litros utilizados cuando corresponda.'
+            F['componentes'].help_text='Identifique los componentes intervenidos; registre los repuestos utilizados en el formulario correspondiente.'
         elif op in {'uso','foto','resultado'}:
             choice('actividad_id',ActividadReparacion.objects.filter(expediente=exp))
             if op=='uso':

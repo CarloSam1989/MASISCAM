@@ -286,6 +286,28 @@ class RevisionAdministrativaTests(qa.OficinaFixture,TestCase):
         self.client.force_login(self.oficina)
         self.assertNotContains(self.client.get(self.url),'data-devolucion-expediente')
 
+    @override_settings(DEBUG=False)
+    def test_devolucion_y_reenvio_diagnostico_vigente(self):
+        self.preparar(); prop=self.cotizar(archivo=None); self.revisar(prop)
+        self.revisar(prop,decision='DEVUELTO',destino='TALLER',motivo='Corregir diagn\u00f3stico')
+        self.diag=Diagnostico.objects.filter(expediente=self.exp).latest('revision')
+        self.pieza=self.diag.piezas.get()
+        self.client.force_login(self.taller)
+        page=self.client.get(self.url)
+        self.assertContains(page,'Validar diagn\u00f3stico para ADMINISTRADOR')
+        self.assertEqual(self.client.post(reverse('masiscam:tecnica_revision',args=['DIAGNOSTICO',self.diag.pk])+'?flujo=1',
+            dict(op='enviar',clave=uuid.uuid4(),version=self.diag.version_edicion)).status_code,302)
+        self.diag.refresh_from_db()
+        self.assertEqual(self.client.post(self.url,dict(op='enviar_piezas',clave=uuid.uuid4(),
+            version=self.diag.version_edicion)).status_code,302)
+        self.sol=self.exp.solicitudrepuestos_set.get(diagnostico=self.diag)
+        nueva=self.cotizar(archivo=None)
+        self.assertEqual(nueva.diagnostico_id,self.diag.pk)
+        self.revisar(nueva)
+        self.assertTrue(s.aprobacion_conjunta_vigente(nueva))
+        self.assertEqual(Diagnostico.objects.filter(expediente=self.exp).count(),2)
+        self.assertEqual(RevisionAdministrativa.objects.filter(expediente=self.exp).count(),3)
+
     def test_devolucion_oficina_no_crea_otro_diagnostico(self):
         self.preparar();prop=self.cotizar(archivo=None);self.revisar(prop)
         self.revisar(prop,decision='DEVUELTO',motivo='Corregir condiciones',destino='OFICINA')
