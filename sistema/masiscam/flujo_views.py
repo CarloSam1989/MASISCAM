@@ -307,7 +307,7 @@ def detalle(request,pk):
             elif op=='cotizar' and sol: s.cotizar(**common,solicitud_id=sol.pk,clave=key,**form.datos())
             elif op in {'aprobar_expediente','devolver_expediente'}:
                 s.revisar_expediente(**common,expediente_id=exp.pk,clave=key,
-                    diagnostico_id=int(request.POST.get('diagnostico_id','0')),propuesta_id=int(request.POST.get('propuesta_id','0')),
+                    diagnostico_id=int(request.POST.get('diagnostico_id') or '0'),propuesta_id=int(request.POST.get('propuesta_id') or '0'),
                     decision='APROBADO' if op=='aprobar_expediente' else 'DEVUELTO',
                     motivo=request.POST.get('motivo',''),destino=request.POST.get('destino','AMBOS'))
             elif op=='pdf_cotizacion':

@@ -165,6 +165,13 @@ class RevisionAdministrativaTests(qa.OficinaFixture,TestCase):
         page=self.client.get(self.url)
         self.assertContains(page, 'TALLER debe completar y enviar el diagnóstico vigente para revisión.')
         self.assertTrue(page.context['revision_faltantes'])
+        denied=self.client.post(self.url,dict(op='aprobar_expediente',clave=uuid.uuid4(),
+            diagnostico_id=self.diag.pk,propuesta_id=prop.pk))
+        self.assertEqual(denied.status_code,400)
+        self.assertContains(denied, 'TALLER debe completar y enviar el diagn\u00f3stico vigente para revisi\u00f3n.',status_code=400)
+        self.assertContains(denied, 'data-masiscam-message="error"',status_code=400)
+        self.assertFalse(RevisionAdministrativa.objects.filter(expediente=self.exp).exists())
+        self.assertFalse(Auditoria.objects.filter(expediente=self.exp,accion='EXPEDIENTE_REVISADO').exists())
         self.diag=t.enviar_revision(usuario=self.taller,empresa=self.empresa,tipo='DIAGNOSTICO',
             revision_id=self.diag.pk,version=self.diag.version_edicion,clave=uuid.uuid4())
         page=self.client.get(self.url)

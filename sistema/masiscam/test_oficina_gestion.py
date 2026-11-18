@@ -424,7 +424,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 expect(page.locator('#oficina-aceptacion')).to_have_count(0)
                 context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=admin_cookie,url=self.live_server_url)])
                 page.goto(self.live_server_url+reverse('masiscam:tecnica_expediente',args=[self.exp.pk]))
-                expect(page.get_by_role('button',name='Aprobar expediente',exact=True)).to_be_disabled()
+                expect(page.get_by_role('button',name='Aprobar expediente',exact=True)).to_be_enabled()
                 context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=taller_cookie,url=self.live_server_url)])
                 page.goto(self.live_server_url+self.url)
                 page.locator('#informacion-tecnica summary').click()
