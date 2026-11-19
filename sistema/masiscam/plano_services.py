@@ -199,7 +199,7 @@ def documento_info(ref, empresa):
 
 @transaction.atomic
 def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, clave):
-    rol = tecnica.autorizar_tecnica(usuario, empresa, {'ADMIN', 'TALLER'})
+    rol = tecnica.autorizar_tecnica(usuario, empresa, {'ADMIN', 'TALLER', 'OFICINA'})
     ref = ReferenciaTecnica.objects.get(pk=referencia_id, empresa=empresa)
     if rol.rol == 'TALLER':
         if not ref.expediente_trabajo_id or ref.estado != 'BORRADOR':
@@ -211,13 +211,15 @@ def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, c
         tecnica._editable(usuario, empresa, etapa.diagnostico, etapa.diagnostico.version_edicion)
         tecnica.seleccion_editable(etapa.diagnostico)
     else:
-        tecnica._liblock(usuario, empresa)
+        tecnica._liblock(usuario, empresa, {'ADMIN', 'OFICINA'})
+        if rol.rol == 'OFICINA' and (ref.estado != 'BORRADOR' or ref.expediente_trabajo_id):
+            raise PermissionDenied('OFICINA solo configura planos de biblioteca en borrador.')
     ref = ReferenciaTecnica.objects.select_for_update().get(pk=ref.pk, empresa=empresa)
     payload = dict(referencia=ref.pk, base=base_version, posiciones=posiciones)
     old = tecnica._libretry(empresa, clave, 'PLANO_MAPA_CREADO', payload)
     if old:
         return MapaPlano.objects.get(pk=old)
-    provisional = ref.estado == 'BORRADOR' and bool(ref.expediente_trabajo_id)
+    provisional = ref.estado == 'BORRADOR'
     if rol.rol == 'TALLER' and not provisional:
         raise PermissionDenied('El plano dejó de ser provisional; recargue antes de marcar.')
     if ref.tipo != 'PLANO' or not (ref.estado == 'PUBLICADA' or provisional):
@@ -428,7 +430,87 @@ def guardar_seleccion(*, usuario, empresa, diagnostico_id, version, clave, datos
     return result
 
 
-def leer_materiales(texto):
+
+def leer_excel_materiales(archivo):
+    """Read the supplied five-column XLSX into the existing reviewable CSV format."""
+    import re
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    ns = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+    headers = {'PARTE #', 'UNITS', 'CODIGO', 'DESCRIPCION', 'CHECK'}
+    if archivo.size > 2_000_000:
+        raise ValidationError('El Excel excede 2 MB.')
+    try:
+        archivo.seek(0)
+        with zipfile.ZipFile(archivo) as book:
+            infos = book.infolist()
+            if len(infos) > 200 or sum(i.file_size for i in infos) > 20_000_000:
+                raise ValueError('El archivo es demasiado grande.')
+            def xml(name):
+                data = book.read(name)
+                if b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():
+                    raise ValueError('XML no permitido.')
+                return ET.fromstring(data)
+            shared = []
+            if 'xl/sharedStrings.xml' in book.namelist():
+                shared = [''.join(x.text or '' for x in si.findall('.//m:t', ns))
+                          for si in xml('xl/sharedStrings.xml').findall('m:si', ns)]
+            sheets = [i.filename for i in infos if re.fullmatch(r'xl/worksheets/sheet[0-9]+\.xml', i.filename)]
+            candidates = []
+            for sheet in sheets:
+                matrix = []
+                for row in xml(sheet).findall('.//m:sheetData/m:row', ns):
+                    cells = {}
+                    for cell in row.findall('m:c', ns):
+                        match = re.fullmatch(r'([A-Z]+)[0-9]+', cell.get('r', ''))
+                        if not match:
+                            raise ValueError('Referencia de celda inválida.')
+                        if cell.find('m:f', ns) is not None:
+                            raise ValueError('Las fórmulas requieren revisión y no se importan.')
+                        kind = cell.get('t', 'n')
+                        value = cell.findtext('m:v', default='', namespaces=ns)
+                        if kind == 's':
+                            value = shared[int(value)]
+                        elif kind == 'inlineStr':
+                            value = ''.join(x.text or '' for x in cell.findall('.//m:is//m:t', ns))
+                        elif kind not in ('n', 'str'):
+                            if value:
+                                raise ValueError('Tipo de celda no admitido.')
+                        cells[match.group(1)] = value.strip()
+                    matrix.append(cells)
+                for index, row in enumerate(matrix):
+                    mapping = {v.upper(): k for k, v in row.items() if v.upper() in headers}
+                    if set(mapping) == headers:
+                        if not any(existing_sheet == sheet for existing_sheet, _, _ in candidates):
+                            candidates.append((sheet, matrix[index + 1:], mapping))
+                        elif candidates[-1][2] != mapping:
+                            raise ValueError('La tabla cambia de columnas en la misma hoja.')
+            if len(candidates) != 1:
+                raise ValueError('Se requiere una sola tabla con las cinco columnas indicadas.')
+            _, matrix, columns = candidates[0]
+            output = io.StringIO(newline='')
+            writer = csv.DictWriter(output, fieldnames=['posicion', 'numero_parte', 'descripcion', 'unidad', 'cantidad_referencia', 'pagina'], lineterminator='\n')
+            writer.writeheader()
+            for row in matrix:
+                part, units, code, description = (row.get(columns[k], '') for k in ('PARTE #', 'UNITS', 'CODIGO', 'DESCRIPCION'))
+                if (part.upper(), units.upper(), code.upper(), description.upper()) == ('PARTE #', 'UNITS', 'CODIGO', 'DESCRIPCION'):
+                    continue
+                # Rows containing only a pre-numbered empty template are not components.
+                if not units and not code and not description:
+                    continue
+                writer.writerow(dict(posicion=part, numero_parte=code, descripcion=description,
+                                     unidad='', cantidad_referencia=units, pagina=''))
+            text = output.getvalue()
+            if not leer_materiales(text, permitir_incompletas=True):
+                raise ValueError('La tabla no contiene piezas.')
+            return text
+    except (zipfile.BadZipFile, KeyError, IndexError, ET.ParseError, ValueError, OverflowError) as exc:
+        raise ValidationError('No se pudo leer el Excel: ' + str(exc)) from exc
+    finally:
+        archivo.seek(0)
+
+def leer_materiales(texto, permitir_incompletas=False):
     if len(texto.encode('utf-8')) > 250000:
         raise ValidationError('La lista de materiales es demasiado extensa.')
     reader = csv.DictReader(io.StringIO(texto.lstrip('\ufeff')))
@@ -440,7 +522,7 @@ def leer_materiales(texto):
         if len(rows) >= 500 or None in row or any(value is None for value in row.values()):
             raise ValidationError(f'Fila {line}: columnas incompletas o demasiadas filas.')
         row = {key: value.strip() for key, value in row.items()}
-        if not row['posicion'] or not row['descripcion'] or row['posicion'] in posiciones:
+        if not row['posicion'] or (not permitir_incompletas and not row['descripcion']) or row['posicion'] in posiciones:
             raise ValidationError(f'Fila {line}: verifique posición única y descripción original.')
         for field, limit in [('posicion', 80), ('numero_parte', 120), ('unidad', 80), ('pagina', 40), ('descripcion', 20000)]:
             if len(row[field]) > limit:
@@ -459,16 +541,18 @@ def leer_materiales(texto):
 
 @transaction.atomic
 def importar_m20(*, usuario, empresa, proyecto_id, archivo, materiales, procedencia, autorizacion,
-                 confirmado, clave, sustituye_id=None, version_fabricante=''):
-    tecnica._liblock(usuario, empresa)
+                 confirmado, clave, sustituye_id=None, version_fabricante='', marca='', modelo='M20A', operacion='', rotacion='', ratio='3:1'):
+    tecnica._liblock(usuario, empresa, {'ADMIN', 'OFICINA'})
+    if modelo.strip().upper() != 'M20A' or ''.join(ratio.split()) != '3:1':
+        raise ValidationError('Este importador requiere modelo M20A y relacion 3:1.')
     if confirmado is not True:
         raise ValidationError('La revisión humana del original y de todas las filas es obligatoria.')
-    rows = leer_materiales(materiales)
+    rows = leer_materiales(materiales, permitir_incompletas=True)
     if sustituye_id and rows:
         raise ValidationError('Una revisión con partes heredadas se revisa en el editor de borrador; use solo la cabecera CSV.')
     payload = dict(hash=_hash(archivo), materiales=materiales, proyecto=proyecto_id,
         procedencia=procedencia, autorizacion=autorizacion, sustituye=sustituye_id, fabricante=version_fabricante,
-        revision_humana=True)
+        revision_humana=True, marca=marca, modelo=modelo, operacion=operacion, rotacion=rotacion, ratio=ratio)
     old = tecnica._libretry(empresa, clave, 'PLANO_M20_IMPORTADO', payload)
     if old:
         return ReferenciaTecnica.objects.get(pk=old)
@@ -489,7 +573,7 @@ def importar_m20(*, usuario, empresa, proyecto_id, archivo, materiales, proceden
     ref = tecnica.guardar_referencia(usuario=usuario, empresa=empresa,
         clave=uuid.uuid5(uuid.UUID(str(clave)), 'referencia'), archivo=archivo,
         datos=dict(codigo='M20A-HNRC-FIG1', tipo='PLANO', titulo='M20A-HNRC · 3:1 · Figura 1 · Bill of Materials',
-            modelo='M20A', ratio='3:1', version_fabricante=version_fabricante,
+            marca=marca, modelo=modelo, operacion=operacion, rotacion=rotacion, ratio=ratio, version_fabricante=version_fabricante,
             procedencia=procedencia, autorizacion_uso=autorizacion, proyecto_id=proyecto_id,
             sustituye_id=sustituye_id))
     # A new revision may have inherited parts; importing into it must not silently

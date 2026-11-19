@@ -22,14 +22,24 @@ def menu_compartido(context):
     elif rol=='OFICINA':
         from masiscam.oficina_views import SECCIONES
         items=[item('Inicio','oficina_inicio'),item('Clientes','clientes')]+[item(label,'oficina_seccion',[key]) for key,label in SECCIONES.items()]
+        if settings.MASISCAM_TECNICA_LOCAL:items.append(item('Planos y piezas','biblioteca'))
     elif rol=='ADMIN':
-        items=[item('Inicio','dashboard'),item('Reductores','producto_listado',['reductor']),item('Bombas','producto_listado',['bomba']),
+        items=[item('Inicio','dashboard'),
             item('Clientes','clientes'),item('Proyectos','proyectos'),item('Expedientes','expedientes')]
         if settings.MASISCAM_TECNICA_LOCAL:items += [item('Aprobaciones','tecnica_inicio'),item('Planos y piezas','biblioteca')]
         if settings.MASISCAM_CALIBRACION_LOCAL:items += [item('Protocolos','calibracion_plantillas')]
         if settings.MASISCAM_CIERRE_LOCAL:items += [item('Seguimiento','cierre_dashboard')]
         if tiene_permiso(request,'usuarios'):items += [item('Usuarios','usuarios')]
     else:items=[item('Inicio','dashboard')]
+    if rol in {'ADMIN', 'OFICINA', 'TALLER'}:
+        products = []
+        for label, code in [('Bombas', 'bomba'), ('Reductores', 'reductor'),
+                            ('Motores el?ctricos', None), ('Motores di?sel', None),
+                            ('Embarcaciones', None), ('Lubricantes', None),
+                            ('Recubrimientos', None), ('Servicios', None)]:
+            products.append(item(label, 'producto_listado', [code]) if code and rol != 'TALLER'
+                            else dict(label=label, url=None))
+        items.insert(1, dict(label='Productos', children=products, url=''))
     for entry in items:entry['activo']=request.path==entry['url'].split('#')[0] and '#' not in entry['url']
     return dict(items=items,rol='ADMINISTRADOR' if rol=='ADMIN' else rol,inicio=items[0]['url'])
 

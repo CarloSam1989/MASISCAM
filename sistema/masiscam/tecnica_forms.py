@@ -94,6 +94,8 @@ class ReferenciaForm(BaseForm):
     archivo=forms.FileField(required=False,label='O archivo nuevo')
     marca=forms.CharField(max_length=120,required=False)
     modelo=forms.CharField(max_length=120,required=False)
+    operacion=forms.CharField(max_length=80,required=False,label='Operacion')
+    rotacion=forms.CharField(max_length=80,required=False,label='Rotacion')
     ratio=forms.CharField(max_length=80,required=False)
     version_fabricante=forms.CharField(max_length=100,required=False,label='Versión del fabricante, si consta')
     procedencia=forms.CharField(max_length=20000,widget=forms.Textarea)

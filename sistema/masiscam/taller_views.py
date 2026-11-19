@@ -6,7 +6,10 @@ from django.shortcuts import get_object_or_404
 from django.http import Http404
 from django.urls import reverse
 from django.conf import settings
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
+from django.contrib import messages
+from django.shortcuts import redirect
+from django.db import transaction
 
 from .access import autorizar_creacion_equipo, equipos_taller, masiscam_access_required
 from .models import ActividadReparacion, Calibracion, CierreExpediente, Equipo, InformeFinal, EnvioRepuestos
@@ -88,9 +91,16 @@ def taller_equipo(request, pk):
     else:
         exp=mantenimientos.first()
     asignado=bool(exp and exp.asignaciones_tecnicas.filter(tecnico=request.user,fin__isnull=True).exists())
+    planos = None
+    if settings.MASISCAM_TECNICA_LOCAL and equipo.tipo_producto == Equipo.TipoProducto.REDUCTOR:
+        from .tecnica_services import planos_compatibles_equipo
+        planos = planos_compatibles_equipo(usuario=request.user, empresa=request.empresa_activa, equipo=equipo)
     if exp and asignado and settings.MASISCAM_TECNICA_LOCAL:
         from .flujo_views import contexto
-        return render(request,'masiscam/flujo_detalle.html',contexto(request,exp))
+        ctx = contexto(request,exp)
+        ctx['planos_compatibles'] = planos
+        ctx['plano_acceso_expediente'] = True
+        return render(request,'masiscam/flujo_detalle.html',ctx)
     pasos=[dict(nombre=nombre,estado='Listo' if n==0 else 'Pendiente') for n,nombre in enumerate(
         ['Registrar equipo','Seleccionar piezas','Oficina cotiza y envía','Taller repara','Generar informe'])]
     mensaje='Inicia un expediente de mantenimiento para inspeccionar y seleccionar piezas. No necesitas confirmar la recepción ni contar con autorización comercial para inspeccionar.'
@@ -103,4 +113,32 @@ def taller_equipo(request, pk):
             mensaje=('Fase técnica deshabilitada: el responsable de configuración debe activar '
                 'MASISCAM_TECNICA_ENABLED para habilitar inspección y selección de piezas.')
     return render(request,'masiscam/taller_equipo.html',dict(equipo=equipo,expediente=exp,mantenimientos=mantenimientos,
-        pasos=pasos,paso=2,mensaje=mensaje,accion=accion))
+        pasos=pasos,paso=2,mensaje=mensaje,accion=accion,planos_compatibles=planos,plano_acceso_expediente=asignado))
+
+
+@require_POST
+@masiscam_access_required
+def solicitar_plano(request, pk):
+    from accounts.models import Empresa
+    from .models import Auditoria
+    from .tecnica_services import planos_compatibles_equipo
+    equipo = get_object_or_404(equipos_taller(usuario=request.user, empresa=request.empresa_activa), pk=pk)
+    raw = request.POST.get('referencia', '')
+    if not raw.isascii() or not raw.isdecimal() or len(raw) > 18:
+        raise Http404
+    with transaction.atomic():
+        Empresa.objects.select_for_update().get(pk=request.empresa_activa.pk, activa=True)
+        lista = planos_compatibles_equipo(usuario=request.user, empresa=request.empresa_activa, equipo=equipo)
+        ref = next((r for r in lista['candidatos'] if r.pk == int(raw)), None)
+        if ref is None:
+            raise Http404
+        if not ref.aprobada and not Auditoria.objects.filter(empresa=request.empresa_activa,
+                accion='PLANO_APLICABILIDAD_SOLICITADA', objeto_tipo='ReferenciaTecnica',
+                objeto_id=str(ref.pk), detalle__equipo=equipo.pk).exists():
+            Auditoria.objects.create(empresa=request.empresa_activa, usuario=request.user,
+                proyecto=equipo.proyecto, accion='PLANO_APLICABILIDAD_SOLICITADA',
+                objeto_tipo='ReferenciaTecnica', objeto_id=str(ref.pk),
+                detalle={'equipo': equipo.pk, 'revision': ref.revision})
+    messages.success(request, 'Solicitud registrada para revision de ADMINISTRADOR.' if not ref.aprobada
+                     else 'La aplicabilidad ya esta aprobada.')
+    return redirect('masiscam:taller_equipo', pk=equipo.pk)

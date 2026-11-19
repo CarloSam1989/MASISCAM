@@ -150,6 +150,7 @@ class Equipo(models.Model):
     potencia_hp = models.CharField(max_length=80, blank=True)
     rpm = models.CharField(max_length=80, blank=True)
     service_factor = models.CharField(max_length=80, blank=True)
+    operacion = models.CharField(max_length=80, blank=True)
     rotacion = models.CharField(max_length=80, blank=True)
     tipo_aceite = models.CharField(max_length=180, blank=True)
     informacion_tecnica = models.TextField(blank=True)

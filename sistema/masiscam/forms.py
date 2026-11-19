@@ -130,6 +130,8 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
     estacion = forms.CharField(label="Estación", max_length=200)
     sector = forms.CharField(label="Sector", max_length=200)
     numero_equipo = forms.CharField(label="Número de equipo", max_length=200)
+    fabricante = forms.CharField(label='Fabricante', max_length=150, required=False)
+    operacion = forms.CharField(label='Operacion', max_length=80, required=False)
     marca = forms.CharField(label="Marca", max_length=120)
     modelo = forms.CharField(label="Modelo", max_length=120)
     numero_serie = forms.CharField(label="Número de serie", max_length=120)
@@ -157,6 +159,8 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
                 "estacion": equipo.ubicacion,
                 "sector": equipo.sector,
                 "numero_equipo": equipo.nombre,
+                "fabricante": equipo.fabricante,
+                "operacion": equipo.operacion,
                 "marca": equipo.marca,
                 "modelo": equipo.modelo,
                 "numero_serie": equipo.numero_serie,
@@ -275,6 +279,8 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
         equipo.nombre = datos["numero_equipo"].strip()
         equipo.ubicacion = datos["estacion"].strip()
         equipo.sector = datos["sector"].strip()
+        equipo.fabricante = datos["fabricante"].strip()
+        equipo.operacion = datos["operacion"].strip()
         equipo.marca = datos["marca"].strip()
         equipo.modelo = datos["modelo"].strip()
         equipo.numero_serie = datos["numero_serie"].strip()

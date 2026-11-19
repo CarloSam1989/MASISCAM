@@ -15,6 +15,7 @@ urlpatterns = [
     path('expedientes/<int:pk>/flujo/', flujo_views.detalle, name='flujo_detalle'),
     path('expedientes/<int:pk>/flujo/documentos/<int:documento_pk>/', flujo_views.documento, name='flujo_documento'),
     path('taller/equipos/<int:pk>/', taller_views.taller_equipo, name='taller_equipo'),
+    path('taller/equipos/<int:pk>/solicitar-plano/', taller_views.solicitar_plano, name='solicitar_plano'),
     path('taller/', taller_views.taller_inicio, name='taller_inicio'),
     path('taller/estado/', taller_views.taller_estado, name='taller_estado'),
     path('taller/cuenta/', taller_views.taller_cuenta, name='taller_cuenta'),

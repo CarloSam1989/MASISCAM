@@ -502,7 +502,7 @@ def decidir_diagnostico(*,usuario,empresa,diagnostico_id,decision,motivo,clave):
 def referencias_visibles(usuario,empresa):
     rol=autorizar_tecnica(usuario,empresa)
     qs=ReferenciaTecnica.objects.filter(empresa=empresa)
-    if rol.rol!='ADMIN':
+    if rol.rol not in {'ADMIN', 'OFICINA'}:
         qs=qs.exclude(estado='BORRADOR')
     if rol.rol in OPERADORES:
         equipos=AsignacionTecnica.objects.filter(tecnico=usuario,fin__isnull=True,expediente__empresa=empresa).values('expediente__registro__equipo_id')
@@ -530,6 +530,35 @@ def referencias_visibles(usuario,empresa):
     return qs.filter(~Q(estado='BORRADOR') | Q(expediente_trabajo__isnull=True) |
         Q(expediente_trabajo__in=ExpedienteMantenimiento.objects.filter(empresa=empresa))).distinct()
 
+
+
+def planos_compatibles_equipo(*, usuario, empresa, equipo):
+    """List exact published candidates; applicability remains an ADMIN decision."""
+    autorizar_tecnica(usuario, empresa, {'TALLER', 'ADMIN'})
+    if equipo.proyecto.empresa_id != empresa.pk or equipo.tipo_producto != 'REDUCTOR':
+        raise PermissionDenied('Equipo no autorizado o incompatible.')
+    from .access import equipos_taller
+    if not equipos_taller(usuario=usuario, empresa=empresa).filter(pk=equipo.pk).exists():
+        rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa)
+        if not rol or rol.rol != 'ADMIN':
+            raise PermissionDenied('Equipo fuera del taller autorizado.')
+    values = {'marca': equipo.fabricante, 'modelo': equipo.modelo, 'operacion': equipo.operacion,
+              'rotacion': equipo.rotacion, 'ratio': equipo.ratio}
+    labels = {'marca': 'fabricante', 'modelo': 'modelo', 'operacion': 'operacion',
+              'rotacion': 'rotacion', 'ratio': 'relacion de transmision'}
+    missing = [labels[key] for key, value in values.items() if not (value or '').strip()]
+    if missing:
+        return {'faltantes': missing, 'candidatos': []}
+    from django.db.models import Exists, OuterRef
+    newer = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=OuterRef('codigo'),
+        estado='PUBLICADA', revision__gt=OuterRef('revision'))
+    qs = ReferenciaTecnica.objects.filter(empresa=empresa, tipo='PLANO', estado='PUBLICADA',
+        expediente_trabajo__isnull=True).annotate(version_superada=Exists(newer)).filter(version_superada=False)
+    for field, value in values.items():
+        qs = qs.filter(**{field + '__iexact': value.strip()})
+    qs = qs.annotate(aprobada=Exists(AplicabilidadReferenciaEquipo.objects.filter(
+        referencia_id=OuterRef('pk'), equipo=equipo, activa=True)))
+    return {'faltantes': [], 'candidatos': list(qs.order_by('codigo', '-revision'))}
 
 def _parte_aplicable(parte,exp):
     return parte.referencia.empresa_id==exp.empresa_id and parte.referencia.estado=='PUBLICADA' and parte.referencia.tipo=='PLANO' and AplicabilidadReferenciaEquipo.objects.filter(referencia=parte.referencia,equipo=exp.registro.equipo,activa=True).exists()
@@ -620,8 +649,8 @@ def agregar_pieza(*,usuario,empresa,diagnostico_id,version,clave,datos,pieza_id=
     return p
 
 
-def _liblock(usuario,empresa):
-    autorizar_tecnica(usuario,empresa,{'ADMIN'})
+def _liblock(usuario,empresa,roles=None):
+    autorizar_tecnica(usuario,empresa,roles or {'ADMIN'})
     Empresa.objects.select_for_update().get(pk=empresa.pk,activa=True)
 
 
@@ -650,7 +679,7 @@ def _encolar_documento(doc_id):
 
 @transaction.atomic
 def guardar_referencia(*,usuario,empresa,clave,datos,archivo=None,referencia_id=None):
-    _liblock(usuario,empresa)
+    _liblock(usuario,empresa,{'ADMIN','OFICINA'})
     payload=dict(id=referencia_id,datos=datos,hash=_hash(archivo) if archivo else None)
     old=_libretry(empresa,clave,'BIBLIOTECA_REFERENCIA',payload)
     if old:
@@ -659,7 +688,7 @@ def guardar_referencia(*,usuario,empresa,clave,datos,archivo=None,referencia_id=
     proyecto_id=data.pop('proyecto_id',None)
     doc_id=data.pop('documento_id',None)
     source_id=data.pop('sustituye_id',None)
-    allowed={'codigo','tipo','titulo','marca','modelo','ratio','version_fabricante','procedencia','autorizacion_uso'}
+    allowed={'codigo','tipo','titulo','marca','modelo','operacion','rotacion','ratio','version_fabricante','procedencia','autorizacion_uso'}
     if set(data)-allowed or not data.get('autorizacion_uso','').strip():
         raise ValidationError('Registre los datos permitidos y la autorización de uso/congelación del documento privado.')
     obj=ReferenciaTecnica.objects.filter(pk=referencia_id,empresa=empresa).first() if referencia_id else None
@@ -721,8 +750,18 @@ def estado_referencia(*,usuario,empresa,referencia_id,estado,clave):
     if (obj.estado,estado) not in {('BORRADOR','PUBLICADA'),('PUBLICADA','RETIRADA')}:
         raise ValidationError('Transición de biblioteca no permitida.')
     documento_valido(obj.documento,empresa)
+    if estado == 'PUBLICADA' and obj.partes.filter(descripcion__regex=r'^\s*$').exists():
+        raise ValidationError('Corrija las posiciones sin descripción antes de publicar.')
     obj.estado=estado
     obj.save(update_fields=['estado'])
+    if estado == 'PUBLICADA':
+        mapa = obj.mapas.order_by('-version').first()
+        if mapa and mapa.provisional:
+            from .plano_services import guardar_mapa
+            guardar_mapa(usuario=usuario, empresa=empresa, referencia_id=obj.pk,
+                base_version=mapa.version, clave=uuid.uuid5(uuid.UUID(str(clave)), 'aprobar-mapa'),
+                posiciones=[dict(parte=p.parte_id, pagina=p.pagina, x=str(p.x), y=str(p.y))
+                            for p in mapa.posiciones.all()])
     _libevent(empresa,usuario,clave,'BIBLIOTECA_ESTADO',payload,obj.pk)
     if estado=='PUBLICADA' and settings.GOOGLE_DRIVE_ENABLED:
         transaction.on_commit(lambda:_encolar_documento(obj.documento_id))
@@ -771,7 +810,7 @@ def guardar_componente(*,usuario,empresa,datos,clave,componente_id=None):
 
 @transaction.atomic
 def guardar_parte(*,usuario,empresa,referencia_id,datos,clave,parte_id=None,eliminar=False):
-    _liblock(usuario,empresa)
+    _liblock(usuario,empresa,{'ADMIN','OFICINA'})
     ref=ReferenciaTecnica.objects.get(pk=referencia_id,empresa=empresa)
     payload=dict(id=parte_id,referencia=ref.pk,datos=datos,eliminar=eliminar)
     old=_libretry(empresa,clave,'BIBLIOTECA_PARTE',payload)

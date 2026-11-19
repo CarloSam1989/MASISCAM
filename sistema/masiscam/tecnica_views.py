@@ -294,7 +294,16 @@ def biblioteca(request):
             qs=qs.filter(**{field+'__icontains':value})
     query=request.GET.get('q','').strip()
     pagina=paginar_listado(request,qs.order_by('codigo','-revision'),{'codigo':'Codigo','titulo':'Titulo','marca':'Marca','modelo':'Modelo','estado':'Estado'})
-    return render(request,'masiscam/tecnica_biblioteca.html',dict(referencias=pagina,pagina=pagina,rol_tecnico=_role(request)))
+    solicitudes = []
+    if _role(request) == 'ADMIN':
+        from .models import Auditoria, Equipo, AplicabilidadReferenciaEquipo
+        eventos = Auditoria.objects.filter(empresa=request.empresa_activa, accion='PLANO_APLICABILIDAD_SOLICITADA').order_by('-pk')[:200]
+        for evento in eventos:
+            equipo = Equipo.objects.filter(pk=evento.detalle.get('equipo'), proyecto__empresa=request.empresa_activa).first()
+            ref = ReferenciaTecnica.objects.filter(pk=evento.objeto_id, empresa=request.empresa_activa, estado='PUBLICADA').first()
+            if equipo and ref and not AplicabilidadReferenciaEquipo.objects.filter(referencia=ref, equipo=equipo, activa=True).exists():
+                solicitudes.append(dict(equipo=equipo, referencia=ref, evento=evento))
+    return render(request,'masiscam/tecnica_biblioteca.html',dict(referencias=pagina,pagina=pagina,rol_tecnico=_role(request),solicitudes_plano=solicitudes))
 
 
 @require_http_methods(['GET','POST'])
@@ -358,8 +367,8 @@ def biblioteca_referencia(request,pk):
             rol_tecnico=_role(request)), status=400 if request.method=='POST' else 200)
     forms={'parte':ParteForm(empresa=request.empresa_activa),'aplicabilidad':AplicabilidadForm(empresa=request.empresa_activa)}
     if request.method=='POST':
-        svc.autorizar_tecnica(request.user,request.empresa_activa,{'ADMIN'})
         action=request.POST.get('op')
+        svc.autorizar_tecnica(request.user,request.empresa_activa,{'ADMIN', 'OFICINA'} if action == 'parte' else {'ADMIN'})
         form=(ParteForm(request.POST,empresa=request.empresa_activa) if action=='parte' else
               AplicabilidadForm(request.POST,empresa=request.empresa_activa) if action=='aplicabilidad' else BaseForm(request.POST))
         forms[action]=form

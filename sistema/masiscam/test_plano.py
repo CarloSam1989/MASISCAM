@@ -125,12 +125,13 @@ class PlanoTests(TestCase):
         self.assertEqual(self.diag.piezas.count(), 0)
 
     def test_permisos_empresa_asignacion_csrf_y_urls_ajax(self):
-        for codigo in ('TALLER','ADMIN','PLANTA','OFICINA','GERENCIA','CONSULTA'):
+        for codigo in ('TALLER','ADMIN','PLANTA','OFICINA'):
             user = self.planta if codigo == 'PLANTA' else self.oficina if codigo == 'OFICINA' else qa.usuario(self.empresa, 'plano-'+codigo, codigo)
             self.client.force_login(user)
             self.assertEqual(self.client.post(reverse('masiscam:plano_pieza', args=[self.diag.pk]), {}).status_code, 403)
             if codigo != 'PLANTA':
-                self.assertEqual(self.client.post(reverse('masiscam:plano_mapa', args=[self.ref.pk]), '{}', content_type='application/json').status_code, 403)
+                expected = 400 if codigo == 'ADMIN' else 403
+                self.assertEqual(self.client.post(reverse('masiscam:plano_mapa', args=[self.ref.pk]), '{}', content_type='application/json').status_code, expected)
             if codigo == 'TALLER':
                 for name in ('plano', 'plano_datos'):
                     self.assertIn(self.client.get(reverse('masiscam:'+name, args=[self.ref.pk])).status_code, (403,404))
@@ -166,6 +167,43 @@ class PlanoTests(TestCase):
             tipo='DIAGNOSTICO', clave=uuid.uuid4(), motivo='Corrección QA')
         self.assertEqual(nueva.piezas.get().fotografias.get().diagnostico_id, nueva.pk)
         self.assertNotEqual(nueva.piezas.get().pk, pk)
+
+    def test_compatibilidad_completa_y_aprobacion_explicita(self):
+        equipo = self.exp.registro.equipo
+        equipo.fabricante, equipo.modelo = 'DERAN', 'M20A'
+        equipo.operacion, equipo.rotacion, equipo.ratio = 'VERTICAL', '#1', '3:1'
+        equipo.save(update_fields=['fabricante', 'modelo', 'operacion', 'rotacion', 'ratio'])
+        def candidatos():
+            return tecnica.planos_compatibles_equipo(usuario=self.planta, empresa=self.empresa, equipo=equipo)
+        result = candidatos()
+        self.assertEqual([ref.pk for ref in result['candidatos']], [self.ref.pk])
+        self.assertTrue(result['candidatos'][0].aprobada)
+        self.ref.aplicabilidades.filter(equipo=equipo).update(activa=False)
+        self.assertFalse(candidatos()['candidatos'][0].aprobada)
+        equipo.rotacion = '#2'
+        self.assertFalse(candidatos()['candidatos'])
+        equipo.rotacion = ''
+        self.assertIn('rotacion', candidatos()['faltantes'])
+        with self.assertRaises(PermissionDenied):
+            tecnica.planos_compatibles_equipo(usuario=self.oficina, empresa=self.empresa, equipo=equipo)
+
+    def test_solicitud_plano_es_auditada_y_no_duplica(self):
+        from .models import Auditoria
+        equipo = self.exp.registro.equipo
+        equipo.registrado_por = self.tecnico
+        equipo.fabricante, equipo.modelo = 'DERAN', 'M20A'
+        equipo.operacion, equipo.rotacion, equipo.ratio = 'VERTICAL', '#1', '3:1'
+        equipo.save(update_fields=['registrado_por', 'fabricante', 'modelo', 'operacion', 'rotacion', 'ratio'])
+        self.ref.aplicabilidades.filter(equipo=equipo).update(activa=False)
+        url = reverse('masiscam:solicitar_plano', args=[equipo.pk])
+        for unused in range(2):
+            self.assertEqual(self.client.post(url, {'referencia': self.ref.pk}).status_code, 302)
+        self.assertEqual(Auditoria.objects.filter(empresa=self.empresa, accion='PLANO_APLICABILIDAD_SOLICITADA',
+            objeto_id=str(self.ref.pk), detalle__equipo=equipo.pk).count(), 1)
+        self.assertFalse(self.ref.aplicabilidades.filter(equipo=equipo, activa=True).exists())
+        equipo.rotacion = '#2'
+        equipo.save(update_fields=['rotacion'])
+        self.assertEqual(self.client.post(url, {'referencia': self.ref.pk}).status_code, 404)
 
     def test_csv_revision_humana_no_inventa_datos(self):
         text='posicion,numero_parte,descripcion,unidad,cantidad_referencia,pagina\n91,,STEADY BUSHING V2030-SB-____,,,1\n'

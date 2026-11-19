@@ -226,6 +226,14 @@ def contexto(request,exp,errores=None):
         taller_simple=context['rol']=='TALLER' and not sol and not historica,
         plano_activo=next(iter(planos),None),
         adquisiciones=sol.adquisiciones.select_related('pieza','documento').order_by('pk') if sol else [])
+    if context['rol'] == 'TALLER' and settings.MASISCAM_TECNICA_LOCAL:
+        equipo = exp.registro.equipo
+        if equipo.tipo_producto == 'REDUCTOR':
+            from .tecnica_services import planos_compatibles_equipo
+            context['planos_compatibles'] = planos_compatibles_equipo(usuario=request.user,
+                empresa=request.empresa_activa, equipo=equipo)
+            context['plano_acceso_expediente'] = exp.asignaciones_tecnicas.filter(
+                tecnico=request.user, fin__isnull=True).exists()
     return context
 
 

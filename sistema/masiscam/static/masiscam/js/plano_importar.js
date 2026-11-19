@@ -1,15 +1,16 @@
 const form = document.querySelector('#pl-import-form');
 if (form) {
-  form.querySelector('[value="revisar"]').addEventListener('click', async event => {
+  for (const reviewButton of form.querySelectorAll('[value="revisar"], [value="revisar_excel"]')) reviewButton.addEventListener('click', async event => {
     event.preventDefault();
     const button = event.currentTarget, status = document.querySelector('#pl-import-status');
     button.disabled = true; status.hidden = false; status.textContent = 'Revisando filas…';
     try {
-      const data = new FormData(form); data.set('op','revisar'); data.delete('archivo');
+      const data = new FormData(form); data.set('op', button.value); data.delete('archivo');
       const response = await fetch(form.action || location.href, {method:'POST', body:data,
         credentials:'same-origin', headers:{Accept:'application/json','X-CSRFToken':data.get('csrfmiddlewaretoken')}});
       const result = await response.json().catch(()=>({error:'No se pudo verificar la lista. Revise su acceso y vuelva a intentarlo.'}));
       if (!response.ok || result.error) throw new Error(result.error || 'No se pudo verificar la lista.');
+      if (result.materiales !== undefined) form.elements.materiales.value = result.materiales;
       const body = document.querySelector('#pl-import-rows'); body.replaceChildren();
       for (const row of result.filas) {
         const tr = document.createElement('tr');

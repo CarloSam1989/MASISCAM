@@ -28,7 +28,15 @@ from .test_recepcion import fixtures,argumentos,foto
 def usuario(empresa,nombre,rol):
     user=get_user_model().objects.create_user(username=nombre,password='QA-only-12345')
     perfil=Perfil.objects.create(user=user,empresa=empresa)
-    RolMasiscam.objects.create(perfil=perfil,rol=rol)
+    RolMasiscam.objects.create(perfil=perfil,rol={'PLANTA': 'ADMIN', 'TECNICO': 'TALLER'}.get(rol, rol))
+    return user
+
+
+def taller_propietario(empresa,nombre,exp):
+    user=usuario(empresa,nombre,'TALLER')
+    equipo=exp.registro.equipo
+    equipo.registrado_por=user
+    equipo.save(update_fields=['registrado_por'])
     return user
 
 
@@ -36,6 +44,8 @@ def preparar():
     empresa,oficina,rol,cliente,equipo=fixtures()
     planta=usuario(empresa,'planta-qa','PLANTA')
     tecnico=usuario(empresa,'tecnico-qa','TECNICO')
+    equipo.registrado_por = tecnico
+    equipo.save(update_fields=['registrado_por'])
     exp=abrir_recepcion(**argumentos(empresa,oficina,cliente,equipo,fotografias=[foto()]))
     confirmar_recepcion(usuario=oficina,empresa=empresa,expediente_id=exp.pk,clave=uuid.uuid4(),placa='SIN_PLACA',
         motivo_sin_placa='Equipo de prueba sin placa',motivo_sin_guia='Entrega ficticia sin guía',general_id=exp.recepcion.evidencias.get().pk)
@@ -85,7 +95,7 @@ class TecnicaTests(TestCase):
 
     def referencia(self):
         r=s.guardar_referencia(usuario=self.planta,empresa=self.empresa,clave=uuid.uuid4(),archivo=pdf_plano(),datos=dict(
-            codigo='REF-QA',tipo='PLANO',titulo='Plano de prueba',procedencia='Fuente QA sintética',autorizacion_uso='Uso y congelación QA expresamente indicados',proyecto_id=self.exp.registro.equipo.proyecto_id))
+            codigo='REF-QA',tipo='PLANO',titulo='Plano de prueba',marca='DERAN',modelo='M20A',operacion='VERTICAL',rotacion='#1',ratio='3:1',procedencia='Fuente QA sintética',autorizacion_uso='Uso y congelación QA expresamente indicados',proyecto_id=self.exp.registro.equipo.proyecto_id))
         p=s.guardar_parte(usuario=self.planta,empresa=self.empresa,referencia_id=r.pk,clave=uuid.uuid4(),datos=dict(
             posicion='A',descripcion='Componente QA',numero_parte='QA-PARTE',unidad='unidad declarada'))
         s.estado_referencia(usuario=self.planta,empresa=self.empresa,referencia_id=r.pk,estado='PUBLICADA',clave=uuid.uuid4())
@@ -126,7 +136,8 @@ class TecnicaTests(TestCase):
             s.crear_revision(usuario=self.tecnico,empresa=self.empresa,expediente_id=exp.pk,tipo='INSPECCION',clave=uuid.uuid4())
         s.asignar_tecnico(usuario=self.planta,empresa=self.empresa,expediente_id=exp.pk,tecnico_id=self.tecnico.pk,motivo='QA',clave=uuid.uuid4())
         with self.assertRaises(ValidationError):
-            s.crear_revision(usuario=self.tecnico,empresa=self.empresa,expediente_id=exp.pk,tipo='INSPECCION',clave=uuid.uuid4())
+            s.crear_revision(usuario=self.planta,empresa=self.empresa,expediente_id=exp.pk,tipo='INSPECCION',clave=uuid.uuid4())
+        self.assertEqual(s.crear_revision(usuario=self.tecnico,empresa=self.empresa,expediente_id=exp.pk,tipo='INSPECCION',clave=uuid.uuid4()).tecnico,self.tecnico)
 
     def test_borrador_incompleto_envio_rechaza_cada_minimo(self):
         i=self.crear_i()
@@ -149,21 +160,22 @@ class TecnicaTests(TestCase):
                 s.guardar_revision(**{**args,**changed})
 
     def test_roles_sin_bypass_y_empresa_ajena(self):
-        for role in ('OFICINA','GERENCIA','ADMIN','CONSULTA'):
+        for role in ('OFICINA','ADMIN'):
             u=usuario(self.empresa,'rol-'+role,role)
             u.is_superuser=True
             u.save()
             with self.assertRaises(PermissionDenied):
                 s.crear_revision(usuario=u,**self.base,tipo='INSPECCION',clave=uuid.uuid4())
-            with self.assertRaises(PermissionDenied):
-                s.asignar_tecnico(usuario=u,**self.base,tecnico_id=self.tecnico.pk,motivo='QA',clave=uuid.uuid4())
+            if role!='ADMIN':
+                with self.assertRaises(PermissionDenied):
+                    s.asignar_tecnico(usuario=u,**self.base,tecnico_id=self.tecnico.pk,motivo='QA',clave=uuid.uuid4())
         ajena=Empresa.objects.create(nombre='QA ajena')
         with self.assertRaises(PermissionDenied):
             s.expediente_autorizado(self.planta,ajena,self.exp.pk)
 
     def test_reasignacion_no_transfiere_autoria(self):
         i=self.crear_i()
-        nuevo=usuario(self.empresa,'tecnico-nuevo','TECNICO')
+        nuevo=taller_propietario(self.empresa,'tecnico-nuevo',self.exp)
         args=dict(usuario=self.planta,**self.base,tecnico_id=nuevo.pk,motivo='Reasignación QA',clave=uuid.uuid4())
         s.asignar_tecnico(**args)
         self.assertEqual(s.asignar_tecnico(**args).tecnico,nuevo)
@@ -179,7 +191,7 @@ class TecnicaTests(TestCase):
         inspeccion_enviada(self.empresa,self.tecnico,self.exp)
         d=diagnostico_enviado(self.empresa,self.tecnico,self.exp)
         rol=RolMasiscam.objects.get(perfil__user=self.tecnico,perfil__empresa=self.empresa)
-        rol.rol='PLANTA'
+        rol.rol='ADMIN'
         rol.save()
         with self.assertRaises(PermissionDenied):
             s.decidir_diagnostico(usuario=self.tecnico,empresa=self.empresa,diagnostico_id=d.pk,decision='APROBADO',motivo='',clave=uuid.uuid4())
@@ -248,7 +260,7 @@ class TecnicaTests(TestCase):
         ref,_=self.referencia()
         with self.assertRaises(IntegrityError),transaction.atomic():
             Documento.objects.filter(pk=ref.documento_id).update(publico=True)
-        args=dict(usuario=self.oficina,empresa=self.empresa,clave=uuid.uuid4(),datos={})
+        args=dict(usuario=self.tecnico,empresa=self.empresa,clave=uuid.uuid4(),datos={})
         with self.assertRaises(PermissionDenied):
             s.guardar_referencia(**args)
         self.client.force_login(self.tecnico)
@@ -268,7 +280,7 @@ class TecnicaTests(TestCase):
         self.assertIn(ref,s.referencias_visibles(self.tecnico,self.empresa))
         self.client.force_login(self.tecnico)
         legacy=self.client.get(reverse('masiscam:proyecto_detalle',args=[proyecto.pk]))
-        self.assertNotContains(legacy,'Plano compartido autorizado')
+        self.assertEqual(legacy.status_code,403)
         response=self.client.get(reverse('masiscam:biblioteca_documento',args=[ref.pk]))
         self.assertEqual(response.status_code,200)
         b''.join(response.streaming_content)
@@ -291,13 +303,13 @@ class TecnicaTests(TestCase):
 
     def test_autor_fuente_no_puede_aprobar_revision_copiada(self):
         i=inspeccion_enviada(self.empresa,self.tecnico,self.exp)
-        nuevo=usuario(self.empresa,'otro-autor','TECNICO')
+        nuevo=taller_propietario(self.empresa,'otro-autor',self.exp)
         s.asignar_tecnico(usuario=self.planta,**self.base,tecnico_id=nuevo.pk,motivo='Nuevo autor',clave=uuid.uuid4())
         nueva=s.crear_revision(usuario=self.planta,**self.base,tipo='INSPECCION',clave=uuid.uuid4(),motivo='Revisión de fuente')
         s.enviar_revision(usuario=nuevo,empresa=self.empresa,tipo='INSPECCION',revision_id=nueva.pk,version=1,clave=uuid.uuid4())
         d=diagnostico_enviado(self.empresa,nuevo,self.exp)
         rol=RolMasiscam.objects.get(perfil__user=self.tecnico,perfil__empresa=self.empresa)
-        rol.rol='PLANTA'
+        rol.rol='ADMIN'
         rol.save()
         with self.assertRaises(PermissionDenied):
             s.decidir_diagnostico(usuario=self.tecnico,empresa=self.empresa,diagnostico_id=d.pk,decision='APROBADO',motivo='',clave=uuid.uuid4())
@@ -351,7 +363,7 @@ class TecnicaTests(TestCase):
         html=self.client.get(reverse('masiscam:tecnica_revision',args=['DIAGNOSTICO',d.pk]))
         self.assertContains(html,f'value="{timezone.localdate().isoformat()}"')
         s.crear_revision(usuario=self.planta,**self.base,tipo='INSPECCION',clave=uuid.uuid4(),motivo='Revisar fuente')
-        response=self.client.get(reverse('masiscam:tecnica_expediente',args=[self.exp.pk]))
+        response=self.client.get(reverse('masiscam:tecnica_expediente',args=[self.exp.pk])+'?avanzado=1')
         self.assertContains(response,'Fuente sustituida')
         self.assertFalse(s.vigente(d))
 

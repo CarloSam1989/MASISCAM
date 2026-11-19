@@ -100,8 +100,9 @@ def plano(request, pk):
         revision_plano=svc.revision_plano(ref) if ref.expediente_trabajo_id else None,
         plano_form=PlanoTrabajoForm(auto_id='pl_upload_%s') if editable else None,
         enviar_form=EnviarPiezasForm(initial={'version':obj.version_edicion}, auto_id='pl_send_%s') if editable else None,
-        editable_plano=editable, configurar=(request.rol_masiscam.rol == 'ADMIN' and
-            ref.estado == 'PUBLICADA' and not ref.expediente_trabajo_id)))
+        editable_plano=editable, configurar=(not ref.expediente_trabajo_id and
+            (request.rol_masiscam.rol == 'ADMIN' and ref.estado in {'BORRADOR', 'PUBLICADA'} or
+             request.rol_masiscam.rol == 'OFICINA' and ref.estado == 'BORRADOR'))))
 
 
 @require_GET
@@ -221,13 +222,15 @@ def plano_componente(request, pk):
 @masiscam_access_required
 @errores_api
 def plano_mapa(request, pk):
-    rol = tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN', 'TALLER'})
+    rol = tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN', 'TALLER', 'OFICINA'})
     if rol.rol == 'TALLER':
         ref = ReferenciaTecnica.objects.filter(pk=pk, empresa=request.empresa_activa,
             tipo='PLANO', estado='BORRADOR', expediente_trabajo__isnull=False).first()
         if not ref:
             raise PermissionDenied('TALLER solo marca el plano provisional de su expediente.')
         tecnica.expediente_autorizado(request.user, request.empresa_activa, ref.expediente_trabajo_id, {'TALLER'})
+    elif rol.rol == 'OFICINA' and not ReferenciaTecnica.objects.filter(pk=pk, empresa=request.empresa_activa, tipo='PLANO', estado='BORRADOR', expediente_trabajo__isnull=True).exists():
+        raise PermissionDenied('OFICINA solo configura planos de biblioteca en borrador.')
     if len(request.body) > 250000:
         raise ValidationError('La configuración excede el tamaño permitido.')
     try:
@@ -284,9 +287,15 @@ def plano_pieza(request, pk):
 
 
 class ImportarForm(BaseForm):
+    excel = forms.FileField(required=False, label='Excel de repuestos (.xlsx), para revisión')
     proyecto_id = forms.ModelChoiceField(queryset=Proyecto.objects.none(), label='Proyecto de la empresa para custodiar el original')
     archivo = forms.FileField(label='PDF original M20A-HNRC · 3:1 · Figura 1')
     materiales = forms.CharField(max_length=250000, widget=forms.Textarea(attrs={'rows': 12}), label='CSV de materiales para revisión')
+    marca = forms.CharField(max_length=120, label='Fabricante')
+    modelo = forms.CharField(max_length=120, label='Modelo')
+    operacion = forms.CharField(max_length=80, label='Operacion')
+    rotacion = forms.CharField(max_length=80, label='Rotacion')
+    ratio = forms.CharField(max_length=80, label='Relacion de transmision')
     procedencia = forms.CharField(max_length=20000, widget=forms.Textarea(attrs={'rows': 2}))
     autorizacion = forms.CharField(max_length=20000, widget=forms.Textarea(attrs={'rows': 2}), label='Fundamento de uso autorizado')
     version_fabricante = forms.CharField(required=False, max_length=100, label='Revisión del fabricante verificada (vacío si no consta)')
@@ -304,7 +313,7 @@ class ImportarForm(BaseForm):
 @local
 @masiscam_access_required
 def plano_importar(request):
-    tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN'})
+    tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN', 'OFICINA'})
     from pathlib import Path
     seed = (Path(__file__).parent / 'data/m20a_hnrc_fig1_revision.csv').read_text(encoding='utf-8')
     form = ImportarForm(request.POST or None, request.FILES or None, empresa=request.empresa_activa,
@@ -312,11 +321,18 @@ def plano_importar(request):
     rows = []
     if request.method == 'POST':
         try:
-            rows = svc.leer_materiales(request.POST.get('materiales', ''))
+            if request.POST.get('op') == 'revisar_excel':
+                excel = request.FILES.get('excel')
+                if not excel or not excel.name.lower().endswith('.xlsx'):
+                    raise ValidationError('Seleccione un archivo .xlsx.')
+                materiales = svc.leer_excel_materiales(excel)
+                return JsonResponse({'materiales': materiales, 'filas': svc.leer_materiales(materiales, permitir_incompletas=True)})
+            rows = svc.leer_materiales(request.POST.get('materiales', ''), permitir_incompletas=True)
             if request.POST.get('op') == 'revisar' and request.headers.get('Accept') == 'application/json':
                 return JsonResponse({'filas': rows})
             if request.POST.get('op') == 'guardar' and form.is_valid():
                 data = form.cleaned_data.copy()
+                data.pop('excel', None)
                 data['proyecto_id'] = data['proyecto_id'].pk
                 data['sustituye_id'] = data['sustituye_id'].pk if data['sustituye_id'] else None
                 ref = svc.importar_m20(usuario=request.user, empresa=request.empresa_activa, **data)

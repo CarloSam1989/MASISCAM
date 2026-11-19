@@ -68,20 +68,20 @@ VISTAS_TALLER = {
     "masiscam.calibracion_views": {"inicio", "expediente", "revision", "documento", "fuente"},
     "masiscam.cierre_views": {"detalle", "documento", "historial"},
     "masiscam.views": {"dashboard", "ficha_crear", "equipo_crear", "clientes", "equipo_foto_privada"},
-    "masiscam.taller_views": {"taller_inicio", "taller_estado", "taller_cuenta", "taller_equipo"},
+    "masiscam.taller_views": {"taller_inicio", "taller_estado", "taller_cuenta", "taller_equipo", "solicitar_plano"},
     "masiscam.recepcion_views": {"expedientes", "recepcion_crear", "expediente_detalle",
         "recepcion_finalizar", "recepcion_documento", "recepcion_foto_previsualizar"},
 }
 
 VISTAS_OFICINA = {
-    'masiscam.plano_views': {'plano', 'plano_datos'},
+    'masiscam.plano_views': {'plano', 'plano_datos', 'plano_importar', 'plano_mapa'},
     'masiscam.oficina_views': {'inicio'},
     'masiscam.flujo_views': {'bandeja','detalle','documento'},
     'masiscam.views': {'dashboard','clientes','cliente_detalle','cliente_crear','cliente_editar',
         'producto_listado','ficha_detalle','equipo_informe','equipo_foto_privada','equipo_documento_privado'},
     'masiscam.recepcion_views': {'expedientes','recepcion_crear','expediente_detalle','recepcion_finalizar',
         'guia_emitir','guia_reintentar','recepcion_documento','recepcion_foto_previsualizar'},
-    'masiscam.tecnica_views': {'tecnica_informe','tecnica_documento','biblioteca_documento'},
+    'masiscam.tecnica_views': {'tecnica_informe','tecnica_documento','biblioteca_documento','biblioteca','biblioteca_referencia'},
     'masiscam.operacion_views': {'inicio','detalle','operar','documento'},
     'masiscam.cierre_views': {'detalle','documento'},
 }
