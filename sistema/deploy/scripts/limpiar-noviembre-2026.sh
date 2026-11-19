@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Uso: bash deploy/scripts/limpiar-noviembre-2026.sh EMPRESA_ID ADMIN_USER_ID [--simular]
+# Uso: bash deploy/scripts/limpiar-noviembre-2026.sh [--simular]
+# Detecta la única empresa y el único ADMINISTRADOR activo; si hay más de uno, se detiene sin elegir.
 # Sin Internet: usa pg_restore de la imagen postgres:16-alpine que ya usa el servicio db.
 # --simular: respaldo + restauración verificada + ensayo con rollback; NUNCA borra.
 # Sin --simular pide, además, confirmación escrita exacta antes del borrado definitivo.
 # Conserva usuarios, roles, credenciales, catálogos, configuración, auditoría y archivos compartidos.
 set -euo pipefail
 umask 077
-EMPRESA=${1:?Uso: limpiar-noviembre-2026.sh EMPRESA_ID ADMIN_USER_ID [--simular]}
-USUARIO=${2:?Uso: limpiar-noviembre-2026.sh EMPRESA_ID ADMIN_USER_ID [--simular]}
-MODO=${3:-}
-[[ "$EMPRESA" =~ ^[0-9]+$ && "$USUARIO" =~ ^[0-9]+$ && ( -z "$MODO" || "$MODO" == --simular ) ]] || { echo "Argumentos inválidos"; exit 1; }
+MODO=${1:-}
+[[ -z "$MODO" || "$MODO" == --simular ]] || { echo "Uso: limpiar-noviembre-2026.sh [--simular]"; exit 1; }
 cd -- "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 [[ -f .env ]] || { echo ".env ausente"; exit 1; }
 set -a; . ./.env; set +a
@@ -49,6 +48,15 @@ exec docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER=qa -e PGPASSWOR
 SHIM
 chmod 755 "$CUST/pg_restore"
 QAURL="postgres://qa:${QAPASS}@127.0.0.1:5432/masiscam_qa_limpieza"
+
+read -r EMPRESA USUARIO < <(docker exec "$RUNNER" python manage.py shell -c "
+from accounts.models import Empresa
+from masiscam.models import RolMasiscam
+e=list(Empresa.objects.values_list('pk',flat=True))
+a=list(RolMasiscam.objects.filter(rol='ADMIN',activo=True,perfil__activo=True,perfil__empresa__activa=True,perfil__user__is_active=True).values_list('perfil__user_id','perfil__empresa_id').distinct())
+print(e[0] if len(e)==1 else 'ERR', a[0][0] if len(a)==1 and len(e)==1 and a[0][1]==e[0] else 'ERR')" | tail -1)
+[[ "$EMPRESA" =~ ^[0-9]+$ && "$USUARIO" =~ ^[0-9]+$ ]] || { echo "Se requiere exactamente 1 empresa y 1 ADMINISTRADOR activo; no se elige arbitrariamente. Detenido."; exit 1; }
+echo "Empresa $EMPRESA, ADMINISTRADOR (usuario) $USUARIO"
 
 mc() {
   docker exec -e GOOGLE_DRIVE_ENABLED=False "$RUNNER" python manage.py depurar_dos_equipos_prueba "$@" \
