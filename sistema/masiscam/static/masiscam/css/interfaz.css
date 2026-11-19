@@ -33,6 +33,15 @@
 .sistema-masiscam main .mf-details{margin-top:0;padding-top:14px}.sistema-masiscam .mc-technical-stage{margin-top:14px;padding-top:12px;border-top:1px solid var(--mc-line)}
 .sistema-masiscam .mc-toolbar{margin:12px 0;gap:10px}.sistema-masiscam .mc-pagination{padding:10px 0}.sistema-masiscam .app-footer{padding:14px 0;margin-top:24px}
 
-.sistema-masiscam .mc-header .app-products-toggle{padding:8px 6px;border-radius:6px;font-size:.78rem;color:var(--mc-ink);white-space:nowrap}.sistema-masiscam .mc-header .app-products-toggle:hover,.sistema-masiscam .mc-header .app-products-toggle[aria-expanded=true]{background:#f0f4f8}
-.sistema-masiscam .mc-header .app-products-list a,.sistema-masiscam .mc-header .app-products-list span{font-size:.85rem;padding:8px 12px;text-align:left}
-@media(max-width:1199px){.sistema-masiscam .mc-header .app-products{width:100%}.sistema-masiscam .mc-header .app-products-toggle{width:100%;justify-content:space-between;padding:10px 12px}.sistema-masiscam .mc-header .app-products-list{position:static;box-shadow:none;margin:4px 0 4px 12px;min-width:0;width:auto}}
+/* Productos: mismo aspecto que los enlaces del menú; todo el estilo vive en este archivo versionado. */
+.sistema-masiscam .mc-header .app-products{position:relative;flex:none}
+.sistema-masiscam .mc-header .app-menu .app-products-toggle{-webkit-appearance:none;appearance:none;display:block;margin:0;padding:8px 6px;border:0;border-radius:6px;background:transparent;box-shadow:none;color:var(--mc-ink);font:inherit;font-size:.78rem;line-height:inherit;white-space:nowrap;cursor:pointer;min-height:0}
+.sistema-masiscam .mc-header .app-menu .app-products-toggle:after{content:"";display:inline-block;margin:0 0 3px 6px;border:solid currentColor;border-width:0 1.5px 1.5px 0;padding:2px;transform:rotate(45deg)}
+.sistema-masiscam .mc-header .app-menu .app-products-toggle[aria-expanded=true]:after{margin:3px 0 0 6px;transform:rotate(-135deg)}
+.sistema-masiscam .mc-header .app-menu .app-products-toggle:hover,.sistema-masiscam .mc-header .app-menu .app-products-toggle:focus-visible{background:#f0f4f8}
+.sistema-masiscam .mc-header .app-menu .app-products-toggle[aria-expanded=true]{background:#eaf1f8}
+.sistema-masiscam .mc-header .app-products-list{position:fixed;top:0;left:0;z-index:1080;min-width:220px;display:flex;flex-direction:column;gap:2px;padding:6px;background:#fff;border:1px solid var(--mc-line);border-radius:8px;box-shadow:0 10px 28px #18304a2e}
+.sistema-masiscam .mc-header .app-products-list[hidden]{display:none}
+.sistema-masiscam .mc-header .app-products-list a,.sistema-masiscam .mc-header .app-products-list span{display:block;padding:9px 12px;border-radius:6px;font-size:.85rem;text-align:left;white-space:nowrap;color:var(--mc-ink)}
+.sistema-masiscam .mc-header .app-products-list span{color:#7a8794;cursor:not-allowed}
+@media(max-width:1199px){.sistema-masiscam .mc-header .app-products{width:100%}.sistema-masiscam .mc-header .app-menu .app-products-toggle{width:100%;padding:10px 12px;text-align:left}.sistema-masiscam .mc-header .app-products-list{position:static;min-width:0;margin:4px 0 4px 12px;box-shadow:none}}

@@ -77,7 +77,7 @@ const btn=box.querySelector('.app-products-toggle'),list=box.querySelector('.app
 const place=()=>{if(window.innerWidth<1200){list.style.top=list.style.left='';return;}const r=btn.getBoundingClientRect();list.style.top=(r.bottom+6)+'px';list.style.left=Math.max(8,Math.min(r.left,window.innerWidth-list.offsetWidth-8))+'px';};
 const set=open=>{list.hidden=!open;btn.setAttribute('aria-expanded',String(open));if(open)place();};
 window.addEventListener('resize',()=>{if(!list.hidden)place();});window.addEventListener('scroll',()=>{if(!list.hidden)set(false);},true);
-btn.addEventListener('click',e=>{e.stopPropagation();set(list.hidden);});
+btn.addEventListener('click',e=>{e.stopPropagation();set(list.hidden);});list.addEventListener('click',e=>{if(e.target.closest('a'))set(false);});
 document.addEventListener('click',e=>{if(!box.contains(e.target))set(false);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!list.hidden){set(false);btn.focus();}});
 })();
