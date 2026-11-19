@@ -71,3 +71,13 @@
     if(cfg.numero>1)links.append(link('Anterior',cfg.numero-1));links.append(node('span',`${cfg.numero} / ${cfg.paginas}`));if(cfg.numero<cfg.paginas)links.append(link('Siguiente',cfg.numero+1));pager.append(links);wrap.after(pager);
   }
 })();
+
+(()=>{const box=document.querySelector('.app-products');if(!box)return;
+const btn=box.querySelector('.app-products-toggle'),list=box.querySelector('.app-products-list');
+const place=()=>{if(window.innerWidth<1200){list.style.top=list.style.left='';return;}const r=btn.getBoundingClientRect();list.style.top=(r.bottom+6)+'px';list.style.left=Math.max(8,Math.min(r.left,window.innerWidth-list.offsetWidth-8))+'px';};
+const set=open=>{list.hidden=!open;btn.setAttribute('aria-expanded',String(open));if(open)place();};
+window.addEventListener('resize',()=>{if(!list.hidden)place();});window.addEventListener('scroll',()=>{if(!list.hidden)set(false);},true);
+btn.addEventListener('click',e=>{e.stopPropagation();set(list.hidden);});
+document.addEventListener('click',e=>{if(!box.contains(e.target))set(false);});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!list.hidden){set(false);btn.focus();}});
+})();

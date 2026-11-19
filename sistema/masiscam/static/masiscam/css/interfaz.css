@@ -32,3 +32,7 @@
 .sistema-masiscam main .mf-main-action{min-height:44px;padding:9px 16px;margin-top:4px}.sistema-masiscam main .mf-links{margin-top:14px;gap:10px}
 .sistema-masiscam main .mf-details{margin-top:0;padding-top:14px}.sistema-masiscam .mc-technical-stage{margin-top:14px;padding-top:12px;border-top:1px solid var(--mc-line)}
 .sistema-masiscam .mc-toolbar{margin:12px 0;gap:10px}.sistema-masiscam .mc-pagination{padding:10px 0}.sistema-masiscam .app-footer{padding:14px 0;margin-top:24px}
+
+.sistema-masiscam .mc-header .app-products-toggle{padding:8px 6px;border-radius:6px;font-size:.78rem;color:var(--mc-ink);white-space:nowrap}.sistema-masiscam .mc-header .app-products-toggle:hover,.sistema-masiscam .mc-header .app-products-toggle[aria-expanded=true]{background:#f0f4f8}
+.sistema-masiscam .mc-header .app-products-list a,.sistema-masiscam .mc-header .app-products-list span{font-size:.85rem;padding:8px 12px;text-align:left}
+@media(max-width:1199px){.sistema-masiscam .mc-header .app-products{width:100%}.sistema-masiscam .mc-header .app-products-toggle{width:100%;justify-content:space-between;padding:10px 12px}.sistema-masiscam .mc-header .app-products-list{position:static;box-shadow:none;margin:4px 0 4px 12px;min-width:0;width:auto}}

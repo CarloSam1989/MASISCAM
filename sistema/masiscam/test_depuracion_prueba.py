@@ -57,7 +57,7 @@ class DepuracionPruebaTests(TransactionTestCase):
         root = Path(__file__).resolve().parent.parent / '.venv-rbac-pg/pgsql/bin'
         return root / 'pg_dump.exe', root / 'pg_restore.exe'
 
-    def backup(self):
+    def backup(self, **extra):
         dump, restore = self.tools()
         path = Path(self.temp.name) / 'backup.dump'
         cfg = connection.settings_dict
@@ -71,7 +71,7 @@ class DepuracionPruebaTests(TransactionTestCase):
         receipt = Path(self.temp.name) / 'verificado.json'
         # Autorizar únicamente los dos alias temporales creados por el procedimiento.
         with patch.object(type(self), 'databases', self.databases | {'depuracion_admin', 'depuracion_restore'}):
-            self.run_command('verificar-respaldo', **self.opts(), respaldo=str(path), qa_url=qa,
+            self.run_command('verificar-respaldo', **{**self.opts(), **extra}, respaldo=str(path), qa_url=qa,
                              pg_restore=str(restore), salida=str(receipt))
         return dict(respaldo=str(path), verificacion=str(receipt))
 
@@ -338,6 +338,65 @@ class DepuracionFlujoMensualTests(oficina_qa.OficinaFixture, TransactionTestCase
         pdf.refresh_from_db()
         self.assertEqual(pdf.archivo.read(), pdf_bytes)
         pdf.archivo.close()
+
+    def test_completo_elimina_registros_y_pdf_exclusivos_conserva_compartidos_y_es_idempotente(self):
+        if connection.vendor != 'postgresql':
+            self.skipTest('Sólo PostgreSQL 16 aislado.')
+        from django.core.files.storage import default_storage
+        from .models import Documento, Inspeccion, Diagnostico, PropuestaComercial
+        from .management.depuracion_mensual import inspect_month_full
+        self.temp = tempfile.TemporaryDirectory(prefix='masiscam-depuracion-completa-')
+        self.addCleanup(self.temp.cleanup)
+        with patch.object(timezone, 'now', return_value=datetime(2026, 11, 16, tzinfo=ZoneInfo('America/Bogota'))):
+            self.preparar()
+            prop = self.cotizar(archivo=None)
+        self.user, self._monthly = self.admin, True
+        pdf = prop.evidencias.get().documento
+        name = pdf.archivo.name
+        self.assertTrue(default_storage.exists(name))
+        usuarios = list(get_user_model().objects.order_by('pk').values_list('pk', 'password'))
+        roles = list(RolMasiscam.objects.order_by('pk').values())
+        foreign = Empresa.objects.create(nombre='Otra empresa conservada')
+        fproject = Proyecto.objects.create(empresa=foreign, codigo='OTRA', nombre='Otra', cliente='Otra',
+            responsable='QA', fecha_inicio='2026-11-16', creado_por=self.admin)
+        fequipo = Equipo.objects.create(proyecto=fproject, nombre='No tocar')
+        plan = inspect_month_full(self.empresa.pk)
+        self.assertEqual(plan['bloqueos'], [])
+        self.assertGreaterEqual(plan['cantidades']['pdf'], 1)
+        self.assertIn(name, [a['nombre'] for a in plan['archivos']])
+        folder = str(Path(self.temp.name) / 'custodia')
+        base = dict(mes='2026-11', completo=True, empresa=self.empresa.pk, usuario=self.admin.pk,
+                    huella=fingerprint(plan), carpeta=folder)
+        sim = self.run_command('simular', **{k: v for k, v in base.items() if k != 'carpeta'})['simulacion']
+        self.assertEqual(sim['cantidades']['eliminar'], plan['cantidades']['eliminar'])
+        self.assertTrue(default_storage.exists(name))
+        self.assertEqual(Documento.objects.filter(pk=pdf.pk).count(), 1)
+        with patch('masiscam.services.GoogleDriveService', side_effect=AssertionError('No tocar Drive')):
+            backup = self.backup(completo=True, huella=base['huella'], carpeta=folder)
+            self.assertTrue(default_storage.exists(name))
+            self.assertEqual(ExpedienteMantenimiento.objects.count() > 0, True)  # el ensayo revirtió todo
+            opts = dict(base, **backup, motivo='Pruebas noviembre verificadas',
+                        confirmar=f"LIMPIAR COMPLETO {self.empresa.pk} 2026-11 {base['huella']}")
+            with self.assertRaises(CommandError):
+                self.run_command('eliminar', **{**opts, 'confirmar': 'si'})
+            self.assertTrue(default_storage.exists(name))
+            result = self.run_command('eliminar', **opts)
+        self.assertGreaterEqual(result['archivos_fisicos_eliminados'], 1)
+        self.assertFalse(default_storage.exists(name))
+        self.assertFalse(Documento.objects.filter(pk=pdf.pk).exists())
+        self.assertFalse(ExpedienteMantenimiento.objects.filter(empresa=self.empresa).exists())
+        self.assertTrue(Equipo.objects.filter(pk=fequipo.pk).exists())
+        self.assertEqual(list(get_user_model().objects.order_by('pk').values_list('pk', 'password')), usuarios)
+        self.assertEqual(list(RolMasiscam.objects.order_by('pk').values()), roles)
+        self.assertTrue(Auditoria.objects.filter(accion='LIMPIEZA_COMPLETA_NOV2026').exists())
+        self.assertTrue(Cliente.objects.filter(pk=self.cliente.pk).exists())
+        self.assertTrue(Proyecto.objects.filter(pk=self.equipo.proyecto_id).exists())
+        after = Auditoria.objects.count()
+        with self.assertRaises(CommandError):
+            self.run_command('eliminar', **opts)
+        again = inspect_month_full(self.empresa.pk)
+        self.assertEqual(again['cantidades']['eliminar'], 0)
+        self.assertEqual(Auditoria.objects.count(), after)
 
 
 @override_settings(**oficina_qa.FLAGS)

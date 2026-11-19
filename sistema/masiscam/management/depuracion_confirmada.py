@@ -87,9 +87,9 @@ def inspect_confirmed(using='default'):
     if len(records) != 2 or len(files) != 2 or {x['registro_id'] for x in files} != ROOT_RECORDS:
         raise CommandError('El perfil exige exactamente registros 22/23 vinculados a expedientes 1/2. Sin sustituciones.')
     companies = {x['empresa_id'] for x in files}
-    equipos = list(Equipo.objects.using(using).filter(pk__in={r['equipo_id'] for r in records})
+    equipos = list(Equipo._base_manager.using(using).filter(pk__in={r['equipo_id'] for r in records})
                    .order_by('pk').values())
-    eq_companies = set(Equipo.objects.using(using).filter(pk__in=[e['id'] for e in equipos])
+    eq_companies = set(Equipo._base_manager.using(using).filter(pk__in=[e['id'] for e in equipos])
                        .values_list('proyecto__empresa_id', flat=True))
     if len(companies) != 1 or companies != eq_companies:
         raise CommandError('Empresa incoherente o mixta en los registros confirmados.')
@@ -165,8 +165,8 @@ def inspect_confirmed(using='default'):
     document_ids = {data['documento_id'] for data in rows.values() if data.get('documento_id')}
     document_ids.update(d['datos']['documento_id'] for d in detach.values() if d['datos'].get('documento_id'))
     # Los documentos permanecen enlazados a su equipo/proyecto: no borrar bytes ni Drive.
-    docs = list(Documento.objects.using(using).filter(pk__in=document_ids).order_by('pk').values())
-    if Documento.objects.using(using).filter(pk__in=document_ids).exclude(proyecto__empresa_id=company).exists():
+    docs = list(Documento._base_manager.using(using).filter(pk__in=document_ids).order_by('pk').values())
+    if Documento._base_manager.using(using).filter(pk__in=document_ids).exclude(proyecto__empresa_id=company).exists():
         blocked.append('Hay documentos asociados de otra empresa: no se permite archivarlos ni modificar su relación.')
     affected_tables = {key[0] for key in rows} | {key[0] for key in detach}
     catalog = guards(affected_tables, using)
@@ -184,13 +184,14 @@ def inspect_confirmed(using='default'):
 
 
 @contextmanager
-def scoped_guards(plan, using):
+def scoped_guards(plan, using, roots=None):
     """Excepción por fila, sólo en esta transacción; restaurar definiciones ANTES del commit."""
     connection = connections[using]
     if not connection.in_atomic_block:
         raise CommandError('La excepción acotada requiere una transacción.')
     q = connection.ops.quote_name
     schema = schema_name(using)
+    allowed = ','.join(str(int(x)) for x in sorted(ROOT_FILES if roots is None else roots))
     with connection.cursor() as cursor:
         cursor.execute('CREATE TEMP TABLE masiscam_purge_confirmada (tabla text,id bigint,op text,campo text, PRIMARY KEY(tabla,id,op)) ON COMMIT DROP')
         cursor.executemany('INSERT INTO pg_temp.masiscam_purge_confirmada VALUES (%s,%s,%s,%s)',
@@ -207,7 +208,7 @@ def scoped_guards(plan, using):
                     SELECT 1 FROM pg_temp.masiscam_purge_confirmada p
                     WHERE p.tabla=TG_TABLE_NAME AND p.id=OLD.id AND p.op='UPDATE'
                       AND p.campo IN ('expediente_id','expediente_trabajo_id')
-                      AND (to_jsonb(OLD)->>p.campo)::bigint IN (1,2)
+                      AND (to_jsonb(OLD)->>p.campo)::bigint IN (SELECT unnest(ARRAY[""" + allowed + """]::bigint[]))
                       AND to_jsonb(NEW)->p.campo='null'::jsonb
                       AND to_jsonb(NEW)-p.campo=to_jsonb(OLD)-p.campo) THEN RETURN NEW; END IF;
             """ + body.rstrip().rstrip(';') + ';\nEND;'
@@ -241,15 +242,15 @@ def apply_confirmed(plan, using='default'):
             if cursor.rowcount != 1:
                 raise CommandError('Borrado distinto del manifiesto: se revierte.')
         cursor.execute('SET CONSTRAINTS ALL IMMEDIATE')
-    if RegistroEquipo.objects.using(using).filter(pk__in=ROOT_RECORDS).exists() or ExpedienteMantenimiento.objects.using(using).filter(pk__in=ROOT_FILES).exists():
+    if RegistroEquipo._base_manager.using(using).filter(pk__in=ROOT_RECORDS).exists() or ExpedienteMantenimiento._base_manager.using(using).filter(pk__in=ROOT_FILES).exists():
         raise CommandError('Persisten raíces confirmadas: se revierte.')
-    kept = list(Equipo.objects.using(using).filter(pk__in=[r['id'] for r in plan['equipos_conservados']]).order_by('pk').values())
-    docs = list(Documento.objects.using(using).filter(pk__in=[r['id'] for r in plan['documentos_conservados']]).order_by('pk').values())
+    kept = list(Equipo._base_manager.using(using).filter(pk__in=[r['id'] for r in plan['equipos_conservados']]).order_by('pk').values())
+    docs = list(Documento._base_manager.using(using).filter(pk__in=[r['id'] for r in plan['documentos_conservados']]).order_by('pk').values())
     if fingerprint(kept) != fingerprint(plan['equipos_conservados']) or fingerprint(docs) != fingerprint(plan['documentos_conservados']):
         raise CommandError('Equipos o documentos conservados alterados: se revierte.')
     for row in plan['desvincular']:
         model = next(m for m in apps.get_models() if m._meta.db_table == row['tabla'])
-        current = model.objects.using(using).filter(pk=row['id']).values().first()
+        current = model._base_manager.using(using).filter(pk=row['id']).values().first()
         expected = dict(row['datos'], **{row['campo']: None})
         if fingerprint(current) != fingerprint(expected):
             raise CommandError('Se alteró información fuera de la desvinculación autorizada.')

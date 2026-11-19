@@ -34,7 +34,7 @@ def menu_compartido(context):
     if rol in {'ADMIN', 'OFICINA', 'TALLER'}:
         products = []
         for label, code in [('Bombas', 'bomba'), ('Reductores', 'reductor'),
-                            ('Motores el?ctricos', None), ('Motores di?sel', None),
+                            ('Motores eléctricos', None), ('Motores diésel', None),
                             ('Embarcaciones', None), ('Lubricantes', None),
                             ('Recubrimientos', None), ('Servicios', None)]:
             products.append(item(label, 'producto_listado', [code]) if code and rol != 'TALLER'

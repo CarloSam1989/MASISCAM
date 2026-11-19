@@ -42,7 +42,7 @@ def company_path(model):
 def inspect_month(empresa, using='default'):
     """Inventario integral; sólo borrar raíces mutables cuya fecha se pueda probar."""
     from accounts.models import Empresa
-    company = Empresa.objects.using(using).get(pk=empresa)
+    company = Empresa._base_manager.using(using).get(pk=empresa)
     zone = ZoneInfo('America/Bogota')
     start, end = datetime(2026, 11, 1, tzinfo=zone), datetime(2026, 12, 1, tzinfo=zone)
     result = {'mes': '2026-11', 'zona_horaria': str(zone), 'empresa_filtro': empresa,
@@ -58,7 +58,7 @@ def inspect_month(empresa, using='default'):
             result['sin_ruta_empresa'].append(label)
             continue
         created = next((f for f in model._meta.fields if getattr(f, 'auto_now_add', False)), None)
-        qs = model.objects.using(using).filter(**{path: empresa})
+        qs = model._base_manager.using(using).filter(**{path: empresa})
         if created:
             qs = qs.filter(**{created.name + '__gte': start, created.name + '__lt': end})
         rows = list(qs.order_by('pk').values()[:20001])
@@ -94,7 +94,7 @@ def inspect_month(empresa, using='default'):
             dependencies = []
             for rel in models[key]._meta.get_fields(include_hidden=True):
                 if rel.auto_created and not rel.concrete and (rel.one_to_many or rel.one_to_one):
-                    for pk in rel.related_model.objects.using(using).filter(
+                    for pk in rel.related_model._base_manager.using(using).filter(
                             **{rel.field.attname: key[1]}).values_list('pk', flat=True):
                         dependency = (rel.related_model._meta.label, pk)
                         if dependency not in candidates:
@@ -115,6 +115,9 @@ def inspect_plan(opts, using='default'):
     if opts.get('confirmados'):
         from masiscam.management.depuracion_confirmada import inspect_confirmed
         return inspect_confirmed(using)
+    if opts.get('completo'):
+        from masiscam.management.depuracion_mensual import inspect_month_full
+        return inspect_month_full(opts['empresa'], using)
     return inspect_month(opts['empresa'], using) if opts.get('mes') else inspect(opts['empresa'], using)
 
 
@@ -124,13 +127,13 @@ def apply_month_rows(plan, using='default'):
     for label in ('masiscam.RegistroEquipo', 'masiscam.Equipo'):
         ids = plan['eliminaria'].get(label, [])
         if ids:
-            count, breakdown = apps.get_model(label).objects.using(using).filter(pk__in=ids).delete()
+            count, breakdown = apps.get_model(label)._base_manager.using(using).filter(pk__in=ids).delete()
             if count != len(ids) or breakdown != {label: len(ids)}:
                 raise CommandError('Cascada inesperada: limpieza revertida íntegramente.')
             deleted[label] = ids
     for label, retained in plan['conservados'].items():
         previous = [row for row in plan['registros'][label]['datos'] if str(row['id']) in retained]
-        current = list(apps.get_model(label).objects.using(using).filter(
+        current = list(apps.get_model(label)._base_manager.using(using).filter(
             pk__in=[row['id'] for row in previous]).order_by('pk').values())
         if fingerprint(current) != fingerprint(previous):
             raise CommandError('Integridad de registros conservados alterada: transacción revertida.')
@@ -154,7 +157,7 @@ def file_hash(path):
 
 
 def inspect(empresa=None, using='default'):
-    qs = Equipo.objects.using(using).select_related('proyecto__empresa', 'cliente')
+    qs = Equipo._base_manager.using(using).select_related('proyecto__empresa', 'cliente')
     if empresa:
         qs = qs.filter(proyecto__empresa_id=empresa)
     equipos = list(qs.order_by('-creado_en', '-pk')[:2])
@@ -165,12 +168,12 @@ def inspect(empresa=None, using='default'):
             if not (rel.one_to_many or rel.one_to_one):
                 result['bloqueos'].append(f'Equipo {equipo.pk}: relación no soportada {rel.name}.')
                 continue
-            rows = list(rel.related_model.objects.using(using).filter(
+            rows = list(rel.related_model._base_manager.using(using).filter(
                 **{rel.field.attname: equipo.pk}).order_by('pk').values())
             if rows:
                 relaciones[rel.related_model._meta.label] = rows
                 result['bloqueos'].append(f'Equipo {equipo.pk}: conserva {len(rows)} {rel.related_model._meta.label}.')
-        expedientes = list(ExpedienteMantenimiento.objects.using(using).filter(
+        expedientes = list(ExpedienteMantenimiento._base_manager.using(using).filter(
             registro__equipo_id=equipo.pk).order_by('pk').values())
         # Detalle del expediente: mostrar cada relación, sin recolectar ni borrar cascadas.
         detalle_expedientes = []
@@ -179,7 +182,7 @@ def inspect(empresa=None, using='default'):
             for rel in ExpedienteMantenimiento._meta.related_objects:
                 if rel.one_to_many or rel.one_to_one:
                     detalle['relaciones'][rel.related_model._meta.label] = list(
-                        rel.related_model.objects.using(using).filter(
+                        rel.related_model._base_manager.using(using).filter(
                             **{rel.field.attname: exp['id']}).order_by('pk').values())
             detalle_expedientes.append(detalle)
         archivos = {f.name: str(getattr(equipo, f.name)) for f in Equipo._meta.fields
@@ -220,6 +223,7 @@ class Command(BaseCommand):
         parser.add_argument('--carpeta', help='Custodia local del perfil confirmado; nunca se sobrescriben constancias.')
         parser.add_argument('--operador', help='Nombre de usuario ADMINISTRADOR; no requiere introducir IDs.')
         parser.add_argument('--mes', choices=['2026-11'], help='Alcance autorizado: noviembre de 2026; exige empresa.')
+        parser.add_argument('--completo', action='store_true', help='Con --mes: elimina también documentos y PDF exclusivos.')
         parser.add_argument('--ids', nargs=2, type=int)
         parser.add_argument('--usuario', type=int)
         parser.add_argument('--huella')
@@ -270,6 +274,10 @@ class Command(BaseCommand):
             from masiscam.retiro_operativo import retirar_confirmados
             self.stdout.write(canonical(retirar_confirmados(opts)))
             return
+        if opts.get('completo') and (not opts.get('mes') or opts.get('confirmados') or opts.get('ids')):
+            raise CommandError('--completo exige --mes 2026-11 y no admite --confirmados ni --ids.')
+        if opts.get('completo') and opts['accion'] in {'verificar-respaldo', 'eliminar'} and not opts.get('carpeta'):
+            raise CommandError('--completo exige --carpeta de custodia para las copias de los archivos.')
         if opts.get('mes') and not opts['empresa']:
             raise CommandError('--mes exige --empresa explícita; no se permite limpieza global.')
         if opts.get('confirmados'):
@@ -391,6 +399,16 @@ class Command(BaseCommand):
                     transaction.set_rollback(True, using=restored_alias)
                 if fingerprint(inspect_plan(opts, using=restored_alias)) != fingerprint(plan):
                     raise CommandError('El ensayo de limpieza no revirtió exactamente la copia restaurada.')
+            elif opts.get('completo'):
+                from masiscam.management.depuracion_mensual import apply_month_full, archive_files
+                if plan['bloqueos']:
+                    raise CommandError('Dependencias no autorizadas: ' + ' '.join(plan['bloqueos']))
+                assets, missing = archive_files(plan, opts['carpeta'])
+                with transaction.atomic(using=restored_alias):
+                    apply_month_full(restored, using=restored_alias)
+                    transaction.set_rollback(True, using=restored_alias)
+                if fingerprint(inspect_plan(opts, using=restored_alias)) != fingerprint(plan):
+                    raise CommandError('Falló el rollback de la simulación completa sobre el respaldo restaurado.')
             elif opts.get('mes'):
                 # Ejercitar las guardas reales en la copia restaurada y revertir todos los cambios.
                 with transaction.atomic(using=restored_alias):
@@ -403,6 +421,7 @@ class Command(BaseCommand):
                        'verificado_por': opts['usuario'], 'ids': opts['ids'] or [],
                        'mes': opts.get('mes'), 'empresa': opts['empresa'],
                        'limpieza_probada_pg16': bool(opts.get('mes') or opts.get('confirmados')),
+                       'completo': bool(opts.get('completo')),
                        'perfil_confirmado': plan.get('perfil'), 'archivos_locales': assets,
                        'ruta_respaldo': str(Path(opts['respaldo']).resolve())}
             receipt['firma'] = signing.dumps(receipt, salt='masiscam.depuracion.respaldo')
@@ -453,12 +472,15 @@ class Command(BaseCommand):
                     or receipt.get('huella') != fingerprint(plan)
                     or receipt.get('sha256_respaldo') != backup_hash
                     or set(receipt.get('ids', [])) != set(opts['ids'] or [])
+                    or bool(receipt.get('completo')) != bool(opts.get('completo'))
                     or receipt.get('mes') != opts.get('mes') or receipt.get('empresa') != opts['empresa']
                     or ((opts.get('mes') or opts.get('confirmados')) and receipt.get('limpieza_probada_pg16') is not True)
                     or receipt.get('perfil_confirmado') != plan.get('perfil')):
                 raise CommandError('Respaldo/constancia no corresponden a esta base y simulación.')
             if opts.get('confirmados'):
                 outcome = self.delete_confirmed(plan, receipt, user, opts)
+            elif opts.get('completo'):
+                outcome = self.delete_month_full(plan, receipt, user, opts)
             elif opts.get('mes'):
                 outcome = self.delete_month(plan, receipt, user, opts)
             else:
@@ -474,7 +496,40 @@ class Command(BaseCommand):
                 if count != 2 or breakdown != {'masiscam.Equipo': 2}:
                     raise CommandError('Cascada inesperada: transacción revertida íntegramente.')
                 outcome = {'eliminados': sorted(opts['ids']), 'auditorias_creadas': 2}
+        if outcome.pop('_purgar', None):
+            from masiscam.management.depuracion_mensual import purge_files
+            deleted, skipped = purge_files(plan, receipt['archivos_locales'])
+            outcome['archivos_fisicos_eliminados'] = len(deleted)
+            outcome['archivos_conservados_sin_copia_o_alterados'] = skipped
         self.stdout.write(canonical(outcome))
+
+    def delete_month_full(self, plan, receipt, user, opts):
+        from masiscam.management.depuracion_confirmada import read_signed, save_signed, verify_assets
+        from masiscam.management.depuracion_mensual import PROFILE, apply_month_full
+        expected = f"LIMPIAR COMPLETO {opts['empresa']} 2026-11 {fingerprint(plan)}"
+        if plan['perfil'] != PROFILE or opts['confirmar'] != expected or not opts['motivo'].strip():
+            raise CommandError('Confirme exactamente: ' + expected + ' ; indique motivo no vacío.')
+        if not plan['cantidades']['eliminar']:
+            raise CommandError('Nada eliminable: el inventario ya fue depurado o está protegido.')
+        verify_assets([{'copia': a['copia'], 'sha256': a['sha256']} for a in receipt['archivos_locales']])
+        custody = {'perfil': PROFILE, 'origen': source_identity(), 'plan': plan,
+                   'respaldo_verificado': receipt, 'usuario': user.pk, 'motivo': opts['motivo']}
+        path = Path(opts['carpeta']) / 'custodia-previa-mensual.json'
+        if path.exists():
+            if fingerprint(read_signed(path)) != fingerprint(custody):
+                raise CommandError('La constancia de custodia previa no coincide.')
+        else:
+            save_signed(path, custody)  # fsync antes de borrar datos inmutables.
+        apply_month_full(plan)
+        event = Auditoria.objects.create(empresa_id=opts['empresa'], usuario=user,
+            accion='LIMPIEZA_COMPLETA_NOV2026', objeto_tipo='Empresa', objeto_id=str(opts['empresa']),
+            detalle={'huella': fingerprint(plan), 'cantidades': plan['cantidades'],
+                     'conservados': plan['conservados'], 'custodia': str(path),
+                     'respaldo_sha256': receipt['sha256_respaldo'], 'motivo': opts['motivo'],
+                     'archivos': [a['nombre'] for a in plan['archivos']]})
+        return {'registros_eliminados': plan['cantidades']['eliminar'], 'por_tabla': plan['cantidades']['por_tabla'],
+                'pdf_a_eliminar': plan['cantidades']['pdf'], 'raices_conservadas': plan['conservados'],
+                'auditoria': event.pk, 'custodia': str(path), '_purgar': True}
 
     def delete_confirmed(self, plan, receipt, user, opts):
         from masiscam.management.depuracion_confirmada import (
