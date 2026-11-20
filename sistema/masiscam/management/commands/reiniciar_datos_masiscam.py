@@ -28,6 +28,7 @@ class Command(DepuracionBase):
         parser.add_argument('--verificacion', help='Constancia emitida por verificar-respaldo.')
         parser.add_argument('--huella')
         parser.add_argument('--motivo')
+        parser.add_argument('--confirmar', help='Opcional y no interactivo: si se indica debe ser REINICIAR TODOS LOS DATOS OPERATIVOS <huella>.')
 
     def _preparar(self, opts):
         opts.update(reinicio=True, mes=None, empresa=None, ids=None, completo=False, confirmados=False)
@@ -85,6 +86,8 @@ class Command(DepuracionBase):
                     or receipt.get('sha256_respaldo') != backup_hash or receipt.get('origen') != source_identity()
                     or receipt.get('perfil_confirmado') != PROFILE):
                 raise CommandError('Respaldo o constancia no corresponden a esta base y a esta simulación.')
+            if opts.get('confirmar') and opts['confirmar'] != f"REINICIAR TODOS LOS DATOS OPERATIVOS {fingerprint(plan)}":
+                raise CommandError('La confirmación indicada no corresponde a esta simulación.')
             if not plan['cantidades']['registros']:
                 raise CommandError('No hay datos operativos que reiniciar.')
             verify_assets(receipt['archivos_locales'])

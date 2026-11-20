@@ -86,4 +86,5 @@ if [[ "$MODO" == --simular ]]; then echo "Simulación completa; no se borró nad
 
 echo "== 5/5 Verificaciones superadas: reinicio completo =="
 mc ejecutar --huella "$HUELLA" --respaldo /backup/masiscam.dump --verificacion /custodia/verificacion.json \
-   --carpeta /custodia --motivo "Reinicio completo de datos operativos"
+   --carpeta /custodia --motivo "Reinicio completo de datos operativos" \
+   --confirmar "REINICIAR TODOS LOS DATOS OPERATIVOS $HUELLA"
