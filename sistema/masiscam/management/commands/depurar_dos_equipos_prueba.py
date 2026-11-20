@@ -112,6 +112,9 @@ def inspect_month(empresa, using='default'):
 
 
 def inspect_plan(opts, using='default'):
+    if opts.get('reinicio'):
+        from masiscam.management.depuracion_reinicio import inspect_reset
+        return inspect_reset(using)
     if opts.get('confirmados'):
         from masiscam.management.depuracion_confirmada import inspect_confirmed
         return inspect_confirmed(using)
@@ -399,6 +402,17 @@ class Command(BaseCommand):
                     transaction.set_rollback(True, using=restored_alias)
                 if fingerprint(inspect_plan(opts, using=restored_alias)) != fingerprint(plan):
                     raise CommandError('El ensayo de limpieza no revirtió exactamente la copia restaurada.')
+            elif opts.get('reinicio'):
+                from masiscam.management.depuracion_mensual import archive_files
+                from masiscam.management.depuracion_reinicio import apply_reset
+                if plan['bloqueos']:
+                    raise CommandError('Dependencias no autorizadas: ' + ' '.join(plan['bloqueos']))
+                assets, missing = archive_files(plan, opts['carpeta'])
+                with transaction.atomic(using=restored_alias):
+                    apply_reset(restored, using=restored_alias)
+                    transaction.set_rollback(True, using=restored_alias)
+                if fingerprint(inspect_plan(opts, using=restored_alias)) != fingerprint(plan):
+                    raise CommandError('Falló el rollback del ensayo de reinicio sobre el respaldo restaurado.')
             elif opts.get('completo'):
                 from masiscam.management.depuracion_mensual import apply_month_full, archive_files
                 if plan['bloqueos']:
@@ -421,7 +435,7 @@ class Command(BaseCommand):
                        'verificado_por': opts['usuario'], 'ids': opts['ids'] or [],
                        'mes': opts.get('mes'), 'empresa': opts['empresa'],
                        'limpieza_probada_pg16': bool(opts.get('mes') or opts.get('confirmados')),
-                       'completo': bool(opts.get('completo')),
+                       'completo': bool(opts.get('completo')), 'reinicio': bool(opts.get('reinicio')),
                        'perfil_confirmado': plan.get('perfil'), 'archivos_locales': assets,
                        'ruta_respaldo': str(Path(opts['respaldo']).resolve())}
             receipt['firma'] = signing.dumps(receipt, salt='masiscam.depuracion.respaldo')
