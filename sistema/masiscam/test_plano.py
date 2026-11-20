@@ -170,9 +170,9 @@ class PlanoTests(TestCase):
 
     def test_compatibilidad_completa_y_aprobacion_explicita(self):
         equipo = self.exp.registro.equipo
-        equipo.fabricante, equipo.modelo = 'DERAN', 'M20A'
+        equipo.marca, equipo.modelo = 'DERAN', 'M20A'
         equipo.operacion, equipo.rotacion, equipo.ratio = 'VERTICAL', '#1', '3:1'
-        equipo.save(update_fields=['fabricante', 'modelo', 'operacion', 'rotacion', 'ratio'])
+        equipo.save(update_fields=['marca', 'modelo', 'operacion', 'rotacion', 'ratio'])
         def candidatos():
             return tecnica.planos_compatibles_equipo(usuario=self.planta, empresa=self.empresa, equipo=equipo)
         result = candidatos()
@@ -191,9 +191,9 @@ class PlanoTests(TestCase):
         from .models import Auditoria
         equipo = self.exp.registro.equipo
         equipo.registrado_por = self.tecnico
-        equipo.fabricante, equipo.modelo = 'DERAN', 'M20A'
+        equipo.marca, equipo.modelo = 'DERAN', 'M20A'
         equipo.operacion, equipo.rotacion, equipo.ratio = 'VERTICAL', '#1', '3:1'
-        equipo.save(update_fields=['registrado_por', 'fabricante', 'modelo', 'operacion', 'rotacion', 'ratio'])
+        equipo.save(update_fields=['registrado_por', 'marca', 'modelo', 'operacion', 'rotacion', 'ratio'])
         self.ref.aplicabilidades.filter(equipo=equipo).update(activa=False)
         url = reverse('masiscam:solicitar_plano', args=[equipo.pk])
         for unused in range(2):
@@ -241,10 +241,17 @@ class PlanoTests(TestCase):
         self.assertEqual(ref.partes.get().numero_parte, '')
         self.assertFalse(ref.aplicabilidades.exists())
         self.assertFalse(ref.mapas.exists())
+        # Formulario simplificado: sin proyecto ni CSV; el catálogo nuevo no inventa datos faltantes.
         self.client.force_login(self.planta)
-        response = self.client.post(reverse('masiscam:plano_importar'), {'op':'revisar', 'materiales':text}, HTTP_ACCEPT='application/json')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()['filas'][0]['numero_parte'], '')
+        from .test_planos_oficina import xlsx
+        response = self.client.post(reverse('masiscam:plano_importar'), dict(archivo=qa.pdf_plano(),
+            excel=xlsx([('91', '', '', 'Pieza QA sin codigo verificado')]), marca='QAMARCA', modelo='Q-1', ratio='4:1',
+            rotacion='#1', operacion='', clave=str(uuid.uuid4())))
+        self.assertEqual(response.status_code, 302)
+        nuevo = ReferenciaTecnica.objects.get(marca='QAMARCA')
+        self.assertEqual((nuevo.estado, nuevo.documento.proyecto.codigo), ('BORRADOR', 'BIBLIOTECA-TECNICA'))
+        parte = nuevo.partes.get()
+        self.assertEqual((parte.posicion, parte.numero_parte, parte.cantidad_referencia), ('91', '', None))
 
     def test_plano_retirado_conserva_consulta_y_permite_limpiar_solo_borrador_propio(self):
         pk = self.guardar()

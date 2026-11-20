@@ -3,6 +3,7 @@ import re
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
@@ -34,7 +35,11 @@ class ClienteAccessTests(TestCase):
             razon_social="Cliente ajeno S.A.",
             ruc="0991234567002",
         )
-        RolMasiscam.objects.create(perfil=cliente_perfil, rol=RolMasiscam.Rol.CLIENTE, cliente=cls.cliente)
+        try:  # El rol CLIENTE ya no es operativo: la base lo rechaza.
+            with transaction.atomic():
+                RolMasiscam.objects.create(perfil=cliente_perfil, rol=RolMasiscam.Rol.CLIENTE, cliente=cls.cliente)
+        except IntegrityError:
+            pass
         cls.proyecto = Proyecto.objects.create(
             empresa=cls.empresa,
             codigo="CLI-1",

@@ -69,13 +69,13 @@ class ProductosTests(TestCase):
             self.assertNotContains(response, "DEL REDUCTOR")
         response = views.equipo_qr(self.request("equipo_qr", pk=bomba.pk), bomba.pk)
         self.assertEqual(response["Content-Type"], "image/png")
-        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="CONSULTA")
+        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="TALLER")
         with self.assertRaises(PermissionDenied):
             views.ficha_editar(self.request("ficha_editar", pk=bomba.pk), bomba.pk)
 
     def test_breadcrumbs_ficha_edicion_informe_registros_y_creacion(self):
         equipo = self.guardar()
-        expected = ["Dashboard", "Clientes", self.cliente.nombre_comercial, "Reductor", equipo.numero_serie]
+        expected = ["Inicio", "Clientes", self.cliente.nombre_comercial, "Reductor", equipo.numero_serie]
         for vista, extra in [("ficha_detalle", []), ("ficha_editar", ["Editar"]), ("equipo_publico", ["Informe"]), ("registro_crear", ["Registros"]), ("equipo_etiqueta", ["Etiqueta QR"])]:
             request = self.request(vista, pk=equipo.token_publico if vista == "equipo_publico" else equipo.pk)
             items = breadcrumbs(Context({"request": request, "equipo": equipo}))
@@ -137,9 +137,9 @@ class ProductosTests(TestCase):
             self.assertContains(response, 'data-confirm=')
             self.assertNotContains(response, 'return confirm(')
             self.assertContains(response, "Desactivar")
-        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="CONSULTA")
+        RolMasiscam.objects.filter(perfil__user=self.usuario).update(rol="TALLER")
         self.assertEqual(self.client.post(url, {"equipo_id": self.antiguo.pk, "estado": "INACTIVO"}).status_code, 403)
-        self.assertNotContains(self.client.get(url), "Desactivar</button>")
+        self.assertEqual(self.client.get(url).status_code, 403)
 
     def test_state_action_scoped_to_company_and_product_and_csrf(self):
         from django.test import Client

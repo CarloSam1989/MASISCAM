@@ -690,3 +690,50 @@ def aplicar_repuestos(*, usuario, empresa, referencia_id, materiales, huella, cl
     tecnica._libevent(empresa, usuario, clave, 'BIBLIOTECA_REPUESTOS_IMPORTADOS',
         dict(payload, resumen=vista['conteos'], destino=destino.pk), destino.pk)
     return destino
+
+
+# --- Catálogo técnico independiente de clientes y proyectos ------------------------------------
+def _codigo_catalogo(empresa, partes):
+    import re
+    base = '-'.join(re.sub(r'[^A-Z0-9]+', '_', p.upper()).strip('_') or 'X' for p in partes if p)[:72]
+    codigo, n = base, 1
+    while ReferenciaTecnica.objects.filter(empresa=empresa, codigo=codigo).exists():
+        n += 1
+        codigo = f'{base}-{n}'
+    return codigo
+
+
+@transaction.atomic
+def crear_catalogo(*, usuario, empresa, archivo, marca, modelo, ratio, rotacion, operacion='', materiales=None, clave):
+    """Crea un catálogo en borrador: PDF + (opcional) piezas del Excel. Sin proyecto ni cliente del usuario."""
+    tecnica._liblock(usuario, empresa, {'ADMIN', 'OFICINA'})
+    clave = uuid.UUID(str(clave))
+    campos = dict(marca=marca, modelo=modelo, ratio=ratio, rotacion=rotacion, operacion=operacion)
+    campos = {k: (v or '').strip() for k, v in campos.items()}
+    faltan = [k for k in ('marca', 'modelo', 'ratio', 'rotacion') if not campos[k]]
+    if faltan:
+        raise ValidationError('Indique marca, modelo, relación de transmisión y rotación.')
+    payload = dict(campos, hash=_hash(archivo), materiales=materiales or '')
+    previo = tecnica._libretry(empresa, clave, 'BIBLIOTECA_CATALOGO_CREADO', payload)
+    if previo:
+        return ReferenciaTecnica.objects.get(pk=previo)
+    existente = ReferenciaTecnica.objects.filter(empresa=empresa, tipo='PLANO', expediente_trabajo__isnull=True,
+        marca__iexact=campos['marca'], modelo__iexact=campos['modelo'], ratio__iexact=campos['ratio'],
+        rotacion__iexact=campos['rotacion'], operacion__iexact=campos['operacion']).exclude(estado='RETIRADA').first()
+    if existente:
+        raise ValidationError('Ya existe un catálogo con esta marca, modelo, relación, rotación y operación '
+                              f'({existente.codigo}). Ábralo para corregir piezas o importar repuestos.')
+    filas = leer_materiales(materiales, permitir_incompletas=True) if materiales else []
+    configuracion = ' · '.join(v for v in campos.values() if v)
+    ref = tecnica.guardar_referencia(usuario=usuario, empresa=empresa, clave=uuid.uuid5(clave, 'referencia'), archivo=archivo,
+        datos=dict(codigo=_codigo_catalogo(empresa, [campos['marca'], campos['modelo'], campos['ratio'], campos['rotacion'], campos['operacion']]),
+                   tipo='PLANO', titulo=configuracion[:200], marca=campos['marca'], modelo=campos['modelo'],
+                   ratio=campos['ratio'], rotacion=campos['rotacion'], operacion=campos['operacion'],
+                   procedencia=f'Plano {getattr(archivo, "name", "")} cargado en Planos y piezas por {usuario.get_username()}.',
+                   autorizacion_uso='Uso técnico interno de la empresa; su publicación requiere la aprobación de ADMINISTRADOR.',
+                   proyecto_id=tecnica.proyecto_biblioteca(usuario, empresa).pk))
+    for fila in filas:
+        tecnica.guardar_parte(usuario=usuario, empresa=empresa, referencia_id=ref.pk, datos=fila,
+                              clave=uuid.uuid5(clave, 'parte-' + fila['posicion']))
+    tecnica._libevent(empresa, usuario, clave, 'BIBLIOTECA_CATALOGO_CREADO', dict(payload, partes=len(filas)), ref.pk)
+    return ref

@@ -286,27 +286,32 @@ def plano_pieza(request, pk):
     return JsonResponse(dict(version=obj.version_edicion, piezas=piezas_json(obj), mensaje='Borrador guardado. No se han autorizado compras ni reparaciones.'))
 
 
-class ImportarForm(BaseForm):
-    excel = forms.FileField(required=False, label='Excel de repuestos (.xlsx), para revisión')
-    proyecto_id = forms.ModelChoiceField(queryset=Proyecto.objects.none(), label='Proyecto de la empresa para custodiar el original')
-    archivo = forms.FileField(label='PDF original M20A-HNRC · 3:1 · Figura 1')
-    materiales = forms.CharField(max_length=250000, widget=forms.Textarea(attrs={'rows': 12}), label='CSV de materiales para revisión')
-    marca = forms.CharField(max_length=120, label='Fabricante')
+class CatalogoForm(BaseForm):
+    """Alta de un catálogo técnico: independiente de clientes y proyectos."""
+    archivo = forms.FileField(label='Plano (PDF)')
+    excel = forms.FileField(required=False, label='Excel de repuestos (.xlsx)')
+    marca = forms.CharField(max_length=120, label='Marca')
     modelo = forms.CharField(max_length=120, label='Modelo')
-    operacion = forms.CharField(max_length=80, label='Operacion')
-    rotacion = forms.CharField(max_length=80, label='Rotacion')
-    ratio = forms.CharField(max_length=80, label='Relacion de transmision')
-    procedencia = forms.CharField(max_length=20000, widget=forms.Textarea(attrs={'rows': 2}))
-    autorizacion = forms.CharField(max_length=20000, widget=forms.Textarea(attrs={'rows': 2}), label='Fundamento de uso autorizado')
-    version_fabricante = forms.CharField(required=False, max_length=100, label='Revisión del fabricante verificada (vacío si no consta)')
-    sustituye_id = forms.ModelChoiceField(queryset=ReferenciaTecnica.objects.none(), required=False, label='Revisión anterior, si existe (conserva sus partes; CSV solo cabecera)')
-    confirmado = forms.BooleanField(required=True, label='He revisado el PDF y todas las filas; códigos y cantidades no verificados permanecen vacíos.')
+    ratio = forms.CharField(max_length=80, label='Relación de transmisión (ratio)')
+    rotacion = forms.CharField(max_length=80, label='Rotación')
+    operacion = forms.CharField(max_length=80, required=False, label='Operación (solo si distingue configuraciones)')
 
-    def __init__(self, *args, empresa, **kwargs):
+    def clean_archivo(self):
+        archivo = self.cleaned_data['archivo']
+        if not archivo.name.lower().endswith('.pdf'):
+            raise forms.ValidationError('Seleccione el plano en PDF.')
+        return archivo
+
+    def clean_excel(self):
+        excel = self.cleaned_data.get('excel')
+        if excel and not excel.name.lower().endswith('.xlsx'):
+            raise forms.ValidationError('Seleccione un archivo .xlsx.')
+        return excel
+
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['proyecto_id'].queryset = Proyecto.objects.filter(empresa=empresa)
-        self.fields['sustituye_id'].queryset = ReferenciaTecnica.objects.filter(empresa=empresa, codigo='M20A-HNRC-FIG1')
-        self.fields['confirmado'].widget.attrs['class'] = 'form-check-input'
+        for field in self.fields.values():
+            field.widget.attrs.setdefault('class', 'form-control')
 
 
 @require_http_methods(['GET', 'POST'])
@@ -314,35 +319,21 @@ class ImportarForm(BaseForm):
 @masiscam_access_required
 def plano_importar(request):
     tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN', 'OFICINA'})
-    from pathlib import Path
-    seed = (Path(__file__).parent / 'data/m20a_hnrc_fig1_revision.csv').read_text(encoding='utf-8')
-    form = ImportarForm(request.POST or None, request.FILES or None, empresa=request.empresa_activa,
-        initial={'materiales': seed})
-    rows = []
-    if request.method == 'POST':
+    from django.contrib import messages
+    form = CatalogoForm(request.POST or None, request.FILES or None)
+    if request.method == 'POST' and form.is_valid():
+        datos = form.cleaned_data
         try:
-            if request.POST.get('op') == 'revisar_excel':
-                excel = request.FILES.get('excel')
-                if not excel or not excel.name.lower().endswith('.xlsx'):
-                    raise ValidationError('Seleccione un archivo .xlsx.')
-                materiales = svc.leer_excel_materiales(excel)
-                return JsonResponse({'materiales': materiales, 'filas': svc.leer_materiales(materiales, permitir_incompletas=True)})
-            rows = svc.leer_materiales(request.POST.get('materiales', ''), permitir_incompletas=True)
-            if request.POST.get('op') == 'revisar' and request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'filas': rows})
-            if request.POST.get('op') == 'guardar' and form.is_valid():
-                data = form.cleaned_data.copy()
-                data.pop('excel', None)
-                data['proyecto_id'] = data['proyecto_id'].pk
-                data['sustituye_id'] = data['sustituye_id'].pk if data['sustituye_id'] else None
-                ref = svc.importar_m20(usuario=request.user, empresa=request.empresa_activa, **data)
-                return redirect('masiscam:biblioteca_referencia', pk=ref.pk)
+            materiales = svc.leer_excel_materiales(datos['excel']) if datos.get('excel') else None
+            ref = svc.crear_catalogo(usuario=request.user, empresa=request.empresa_activa, archivo=datos['archivo'],
+                marca=datos['marca'], modelo=datos['modelo'], ratio=datos['ratio'], rotacion=datos['rotacion'],
+                operacion=datos['operacion'], materiales=materiales, clave=datos['clave'])
         except (ValidationError, IntegrityError, OSError) as exc:
-            if request.headers.get('Accept') == 'application/json':
-                return JsonResponse({'error': ' '.join(exc.messages) if isinstance(exc, ValidationError) else 'No se confirmó la revisión.'}, status=400)
-            form.add_error(None, ' '.join(exc.messages) if isinstance(exc, ValidationError) else 'No se confirmó la importación.')
-    return render(request, 'masiscam/plano_importar.html', {'form': form, 'filas': rows},
-        status=400 if form.errors else 200)
+            form.add_error(None, ' '.join(exc.messages) if isinstance(exc, ValidationError) else 'No se pudo guardar el catálogo.')
+        else:
+            messages.success(request, 'Catálogo guardado como borrador. Revise las piezas, ubique los marcadores y envíelo a ADMINISTRADOR.')
+            return redirect('masiscam:biblioteca_referencia', pk=ref.pk)
+    return render(request, 'masiscam/plano_importar.html', {'form': form}, status=400 if request.method == 'POST' else 200)
 
 
 @require_http_methods(['GET', 'POST'])

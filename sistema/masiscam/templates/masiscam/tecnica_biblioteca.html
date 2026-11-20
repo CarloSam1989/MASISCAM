@@ -4,8 +4,7 @@
     <div><h1 class="h3 mb-1">Planos y piezas</h1>
       <p class="text-muted mb-0">Catálogos de reductores: plano PDF, repuestos y ubicación de piezas. Solo ADMINISTRADOR publica; la coincidencia de fabricante, modelo y configuración no acredita compatibilidad mecánica.</p></div>
     {% if rol_tecnico == 'ADMIN' or rol_tecnico == 'OFICINA' %}<div class="d-flex flex-wrap gap-2">
-      <a class="btn btn-primary" href="{% url 'masiscam:biblioteca_referencia_crear' %}">Nuevo catálogo</a>
-      <a class="btn btn-outline-primary" href="{% url 'masiscam:plano_importar' %}">Subir PDF e importar repuestos (Excel)</a>
+      <a class="btn btn-primary" href="{% url 'masiscam:plano_importar' %}">Nuevo catálogo</a>
       {% if rol_tecnico == 'ADMIN' %}<a class="btn btn-outline-primary" href="{% url 'masiscam:biblioteca_componentes' %}">Componentes</a>{% endif %}
     </div>{% endif %}
   </div>

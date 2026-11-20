@@ -1020,7 +1020,7 @@ def documento_privado(request, pk, documento_pk):
 @require_GET
 @masiscam_access_required
 def proyectos(request):
-    pagina=paginar_listado(request,Proyecto.objects.filter(empresa=request.empresa_activa).order_by('-actualizado_en'))
+    pagina=paginar_listado(request,Proyecto.objects.filter(empresa=request.empresa_activa).exclude(codigo='BIBLIOTECA-TECNICA').order_by('-actualizado_en'))
     contexto = {'proyectos':pagina,'pagina':pagina}
     contexto.update(_contexto_permisos(request))
     return render(request, "masiscam/proyectos.html", contexto)

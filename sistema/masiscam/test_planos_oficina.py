@@ -42,20 +42,25 @@ class PlanosOficinaTests(TestCase):
 
     def test_flujo_oficina_administrador_taller(self):
         c = self.entrar(self.oficina)
-        # Nuevo catálogo con PDF desde OFICINA.
-        datos = dict(codigo='CAT-QA-OF', tipo='PLANO', titulo='Catálogo QA oficina', marca='QAMARCA', modelo='QM-1',
-            operacion='VERTICAL', rotacion='#2', ratio='5:1', version_fabricante='V1', procedencia='QA sintética',
-            autorizacion_uso='Uso QA autorizado', clave=str(uuid.uuid4()), archivo=pdf_plano(),
-            proyecto_id=self.exp.registro.equipo.proyecto_id)
-        r = c.post(reverse('masiscam:biblioteca_referencia_crear'), datos)
+        # Nuevo catálogo desde OFICINA: solo PDF, Excel y configuración (sin proyecto ni CSV).
+        r = c.post(reverse('masiscam:plano_importar'), dict(archivo=pdf_plano(), marca='QAMARCA', modelo='QM-1',
+            ratio='5:1', rotacion='#2', operacion='VERTICAL', clave=str(uuid.uuid4()),
+            excel=xlsx([('1', '2', 'QA-1', 'Eje QA'), ('88', '', 'C88', '')])))
         self.assertEqual(r.status_code, 302, getattr(r, 'context', None) and r.context['form'].errors)
-        ref = ReferenciaTecnica.objects.get(codigo='CAT-QA-OF')
-        self.assertEqual(ref.estado, 'BORRADOR')
-        # Importación incompleta (posición 88 sin descripción) y envío bloqueado.
-        svc.guardar_parte(usuario=self.oficina, empresa=self.empresa, referencia_id=ref.pk, clave=uuid.uuid4(),
-            datos=dict(posicion='1', descripcion='Eje QA', numero_parte='QA-1'))
-        p88 = ParteReferenciaTecnica.objects.get(pk=svc.guardar_parte(usuario=self.oficina, empresa=self.empresa,
-            referencia_id=ref.pk, clave=uuid.uuid4(), datos=dict(posicion='88', descripcion='')))
+        ref = ReferenciaTecnica.objects.get(marca='QAMARCA', modelo='QM-1')
+        self.assertEqual((ref.estado, ref.ratio, ref.rotacion, ref.operacion), ('BORRADOR', '5:1', '#2', 'VERTICAL'))
+        self.assertEqual(ref.documento.proyecto.codigo, 'BIBLIOTECA-TECNICA')
+        self.assertNotContains(self.entrar(self.planta).get(reverse('masiscam:proyectos')), 'BIBLIOTECA-TECNICA')
+        c = self.entrar(self.oficina)
+        # Otro intento con la misma configuración no duplica el catálogo.
+        r = c.post(reverse('masiscam:plano_importar'), dict(archivo=pdf_plano(), marca='qamarca', modelo='qm-1',
+            ratio='5:1', rotacion='#2', operacion='vertical', clave=str(uuid.uuid4())))
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(ReferenciaTecnica.objects.filter(marca__iexact='qamarca').count(), 1)
+        # Excel con posición 88 sin descripción: queda incompleta y bloquea el envío.
+        self.assertEqual(ref.partes.count(), 2)
+        p88 = ref.partes.get(posicion='88')
+        self.assertEqual((p88.descripcion, p88.numero_parte), ('', 'C88'))
         url = reverse('masiscam:biblioteca_referencia', args=[ref.pk])
         self.assertContains(c.get(url), 'Pendiente de corrección')
         r = c.post(url, dict(op='solicitar_revision', clave=str(uuid.uuid4())))
@@ -94,7 +99,7 @@ class PlanosOficinaTests(TestCase):
         self.assertIn('Publicado', a.get(reverse('masiscam:biblioteca')).content.decode())
         # TALLER: coincidencia exacta automática; aplicabilidad aún por aprobar.
         equipo = self.exp.registro.equipo
-        Equipo.objects.filter(pk=equipo.pk).update(tipo_producto='REDUCTOR', fabricante='qamarca', modelo='QM-1',
+        Equipo.objects.filter(pk=equipo.pk).update(tipo_producto='REDUCTOR', marca='qamarca', modelo='QM-1',
             operacion='vertical', rotacion='#2', ratio='5:1')
         equipo.refresh_from_db()
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
@@ -206,6 +211,29 @@ class ImportarRepuestosCatalogoTests(TestCase):
         self.client.force_login(self.tecnico)
         self.assertEqual(self.client.get(self.url).status_code, 403)
 
+    def test_url_anterior_redirige_al_nuevo_catalogo(self):
+        r = self.client.get('/app/biblioteca-tecnica/importar-m20/?x=1')
+        self.assertEqual((r.status_code, r['Location']), (301, reverse('masiscam:plano_importar') + '?x=1'))
+        self.assertEqual(self.client.get(reverse('masiscam:plano_importar')).status_code, 200)
+        self.assertTrue(reverse('masiscam:plano_importar').endswith('/nuevo-catalogo/'))
+
+    def test_editar_borrador_sin_proyecto_conserva_piezas_marcadores_y_documento(self):
+        from .models import Documento
+        url = reverse('masiscam:biblioteca_referencia_editar', args=[self.ref.pk])
+        r = self.client.get(url)
+        self.assertNotContains(r, 'proyecto_id')
+        docs, doc = Documento.objects.count(), self.ref.documento_id
+        datos = dict(clave=str(uuid.uuid4()), codigo='CAT-IMP', tipo='PLANO', titulo='Catálogo editado', marca='IMPMARCA',
+            modelo='IM-1', operacion='VERTICAL', rotacion='#1', ratio='4:1', version_fabricante='V1',
+            procedencia='QA', autorizacion_uso='QA', documento_id=doc)
+        self.assertEqual(self.client.post(url, dict(datos, ratio='')).status_code, 400)  # ratio obligatorio en planos
+        self.assertEqual(self.client.post(url, datos).status_code, 302)
+        self.ref.refresh_from_db()
+        self.assertEqual((self.ref.ratio, self.ref.titulo, self.ref.documento_id), ('4:1', 'Catálogo editado', doc))
+        self.assertEqual(self.ref.partes.count(), 3)
+        self.assertEqual(self.ref.mapas.get().posiciones.count(), 1)
+        self.assertEqual(Documento.objects.count(), docs)
+
     def test_catalogo_publicado_no_se_sobrescribe_crea_revision_con_marcadores(self):
         from .models import Documento
         svc.guardar_parte(usuario=self.oficina, empresa=self.empresa, referencia_id=self.ref.pk, clave=uuid.uuid4(),
@@ -236,3 +264,76 @@ class ImportarRepuestosCatalogoTests(TestCase):
         self.assertEqual(self.client.post(url, dict(op='PUBLICADA', clave=str(uuid.uuid4()))).status_code, 403)
         nueva.refresh_from_db()
         self.assertEqual(nueva.estado, 'BORRADOR')
+
+
+@override_settings(**qa.FLAGS)
+class RegistroReductorCatalogoTests(TestCase):
+    def setUp(self):
+        qa.fixture(self)
+        self.cliente = self.exp.cliente_contractual
+        # Catálogo publicado sin operación + otro con operación.
+        self.refs = {}
+        for operacion in ('', 'VERTICAL'):
+            c = self.client
+            c.force_login(self.oficina)
+            r = c.post(reverse('masiscam:plano_importar'), dict(archivo=pdf_plano(), marca='QAMARCA', modelo='QM-1',
+                ratio='5:1', rotacion='#2', operacion=operacion, clave=str(uuid.uuid4()),
+                excel=xlsx([('1', '2', 'QA-1', 'Eje QA')])))
+            self.assertEqual(r.status_code, 302)
+            ref = ReferenciaTecnica.objects.get(marca='QAMARCA', operacion=operacion)
+            c.force_login(self.planta)
+            self.assertEqual(c.post(reverse('masiscam:biblioteca_referencia', args=[ref.pk]),
+                dict(op='PUBLICADA', clave=str(uuid.uuid4()))).status_code, 302)
+            self.refs[operacion] = ref
+        Equipo.objects.filter(pk=self.exp.registro.equipo_id).update(registrado_por=self.tecnico)
+
+    def registrar(self, **config):
+        datos = dict(cliente=self.cliente.pk, camaronera='Camaronera QA', estacion='E-9', sector='S-9',
+            numero_equipo=config.pop('numero', 'NUEVO-1'), numero_serie=config.pop('serie', 'SERIE-NUEVA-1'),
+            potencia='10 HP', marca='', modelo='', ratio='', rotacion='', operacion='')
+        datos.update(config)
+        self.client.force_login(self.tecnico)
+        return self.client.post(reverse('masiscam:ficha_crear'), datos)
+
+    def test_taller_elige_configuracion_del_catalogo_y_encuentra_plano(self):
+        import json
+        self.client.force_login(self.tecnico)
+        r = self.client.get(reverse('masiscam:ficha_crear'))
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn('id_fabricante', r.content.decode())
+        opciones = json.loads(r.context['form'].catalogo_json)
+        self.assertEqual({(o['marca'], o['modelo'], o['ratio'], o['rotacion'], o['operacion']) for o in opciones},
+                         {('QAMARCA', 'QM-1', '5:1', '#2', ''), ('QAMARCA', 'QM-1', '5:1', '#2', 'VERTICAL'),
+                          ('DERAN', 'M20A', '3:1', '#1', 'VERTICAL')})  # este último, del fixture compartido
+        self.assertContains(r, 'data-catalogo=')
+        self.assertContains(r, '<option value="QAMARCA">')
+        # Sin operación: coincide el catálogo sin operación; con operación, el que la define.
+        r = self.registrar(marca='QAMARCA', modelo='QM-1', ratio='5:1', rotacion='#2')
+        self.assertEqual(r.status_code, 302, getattr(r, 'context', None) and r.context['form'].errors)
+        equipo = Equipo.objects.get(numero_serie='SERIE-NUEVA-1')
+        res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
+        self.assertEqual([c.pk for c in res['candidatos']], [self.refs[''].pk])
+        self.assertFalse(res['candidatos'][0].aprobada)
+        r = self.registrar(marca='qamarca', modelo='qm-1', ratio='5:1', rotacion='#2', operacion='vertical',
+                           numero='NUEVO-2', serie='SERIE-NUEVA-2')
+        self.assertEqual(r.status_code, 302)
+        res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa,
+                                            equipo=Equipo.objects.get(numero_serie='SERIE-NUEVA-2'))
+        self.assertEqual([c.pk for c in res['candidatos']], [self.refs['VERTICAL'].pk])
+        # Tras la aprobación de ADMINISTRADOR, el plano aparece aprobado para ese equipo.
+        svc.aplicar_referencia(usuario=self.planta, empresa=self.empresa, referencia_id=self.refs[''].pk,
+            equipo_id=equipo.pk, fundamento='Aplicabilidad QA aprobada', clave=uuid.uuid4())
+        res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
+        self.assertTrue(res['candidatos'][0].aprobada)
+
+    def test_configuracion_sin_catalogo_registra_sin_plano_incorrecto(self):
+        r = self.registrar(marca='OTRAMARCA', modelo='XX-9', ratio='7:1', rotacion='#1', numero='NUEVO-3', serie='SERIE-3')
+        self.assertEqual(r.status_code, 302)
+        equipo = Equipo.objects.get(numero_serie='SERIE-3')
+        res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
+        self.assertEqual(res['candidatos'], [])
+        # Configuración incompleta: no se adivina ningún plano.
+        r = self.registrar(marca='QAMARCA', modelo='QM-1', numero='NUEVO-4', serie='SERIE-4')
+        res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa,
+                                            equipo=Equipo.objects.get(numero_serie='SERIE-4'))
+        self.assertEqual((res['candidatos'], res['faltantes']), ([], ['rotacion', 'relacion de transmision']))

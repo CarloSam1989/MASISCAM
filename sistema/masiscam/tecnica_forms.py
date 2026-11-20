@@ -90,7 +90,6 @@ class ReferenciaForm(BaseForm):
     tipo=forms.ChoiceField(choices=[('PLANO','Plano'),('MANUAL','Manual')])
     titulo=forms.CharField(max_length=200)
     documento_id=forms.ModelChoiceField(queryset=Documento.objects.none(),required=False,label='Documento privado existente')
-    proyecto_id=forms.ModelChoiceField(queryset=Proyecto.objects.none(),required=False,label='Proyecto real para archivo nuevo')
     archivo=forms.FileField(required=False,label='O archivo nuevo')
     marca=forms.CharField(max_length=120,required=False)
     modelo=forms.CharField(max_length=120,required=False)
@@ -102,9 +101,16 @@ class ReferenciaForm(BaseForm):
     autorizacion_uso=forms.CharField(max_length=20000,widget=forms.Textarea,label='Fundamento de uso autorizado y congelación del documento privado')
     sustituye_id=forms.ModelChoiceField(queryset=ReferenciaTecnica.objects.none(),required=False,label='Versión fuente (para otra revisión)')
 
+    def clean(self):
+        data=super().clean()
+        if data.get('tipo')=='PLANO':
+            for campo,nombre in (('marca','marca'),('modelo','modelo'),('ratio','relación de transmisión'),('rotacion','rotación')):
+                if not (data.get(campo) or '').strip():
+                    self.add_error(campo,'Obligatorio en un plano: '+nombre+'.')
+        return data
+
     def __init__(self,*args,empresa,**kwargs):
         super().__init__(*args,**kwargs)
-        self.fields['proyecto_id'].queryset=Proyecto.objects.filter(empresa=empresa)
         self.fields['documento_id'].queryset=Documento.objects.filter(proyecto__empresa=empresa,publico=False,categoria__in=['PLANOS','MANUALES']).exclude(estado_sincronizacion='ARCHIVADO')
         self.fields['sustituye_id'].queryset=ReferenciaTecnica.objects.filter(empresa=empresa)
 

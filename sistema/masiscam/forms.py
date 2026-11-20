@@ -195,6 +195,30 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
         for nombre, campo in self.fields.items():
             campo.widget.attrs["class"] = "form-check-input" if isinstance(campo, forms.BooleanField) else "form-control"
         self.fields["ruc"].widget.attrs.update({"autocomplete": "off", "inputmode": "numeric", "aria-describedby": "cliente-estado"})
+        self.catalogo = []
+        if self.tipo_producto == Equipo.TipoProducto.REDUCTOR:
+            # La marca elegida es el fabricante: el plano compatible se busca por marca, modelo, ratio y rotación.
+            self.fields.pop("fabricante", None)
+            self.order_fields(["cliente", "razon_social", "camaronera", "ruc", "estacion", "sector", "numero_equipo",
+                               "marca", "modelo", "ratio", "rotacion", "operacion", "numero_serie", "potencia"])
+            self.fields["ratio"].label = "Relación de transmisión (ratio)"
+            self.fields["operacion"].label = "Operación (solo si distingue configuraciones)"
+            for nombre in ("marca", "modelo", "ratio", "rotacion", "operacion"):
+                self.fields[nombre].widget.attrs.update({"list": "cat-" + nombre, "autocomplete": "off"})
+            if usuario:
+                from django.conf import settings
+                from django.core.exceptions import PermissionDenied
+                from . import tecnica_services
+                if settings.MASISCAM_TECNICA_LOCAL:
+                    try:
+                        self.catalogo = tecnica_services.opciones_catalogo(usuario, empresa)
+                    except PermissionDenied:
+                        self.catalogo = []
+
+    @property
+    def catalogo_json(self):
+        import json
+        return json.dumps(self.catalogo)
 
     def clean(self):
         datos = super().clean()
@@ -279,7 +303,8 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
         equipo.nombre = datos["numero_equipo"].strip()
         equipo.ubicacion = datos["estacion"].strip()
         equipo.sector = datos["sector"].strip()
-        equipo.fabricante = datos["fabricante"].strip()
+        if "fabricante" in datos:
+            equipo.fabricante = datos["fabricante"].strip()
         equipo.operacion = datos["operacion"].strip()
         equipo.marca = datos["marca"].strip()
         equipo.modelo = datos["modelo"].strip()

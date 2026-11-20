@@ -542,11 +542,12 @@ def planos_compatibles_equipo(*, usuario, empresa, equipo):
         rol = rol_masiscam_usuario(usuario=usuario, empresa=empresa)
         if not rol or rol.rol != 'ADMIN':
             raise PermissionDenied('Equipo fuera del taller autorizado.')
-    values = {'marca': equipo.fabricante, 'modelo': equipo.modelo, 'operacion': equipo.operacion,
+    values = {'marca': equipo.marca or equipo.fabricante, 'modelo': equipo.modelo, 'operacion': equipo.operacion,
               'rotacion': equipo.rotacion, 'ratio': equipo.ratio}
     labels = {'marca': 'fabricante', 'modelo': 'modelo', 'operacion': 'operacion',
               'rotacion': 'rotacion', 'ratio': 'relacion de transmision'}
-    missing = [labels[key] for key, value in values.items() if not (value or '').strip()]
+    # La operación solo distingue configuraciones cuando el catálogo la define: puede quedar vacía.
+    missing = [labels[key] for key, value in values.items() if key != 'operacion' and not (value or '').strip()]
     if missing:
         return {'faltantes': missing, 'candidatos': []}
     from django.db.models import Exists, OuterRef
@@ -696,9 +697,9 @@ def guardar_referencia(*,usuario,empresa,clave,datos,archivo=None,referencia_id=
         raise PermissionDenied('Solo se edita una referencia borrador propia.')
     if archivo:
         from .models import Proyecto
-        proyecto=Proyecto.objects.filter(pk=proyecto_id,empresa=empresa).first()
+        proyecto=Proyecto.objects.filter(pk=proyecto_id,empresa=empresa).first() if proyecto_id else proyecto_biblioteca(usuario,empresa)
         if not proyecto or doc_id:
-            raise ValidationError('Seleccione proyecto real para el archivo nuevo, o documento existente.')
+            raise ValidationError('Adjunte un archivo nuevo o elija un documento existente, no ambos.')
         doc=guardar_archivo(usuario=usuario,empresa=empresa,proyecto=proyecto,archivo=archivo,
             categoria='PLANOS' if data.get('tipo')=='PLANO' else 'MANUALES')
     else:
@@ -735,6 +736,35 @@ def copiar_partes_referencia(source, obj):
     for part in source.partes.all():
         values={f.name:getattr(part,f.name) for f in ParteReferenciaTecnica._meta.fields if f.name not in {'id','referencia'}}
         ParteReferenciaTecnica.objects.create(referencia=obj,**values)
+
+
+CODIGO_BIBLIOTECA = 'BIBLIOTECA-TECNICA'
+
+
+def proyecto_biblioteca(usuario, empresa):
+    """Custodia interna de los PDF del catálogo: no es un proyecto del cliente ni se muestra como tal."""
+    from .models import Proyecto
+    proyecto = Proyecto.objects.filter(empresa=empresa, codigo=CODIGO_BIBLIOTECA).first()
+    if proyecto is None:
+        proyecto = Proyecto.objects.create(empresa=empresa, codigo=CODIGO_BIBLIOTECA, nombre='Biblioteca técnica',
+            cliente='Uso interno', responsable='Biblioteca técnica', fecha_inicio=timezone.localdate(), creado_por=usuario)
+    return proyecto
+
+
+def opciones_catalogo(usuario, empresa):
+    """Configuraciones de planos publicados (vigentes) para elegir al registrar un reductor."""
+    autorizar_tecnica(usuario, empresa, {'TALLER', 'ADMIN', 'OFICINA'})
+    from django.db.models import Exists, OuterRef
+    newer = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=OuterRef('codigo'), estado='PUBLICADA', revision__gt=OuterRef('revision'))
+    qs = ReferenciaTecnica.objects.filter(empresa=empresa, tipo='PLANO', estado='PUBLICADA', expediente_trabajo__isnull=True)
+    qs = qs.annotate(superada=Exists(newer)).filter(superada=False)
+    vistos, opciones = set(), []
+    for fila in qs.order_by('marca', 'modelo', 'ratio', 'rotacion', 'operacion').values('marca', 'modelo', 'ratio', 'rotacion', 'operacion'):
+        clave = tuple(v.casefold() for v in fila.values())
+        if fila['marca'] and clave not in vistos:
+            vistos.add(clave)
+            opciones.append(fila)
+    return opciones
 
 
 def ids_revision_pendiente(empresa):

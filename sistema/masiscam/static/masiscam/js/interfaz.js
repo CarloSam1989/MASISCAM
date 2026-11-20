@@ -81,3 +81,22 @@ btn.addEventListener('click',e=>{e.stopPropagation();set(list.hidden);});list.ad
 document.addEventListener('click',e=>{if(!box.contains(e.target))set(false);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!list.hidden){set(false);btn.focus();}});
 })();
+(()=>{const form=document.querySelector('form[data-catalogo]');if(!form)return;
+let cat=[];try{cat=JSON.parse(form.dataset.catalogo||'[]');}catch{return;}
+const f=n=>form.querySelector('#id_'+n),dl=n=>document.getElementById('cat-'+n),estado=document.getElementById('cat-estado');
+const norm=v=>(v||'').trim().toLowerCase(),uniq=a=>[...new Set(a)].filter(Boolean);
+const igual=(o,campo)=>!norm(f(campo)?.value)||norm(o[campo])===norm(f(campo).value);
+const llenar=(n,valores)=>{const l=dl(n);if(!l)return;l.replaceChildren(...uniq(valores).map(v=>{const o=document.createElement('option');o.value=v;return o;}));};
+const refrescar=()=>{
+  const m=cat.filter(o=>igual(o,'marca')),mo=m.filter(o=>igual(o,'modelo')),r=mo.filter(o=>igual(o,'ratio')),ro=r.filter(o=>igual(o,'rotacion'));
+  llenar('marca',cat.map(o=>o.marca));llenar('modelo',m.map(o=>o.modelo));llenar('ratio',mo.map(o=>o.ratio));
+  llenar('rotacion',r.map(o=>o.rotacion));llenar('operacion',ro.map(o=>o.operacion));
+  if(!estado)return;
+  const completo=['marca','modelo','ratio','rotacion'].every(n=>norm(f(n)?.value));
+  const coincide=completo&&ro.some(o=>!o.operacion||norm(o.operacion)===norm(f('operacion')?.value));
+  estado.textContent=!completo?'Elija marca, modelo, relación y rotación del catálogo para vincular el plano. Si la configuración no existe, el reductor se registra sin plano.'
+    :coincide?'Hay un plano publicado compatible: aparecerá en la ficha del equipo para su aprobación de aplicabilidad.'
+    :'No hay un plano publicado con esta configuración: el reductor se registrará sin plano.';
+};
+['marca','modelo','ratio','rotacion','operacion'].forEach(n=>f(n)?.addEventListener('input',refrescar));refrescar();
+})();

@@ -190,7 +190,7 @@ class ClientesReductoresTests(TestCase):
     def test_etiqueta_ratio_y_enlace_en_nueva_pestana(self):
         from django.template.loader import render_to_string
         self.antiguo.ratio = "7:2"
-        html = render_to_string("masiscam/equipo_etiqueta.html", {"equipo": self.antiguo, "qr_src": "QR_EXISTENTE"})
+        html = render_to_string("masiscam/equipo_etiqueta.html", {"equipo": self.antiguo, "qr_src": "QR_EXISTENTE"}, request=self.request("equipo_etiqueta", pk=self.antiguo.pk))
         self.assertIn("<dt>Ratio</dt><dd>7:2</dd>", html)
         self.assertNotIn("Potencia", html)
         self.assertIn('src="QR_EXISTENTE"', html)
@@ -264,18 +264,17 @@ class ClientesRBACTests(TestCase):
         from .models import RegistroEquipo, ExpedienteMantenimiento, AsignacionTecnica
         ClienteAccessTests.setUpTestData.__func__(cls)
         cls.roles = {}
-        for codigo in ('OFICINA', 'TECNICO', 'PLANTA', 'GERENCIA', 'CONSULTA'):
+        for codigo in ('OFICINA', 'TALLER'):
             user = Usuario.objects.create_user(username='rbac-' + codigo)
             perfil = Perfil.objects.create(user=user, empresa=cls.empresa)
             cls.roles[codigo] = RolMasiscam.objects.create(perfil=perfil, rol=codigo)
         cls.roles['ADMIN'] = cls.admin.perfiles.get().rol_masiscam
-        cls.roles['CLIENTE'] = cls.cliente_user.perfiles.get().rol_masiscam
         registro = RegistroEquipo.objects.create(equipo=cls.equipo, tipo='MANTENIMIENTO', fecha=date.today())
         cls.exp = ExpedienteMantenimiento.objects.create(registro=registro, empresa=cls.empresa,
             cliente_contractual=cls.cliente, correlativo=1, numero='EXP-RBAC-1',
             huella_solicitud='a' * 64, creado_por=cls.admin)
         cls.asignacion = AsignacionTecnica.objects.create(expediente=cls.exp,
-            tecnico=cls.roles['TECNICO'].perfil.user, asignado_por=cls.roles['PLANTA'].perfil.user, motivo='QA')
+            tecnico=cls.roles['TALLER'].perfil.user, asignado_por=cls.admin, motivo='QA')
         cls.externa = Empresa.objects.create(nombre='RBAC Externa')
         cls.cliente_externo = Cliente.objects.create(empresa=cls.externa, nombre_comercial='Externo RBAC', ruc='1234567890001')
 
@@ -292,7 +291,9 @@ class ClientesRBACTests(TestCase):
                     self.assertEqual(self.client.get(url).status_code, 200 if allowed else 403)
                     self.assertEqual(self.client.post(url, {}, HTTP_ACCEPT='application/json').status_code, 400 if allowed else 403)
                     self.assertEqual(self.client.post(url, {}, HTTP_X_REQUESTED_WITH='XMLHttpRequest').status_code, 400 if allowed else 403)
-                if codigo != 'CLIENTE':
+                if codigo == 'TALLER':  # TALLER no consulta clientes.
+                    self.assertEqual(self.client.get(reverse('masiscam:clientes')).status_code, 403)
+                else:
                     response = self.client.get(reverse('masiscam:clientes'))
                     self.assertEqual(response.status_code, 200)
                     url = reverse('masiscam:cliente_crear')
@@ -315,42 +316,29 @@ class ClientesRBACTests(TestCase):
         self.assertEqual(PERMISOS_ROL['OFICINA'], {'ver', 'clientes_crear', 'clientes_editar'})
         self.assertEqual(self.client.get(reverse('masiscam:usuario_crear')).status_code, 403)
 
-    def test_tecnico_lectura_asignada_ajax_selectores_y_revocacion(self):
-        from django.utils import timezone
-        from .forms import EquipoForm
-        self.login_rol('TECNICO')
-        url = reverse('masiscam:clientes')
-        response = self.client.get(url)
-        self.assertContains(response, self.cliente.nombre_comercial)
-        self.assertNotContains(response, self.otro_cliente.nombre_comercial)
-        response = self.client.get(url, {'formato': 'json', 'ruc': '099'})
-        self.assertEqual([c['id'] for c in response.json()['clientes']], [self.cliente.pk])
-        self.assertEqual(self.client.get(reverse('masiscam:cliente_detalle', args=[self.otro_cliente.pk])).status_code, 404)
-        self.assertEqual(self.client.get(reverse('masiscam:producto_listado', args=['reductor']), {'cliente': self.otro_cliente.pk}).status_code, 404)
-        for form in (FichaEquipoForm(empresa=self.empresa, usuario=self.roles['TECNICO'].perfil.user),
-                     EquipoForm(empresa=self.empresa, usuario=self.roles['TECNICO'].perfil.user)):
-            self.assertEqual(list(form.fields['cliente'].queryset), [self.cliente])
-        response = self.client.get(reverse('masiscam:ficha_crear'))
-        self.assertEqual(response.status_code, 403)
-        self.asignacion.fin = timezone.now()
-        self.asignacion.save(update_fields=['fin'])
-        self.assertEqual(self.client.get(url, {'formato': 'json', 'ruc': '099'}).json()['clientes'], [])
-        self.assertEqual(self.client.get(reverse('masiscam:cliente_detalle', args=[self.cliente.pk])).status_code, 404)
+    def test_taller_no_accede_a_clientes_por_listado_json_detalle_ni_filtros(self):
+        self.login_rol('TALLER')
+        for url, datos in [(reverse('masiscam:clientes'), {}),
+                           (reverse('masiscam:cliente_detalle', args=[self.cliente.pk]), {}),
+                           (reverse('masiscam:cliente_detalle', args=[self.otro_cliente.pk]), {}),
+                           (reverse('masiscam:producto_listado', args=['reductor']), {'cliente': self.otro_cliente.pk})]:
+            self.assertEqual(self.client.get(url, datos).status_code, 403, url)
+        self.assertEqual(self.client.get(reverse('masiscam:cliente_crear')).status_code, 403)
 
     def test_sesion_rol_cambiado_y_post_no_modifican_clientes(self):
         self.login_rol('OFICINA')
         rol = self.roles['OFICINA']
-        rol.rol = 'TECNICO'
+        rol.rol = 'TALLER'
         rol.save(update_fields=['rol'])
         antes = Cliente.objects.count()
         self.assertEqual(self.client.post(reverse('masiscam:cliente_crear'), {'nombre_comercial': 'No autorizado'}).status_code, 403)
         self.assertEqual(Cliente.objects.count(), antes)
-        self.assertEqual(self.client.get(reverse('masiscam:cliente_detalle', args=[self.cliente.pk])).status_code, 404)
+        self.assertEqual(self.client.get(reverse('masiscam:cliente_detalle', args=[self.cliente.pk])).status_code, 403)
 
 
     def test_admin_django_no_elude_permiso_tecnico(self):
         from django.contrib.auth.models import Permission
-        user = self.roles['TECNICO'].perfil.user
+        user = self.roles['TALLER'].perfil.user
         user.is_staff = True
         user.save(update_fields=['is_staff'])
         user.user_permissions.add(*Permission.objects.filter(content_type__app_label='masiscam', content_type__model='cliente'))
