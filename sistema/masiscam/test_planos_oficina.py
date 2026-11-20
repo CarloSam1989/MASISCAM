@@ -406,13 +406,101 @@ class RegistroReductorCatalogoTests(TestCase):
         self.assertEqual(res['candidatos'], [])
 
     def test_configuracion_sin_catalogo_registra_sin_plano_incorrecto(self):
-        r = self.registrar(marca='OTRAMARCA', modelo='XX-9', ratio='7:1', rotacion='#1', numero='NUEVO-3', serie='SERIE-3')
+        r = self.registrar(marca='OTRAMARCA', modelo='XX-9', ratio='7:1', rotacion='#1', numero='NUEVO-3', serie='SERIE-3', sin_catalogo='on')
         self.assertEqual(r.status_code, 302)
         equipo = Equipo.objects.get(numero_serie='SERIE-3')
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
         self.assertEqual(res['candidatos'], [])
         # Configuración incompleta: no se adivina ningún plano.
-        r = self.registrar(marca='QAMARCA', modelo='QM-1', numero='NUEVO-4', serie='SERIE-4')
+        r = self.registrar(marca='QAMARCA', modelo='QM-1', numero='NUEVO-4', serie='SERIE-4', sin_catalogo='on')
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa,
                                             equipo=Equipo.objects.get(numero_serie='SERIE-4'))
         self.assertEqual((res['candidatos'], res['faltantes']), ([], ['rotacion', 'relacion de transmision']))
+
+    def test_validacion_servidor_vista_previa_inactivos_y_edicion_conserva_configuracion(self):
+        from .forms import FichaEquipoForm
+        # Una configuración que no existe en catálogos activos se rechaza, salvo que se registre sin plano.
+        r = self.registrar(marca='QAMARCA', modelo='OTRO-MODELO', ratio='5:1', rotacion='#2', numero='V-1', serie='V-1')
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, 'catálogo activo')
+        self.assertFalse(Equipo.objects.filter(numero_serie='V-1').exists())
+        r = self.registrar(marca='QAMARCA', modelo='QM-1', ratio='5:1', rotacion='#2', operacion='LATERAL', numero='V-2', serie='V-2')
+        self.assertFalse(Equipo.objects.filter(numero_serie='V-2').exists())  # operación inexistente para ese modelo
+        r = self.registrar(marca='QAMARCA', modelo='OTRO-MODELO', numero='V-3', serie='V-3', sin_catalogo='on')
+        self.assertEqual(r.status_code, 302)
+        # Vista previa: solo catálogos activos de la empresa, con piezas, marcadores y PDF.
+        url = reverse('masiscam:catalogo_vista_previa')
+        q = dict(marca='qamarca', modelo='QM-1', ratio='5:1', rotacion='#2', operacion='')
+        self.client.force_login(self.tecnico)
+        datos = self.client.get(url, q).json()['candidatos']
+        self.assertEqual([(c['pk'], c['piezas'], c['marcadores']) for c in datos], [(self.refs[''].pk, 1, 0)])
+        self.assertEqual(self.client.get(datos[0]['pdf']).status_code, 200)
+        self.assertEqual(self.client.get(url, dict(q, modelo='NO-EXISTE')).json()['candidatos'], [])
+        self.assertEqual(self.client.get(url, dict(q, ratio='')).json()['candidatos'], [])
+        self.client.force_login(self.planta)
+        svc.estado_referencia(usuario=self.planta, empresa=self.empresa, referencia_id=self.refs[''].pk, estado='RETIRADA', clave=uuid.uuid4())
+        self.client.force_login(self.tecnico)
+        self.assertEqual(self.client.get(url, q).json()['candidatos'], [])  # los inactivos no se ofrecen
+        self.assertEqual(self.client.get(datos[0]['pdf']).status_code, 404)
+        self.assertNotIn(('QAMARCA', 'QM-1', '5:1', '#2', ''),
+            {(o['marca'], o['modelo'], o['ratio'], o['rotacion'], o['operacion']) for o in __import__('json').loads(
+                self.client.get(reverse('masiscam:ficha_crear')).context['form'].catalogo_json)})
+        # Editar un equipo existente conserva su configuración histórica aunque no esté en el catálogo.
+        equipo = Equipo.objects.get(numero_serie='V-3')
+        form = FichaEquipoForm(data={}, empresa=self.empresa, usuario=self.planta, equipo=equipo)
+        form.is_valid()
+        form._validar_configuracion(dict(marca=equipo.marca, modelo=equipo.modelo, ratio=equipo.ratio, rotacion=equipo.rotacion, operacion=equipo.operacion))
+        self.assertNotIn('catálogo activo', ' '.join(form.errors.get('marca', [])))
+        form._validar_configuracion(dict(marca='OTRA', modelo='X', ratio='1:1', rotacion='#1', operacion=''))  # un cambio sí se valida
+        self.assertIn('catálogo activo', ' '.join(form.errors.get('marca', [])))
+
+    def test_varias_revisiones_exactas_exigen_elegir_y_auditan_el_vinculo(self):
+        # Dos catálogos activos con la misma configuración: no se asigna ninguno de forma arbitraria.
+        ReferenciaTecnica.objects.filter(pk=self.refs['VERTICAL'].pk).update(operacion='')
+        r = self.registrar(marca='QAMARCA', modelo='QM-1', ratio='5:1', rotacion='#2', numero='A-1', serie='A-1')
+        self.assertEqual(r.status_code, 302)
+        equipo = Equipo.objects.get(numero_serie='A-1')
+        res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
+        self.assertEqual(len(res['candidatos']), 2)
+        self.assertFalse(any(c.aprobada for c in res['candidatos']))
+        self.assertFalse(equipo.aplicabilidades.exists() if hasattr(equipo, 'aplicabilidades') else
+                         ReferenciaTecnica.objects.filter(aplicabilidades__equipo=equipo).exists())
+        url = reverse('masiscam:vincular_plano', args=[equipo.pk])
+        elegido = self.refs[''].pk
+        self.client.force_login(self.oficina)
+        self.assertIn(self.client.post(url, {'referencia': elegido}).status_code, (302, 403, 404))
+        self.assertFalse(ReferenciaTecnica.objects.filter(aplicabilidades__equipo=equipo).exists())
+        self.client.force_login(self.tecnico)
+        self.assertEqual(self.client.post(url, {'referencia': 999999}).status_code, 404)
+        self.assertEqual(self.client.post(url, {'referencia': elegido}).status_code, 302)
+        self.assertEqual(list(ReferenciaTecnica.objects.filter(aplicabilidades__equipo=equipo, aplicabilidades__activa=True).values_list('pk', flat=True)), [elegido])
+        self.assertTrue(Auditoria.objects.filter(accion='BIBLIOTECA_APLICABILIDAD_SELECCIONADA', usuario=self.tecnico).exists())
+        self.assertEqual(self.client.post(url, {'referencia': elegido}).status_code, 302)  # sin duplicar
+        self.assertEqual(ReferenciaTecnica.objects.filter(aplicabilidades__equipo=equipo).count(), 1)
+
+    def test_editar_reductor_conserva_configuracion_vinculo_y_datos_historicos(self):
+        r = self.registrar(marca='QAMARCA', modelo='QM-1', ratio='5:1', rotacion='#2', numero='E-1', serie='E-1')
+        self.assertEqual(r.status_code, 302)
+        equipo = Equipo.objects.get(numero_serie='E-1')
+        Equipo.objects.filter(pk=equipo.pk).update(service_factor='1.2', rpm='1750', tipo_aceite='ISO 220', observaciones='Histórico')
+        svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
+        vinculos = list(ReferenciaTecnica.objects.filter(aplicabilidades__equipo=equipo).values_list('pk', flat=True))
+        self.assertEqual(vinculos, [self.refs[''].pk])
+        # Configuración histórica que ya no está en un catálogo activo.
+        Equipo.objects.filter(pk=equipo.pk).update(marca='LEGADO', modelo='L-1', ratio='1:1', rotacion='#9')
+        self.client.force_login(self.planta)
+        datos = dict(cliente=self.cliente.pk, camaronera='Camaronera QA', estacion='E-9', sector='S-9', numero_equipo='E-1',
+            numero_serie='E-1', potencia='30 HP', marca='LEGADO', modelo='L-1', ratio='1:1', rotacion='#9', operacion='',
+            service_factor='1.2', rpm='1750', tipo_aceite='ISO 220', observaciones='Histórico', consulta_publica_activa='on')
+        r = self.client.post(reverse('masiscam:ficha_editar', args=[equipo.pk]), datos)
+        self.assertEqual(r.status_code, 302, getattr(r, 'context', None) and r.context['form'].errors)
+        equipo.refresh_from_db()
+        self.assertEqual((equipo.marca, equipo.modelo, equipo.ratio, equipo.rotacion, equipo.potencia_hp, equipo.service_factor,
+                          equipo.rpm, equipo.tipo_aceite, equipo.observaciones),
+                         ('LEGADO', 'L-1', '1:1', '#9', '30 HP', '1.2', '1750', 'ISO 220', 'Histórico'))
+        self.assertEqual(list(ReferenciaTecnica.objects.filter(aplicabilidades__equipo=equipo).values_list('pk', flat=True)), vinculos)
+        # Cambiar la configuración a una inexistente sí se rechaza; sin cambios de config no se exige nada.
+        r = self.client.post(reverse('masiscam:ficha_editar', args=[equipo.pk]), dict(datos, modelo='NO-EXISTE'))
+        self.assertEqual(r.status_code, 200)
+        equipo.refresh_from_db()
+        self.assertEqual(equipo.modelo, 'L-1')

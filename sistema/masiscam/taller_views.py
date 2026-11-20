@@ -114,3 +114,21 @@ def taller_equipo(request, pk):
                 'MASISCAM_TECNICA_ENABLED para habilitar inspección y selección de piezas.')
     return render(request,'masiscam/taller_equipo.html',dict(equipo=equipo,expediente=exp,mantenimientos=mantenimientos,
         pasos=pasos,paso=2,mensaje=mensaje,accion=accion,planos_compatibles=planos,plano_acceso_expediente=asignado))
+
+
+@require_POST
+@masiscam_access_required
+def vincular_plano(request, pk):
+    """Con varias revisiones o catálogos exactos, TALLER elige cuál vincula a su reductor."""
+    from django.core.exceptions import PermissionDenied
+    from .tecnica_services import vincular_plano_compatible
+    equipo = get_object_or_404(equipos_taller(usuario=request.user, empresa=request.empresa_activa), pk=pk)
+    raw = request.POST.get('referencia', '')
+    if not raw.isascii() or not raw.isdecimal() or len(raw) > 18:
+        raise Http404
+    try:
+        vincular_plano_compatible(usuario=request.user, empresa=request.empresa_activa, equipo=equipo, referencia_id=raw)
+    except PermissionDenied:
+        raise Http404
+    messages.success(request, 'Plano vinculado al reductor.')
+    return redirect('masiscam:taller_equipo', pk=equipo.pk)

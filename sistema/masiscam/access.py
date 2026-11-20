@@ -62,13 +62,13 @@ PERMISOS_ROL = {
 
 VISTAS_TALLER = {
     "masiscam.flujo_views": {"detalle", "documento"},
-    "masiscam.tecnica_views": {"tecnica_inicio", "tecnica_expediente", "tecnica_nueva_revision", "tecnica_revision", "tecnica_informe", "tecnica_documento", "biblioteca", "biblioteca_referencia", "biblioteca_documento"},
+    "masiscam.tecnica_views": {"tecnica_inicio", "tecnica_expediente", "tecnica_nueva_revision", "tecnica_revision", "tecnica_informe", "tecnica_documento", "biblioteca", "biblioteca_referencia", "biblioteca_documento", "catalogo_vista_previa", "catalogo_documento"},
     "masiscam.plano_views": {"plano", "plano_datos", "plano_pieza", "plano_componente", "plano_mapa", "plano_posicion"},
     "masiscam.operacion_views": {"inicio", "detalle", "operar", "documento"},
     "masiscam.calibracion_views": {"inicio", "expediente", "revision", "documento", "fuente"},
     "masiscam.cierre_views": {"detalle", "documento", "historial"},
     "masiscam.views": {"dashboard", "ficha_crear", "equipo_crear", "clientes", "equipo_foto_privada"},
-    "masiscam.taller_views": {"taller_inicio", "taller_estado", "taller_cuenta", "taller_equipo"},
+    "masiscam.taller_views": {"taller_inicio", "taller_estado", "taller_cuenta", "taller_equipo", "vincular_plano"},
     "masiscam.recepcion_views": {"expedientes", "recepcion_crear", "expediente_detalle",
         "recepcion_finalizar", "recepcion_documento", "recepcion_foto_previsualizar"},
 }

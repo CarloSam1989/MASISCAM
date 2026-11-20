@@ -93,10 +93,30 @@ const refrescar=()=>{
   llenar('rotacion',r.map(o=>o.rotacion));llenar('operacion',ro.map(o=>o.operacion));
   if(!estado)return;
   const completo=['marca','modelo','ratio','rotacion'].every(n=>norm(f(n)?.value));
-  const coincide=completo&&ro.some(o=>!o.operacion||norm(o.operacion)===norm(f('operacion')?.value));
-  estado.textContent=!completo?'Elija marca, modelo, relación y rotación del catálogo para vincular el plano. Si la configuración no existe, el reductor se registra sin plano.'
-    :coincide?'Hay un plano publicado compatible: aparecerá en la ficha del equipo para su aprobación de aplicabilidad.'
-    :'No hay un plano publicado con esta configuración: el reductor se registrará sin plano.';
+  const sinCat=form.querySelector('#id_sin_catalogo')?.checked;
+  const coincide=completo&&ro.some(o=>norm(o.operacion)===norm(f('operacion')?.value));
+  estado.textContent=sinCat?'Se registrará sin plano de Planos y piezas.':!completo?'Elija marca, modelo, ratio y rotación del catálogo: el plano y sus piezas se vinculan solos. Si no está en el catálogo, marque la casilla inferior para registrar sin plano.'
+    :coincide?'Catálogo activo encontrado: el plano y sus piezas se vincularán al reductor al guardarlo.'
+    :'No hay un catálogo activo con esta configuración: elíjala de la lista o marque que no está en Planos y piezas.';
+  vistaPrevia(completo&&coincide&&!sinCat);
 };
-['marca','modelo','ratio','rotacion','operacion'].forEach(n=>f(n)?.addEventListener('input',refrescar));refrescar();
+let vistaClave='',vistaSeq=0;
+const vistaPrevia=activa=>{
+  const caja=document.getElementById('cat-vista'),url=form.dataset.vistaPrevia;if(!caja||!url)return;
+  if(!activa){vistaClave='';caja.replaceChildren();return;}
+  const q=new URLSearchParams();['marca','modelo','ratio','rotacion','operacion'].forEach(n=>q.set(n,(f(n)?.value||'').trim()));
+  const clave=q.toString();if(clave===vistaClave)return;vistaClave=clave;const mia=++vistaSeq;
+  fetch(url+'?'+clave,{credentials:'same-origin',headers:{'X-Requested-With':'XMLHttpRequest'}}).then(r=>r.ok?r.json():{candidatos:[]}).then(d=>{
+    if(mia!==vistaSeq)return;caja.replaceChildren();
+    const lista=d.candidatos||[];
+    if(!lista.length){caja.textContent='No hay un catálogo activo con esta configuración.';return;}
+    if(lista.length>1){const aviso=document.createElement('p');aviso.className='text-warning-emphasis small mb-2';aviso.textContent='Hay '+lista.length+' catálogos activos con esta configuración: tras guardar, elija la revisión en la ficha del reductor.';caja.append(aviso);}
+    lista.forEach(c=>{const bloque=document.createElement('div');bloque.className='border rounded p-2 mb-2';
+      const t=document.createElement('p');t.className='mb-2 small';t.textContent=c.codigo+' · rev. '+c.revision+' · '+c.piezas+' piezas · '+c.marcadores+' marcadores';
+      const abrir=document.createElement('a');abrir.href=c.pdf;abrir.target='_blank';abrir.rel='noopener';abrir.className='btn btn-sm btn-outline-primary ms-2';abrir.textContent='Abrir PDF';t.append(abrir);
+      const fr=document.createElement('iframe');fr.src=c.pdf;fr.title='Vista previa del plano '+c.codigo;fr.style.cssText='width:100%;height:320px;border:0';
+      bloque.append(t,fr);caja.append(bloque);});
+  }).catch(()=>{if(mia===vistaSeq)caja.textContent='No se pudo cargar la vista previa; el plano se vinculará al guardar.';});
+};
+['marca','modelo','ratio','rotacion','operacion'].forEach(n=>f(n)?.addEventListener('input',refrescar));form.querySelector('#id_sin_catalogo')?.addEventListener('change',refrescar);refrescar();
 })();

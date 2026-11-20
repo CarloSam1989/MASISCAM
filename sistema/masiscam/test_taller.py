@@ -44,7 +44,8 @@ class TallerTests(TestCase):
         return dict(cliente=self.cliente.pk, camaronera='Ingreso QA', estacion='E1', sector='S1',
             numero_equipo='TALLER-' + sufijo, marca='Marca QA', modelo='Modelo QA',
             numero_serie='TALLER-SER-' + sufijo, potencia='20 HP',
-            consulta_publica_activa='on', registrado_por=self.root.pk, empresa='99999')
+            consulta_publica_activa='on', registrado_por=self.root.pk, empresa='99999',
+            sin_catalogo='on')  # configuración libre: con catálogos activos se exige elegir una o declararlo
 
     def test_menu_fuera_del_decorador_y_empresa_activa(self):
         # This page shares base.html but does not use masiscam_access_required.

@@ -144,6 +144,7 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
     fotografia_equipo = forms.ImageField(label="Fotografía del equipo", required=False)
     fotografia_placa = forms.ImageField(label="Fotografía de la placa", required=False)
     observaciones = forms.CharField(label="Observaciones", required=False, widget=forms.Textarea(attrs={"rows": 4}))
+    sin_catalogo = forms.BooleanField(label="Esta configuración no está en Planos y piezas (registrar sin plano)", required=False)
     consulta_publica_activa = forms.BooleanField(label="Consulta pública activa", required=False)
 
     def __init__(self, *args, empresa, usuario=None, equipo=None, tipo_producto=Equipo.TipoProducto.REDUCTOR, **kwargs):
@@ -196,6 +197,8 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
             campo.widget.attrs["class"] = "form-check-input" if isinstance(campo, forms.BooleanField) else "form-control"
         self.fields["ruc"].widget.attrs.update({"autocomplete": "off", "inputmode": "numeric", "aria-describedby": "cliente-estado"})
         self.catalogo = []
+        if self.tipo_producto != Equipo.TipoProducto.REDUCTOR:
+            self.fields.pop("sin_catalogo", None)
         if self.tipo_producto == Equipo.TipoProducto.REDUCTOR:
             # La marca elegida es el fabricante: el plano compatible se busca por marca, modelo, ratio y rotación.
             self.fields.pop("fabricante", None)
@@ -234,11 +237,29 @@ class FichaEquipoForm(MasiscamImageFormMixin, forms.Form):
         if self.equipo:
             duplicados_numero = duplicados_numero.exclude(pk=self.equipo.pk)
             duplicados_serie = duplicados_serie.exclude(pk=self.equipo.pk)
+        self._validar_configuracion(datos)
         if numero and duplicados_numero.exists():
             self.add_error("numero_equipo", "Ya existe este número de equipo en esta estación de la empresa.")
         if serie and duplicados_serie.exists():
             self.add_error("numero_serie", "Ya existe esta serie en la empresa.")
         return datos
+
+    CONFIGURACION = ("marca", "modelo", "ratio", "rotacion", "operacion")
+
+    def _validar_configuracion(self, datos):
+        """La configuración del reductor debe existir en un catálogo activo, salvo que se registre sin plano.
+
+        Al editar un equipo existente solo se exige si la configuración cambia: así se conserva la histórica."""
+        if self.tipo_producto != Equipo.TipoProducto.REDUCTOR or not self.catalogo or datos.get("sin_catalogo"):
+            return
+        norm = lambda valor: (valor or "").strip().casefold()
+        if self.equipo and all(norm(datos.get(c)) == norm(getattr(self.equipo, c)) for c in self.CONFIGURACION):
+            return
+        if not any(norm(datos.get(c)) for c in ("marca", "modelo", "ratio", "rotacion")):
+            return
+        if not any(all(norm(opcion.get(c)) == norm(datos.get(c)) for c in self.CONFIGURACION) for opcion in self.catalogo):
+            self.add_error("marca", "Elija una configuración de un catálogo activo (marca, modelo, ratio, rotación y operación) "
+                                    "o marque que no está en Planos y piezas.")
 
     @transaction.atomic
     def save(self, *, usuario):

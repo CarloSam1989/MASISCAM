@@ -561,28 +561,51 @@ def planos_compatibles_equipo(*, usuario, empresa, equipo):
     if missing:
         return {'faltantes': missing, 'candidatos': []}
     from django.db.models import Exists, OuterRef
-    newer = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=OuterRef('codigo'),
-        estado__in=['PUBLICADA', 'RETIRADA'], revision__gt=OuterRef('revision'))
-    qs = ReferenciaTecnica.objects.filter(empresa=empresa, tipo='PLANO', estado='PUBLICADA',
-        expediente_trabajo__isnull=True).annotate(version_superada=Exists(newer)).filter(version_superada=False)
-    for field, value in values.items():
-        qs = qs.filter(**{field + '__iexact': value.strip()})
+    qs = catalogos_activos_compatibles(empresa, **values)
     qs = qs.annotate(aprobada=Exists(AplicabilidadReferenciaEquipo.objects.filter(
         referencia_id=OuterRef('pk'), equipo=equipo, activa=True)))
     candidatos = list(qs.order_by('codigo', '-revision'))
     # Un catálogo activo con configuración exacta es aplicable sin aprobación administrativa; solo se
     # respeta una exclusión explícita (aplicabilidad inactiva registrada para ese equipo).
-    with transaction.atomic():
-        for ref in candidatos:
-            if ref.aprobada:
-                continue
-            if not AplicabilidadReferenciaEquipo.objects.filter(referencia=ref, equipo=equipo).exists():
-                ap = AplicabilidadReferenciaEquipo.objects.create(referencia=ref, equipo=equipo, activa=True, autor=usuario,
-                    fundamento='Compatibilidad exacta automática: marca, modelo, relación, rotación y operación del catálogo activo.')
-                _libevent(empresa, usuario, uuid.uuid4(), 'BIBLIOTECA_APLICABILIDAD_AUTOMATICA',
-                          dict(referencia=ref.pk, equipo=equipo.pk), ap.pk)
-                ref.aprobada = True
+    # Con una única coincidencia se vincula sola; con varias, TALLER elige la revisión (nunca se asigna al azar).
+    if len(candidatos) == 1 and not candidatos[0].aprobada:
+        with transaction.atomic():
+            if _vincular(candidatos[0], equipo, usuario, empresa, 'BIBLIOTECA_APLICABILIDAD_AUTOMATICA',
+                         'Compatibilidad exacta automática: marca, modelo, relación, rotación y operación del catálogo activo.'):
+                candidatos[0].aprobada = True
     return {'faltantes': [], 'candidatos': candidatos}
+
+
+def _vincular(ref, equipo, usuario, empresa, accion, fundamento):
+    # Una exclusión explícita (aplicabilidad inactiva) no se revierte sola.
+    if AplicabilidadReferenciaEquipo.objects.filter(referencia=ref, equipo=equipo).exists():
+        return False
+    ap = AplicabilidadReferenciaEquipo.objects.create(referencia=ref, equipo=equipo, activa=True, autor=usuario, fundamento=fundamento)
+    _libevent(empresa, usuario, uuid.uuid4(), accion, dict(referencia=ref.pk, equipo=equipo.pk), ap.pk)
+    return True
+
+
+def catalogos_activos_compatibles(empresa, *, marca, modelo, ratio, rotacion, operacion=''):
+    """Catálogos de plano activos y vigentes de la empresa con configuración exacta (sin distinguir mayúsculas)."""
+    from django.db.models import Exists, OuterRef
+    newer = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=OuterRef('codigo'),
+        estado__in=['PUBLICADA', 'RETIRADA'], revision__gt=OuterRef('revision'))
+    qs = ReferenciaTecnica.objects.filter(empresa=empresa, tipo='PLANO', estado='PUBLICADA',
+        expediente_trabajo__isnull=True).annotate(version_superada=Exists(newer)).filter(version_superada=False)
+    for campo, valor in dict(marca=marca, modelo=modelo, ratio=ratio, rotacion=rotacion, operacion=operacion).items():
+        qs = qs.filter(**{campo + '__iexact': (valor or '').strip()})
+    return qs.order_by('codigo', '-revision')
+
+
+@transaction.atomic
+def vincular_plano_compatible(*, usuario, empresa, equipo, referencia_id):
+    """TALLER elige una de varias revisiones/catálogos exactos para su equipo."""
+    lista = planos_compatibles_equipo(usuario=usuario, empresa=empresa, equipo=equipo)
+    ref = next((r for r in lista['candidatos'] if r.pk == int(referencia_id)), None)
+    if ref is None:
+        raise PermissionDenied('El plano no es un catálogo activo compatible con este equipo.')
+    return _vincular(ref, equipo, usuario, empresa, 'BIBLIOTECA_APLICABILIDAD_SELECCIONADA',
+                     'Plano seleccionado por TALLER entre catálogos activos de configuración exacta.')
 
 def _parte_aplicable(parte,exp):
     return parte.referencia.empresa_id==exp.empresa_id and parte.referencia.estado=='PUBLICADA' and parte.referencia.tipo=='PLANO' and AplicabilidadReferenciaEquipo.objects.filter(referencia=parte.referencia,equipo=exp.registro.equipo,activa=True).exists()

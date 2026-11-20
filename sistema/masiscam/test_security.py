@@ -30,7 +30,7 @@ class SecurityTests(TestCase):
         cls.empresa = Empresa.objects.create(nombre="Test organization")
         cls.otra = Empresa.objects.create(nombre="Other organization")
         perfil = Perfil.objects.create(user=cls.user, empresa=cls.empresa)
-        cls.rol = RolMasiscam.objects.create(perfil=perfil, rol="CONSULTA")
+        cls.rol = RolMasiscam.objects.create(perfil=perfil, rol="ADMIN")  # CONSULTA fue retirado; ADMIN conserva la lectura que ese rol ejercía
         cls.proyecto = Proyecto.objects.create(empresa=cls.empresa, codigo="TEST", nombre="Test project", cliente="Test", responsable="Test", fecha_inicio=date.today(), creado_por=cls.user, pagina_publica_activa=True)
         cls.proyecto_otro = Proyecto.objects.create(empresa=cls.otra, codigo="OTHER", nombre="Other project", cliente="Test", responsable="Test", fecha_inicio=date.today(), creado_por=cls.user, pagina_publica_activa=True)
         with patch("masiscam.signals.encolar_carpeta_equipo"):
@@ -152,6 +152,8 @@ class SecurityTests(TestCase):
             service.return_value.drive.files().update.assert_not_called()
             service.return_value.drive.files().delete.assert_not_called()
 
+    # Drive solo se «habilita» aquí, con valores ficticios y el cliente totalmente simulado (GoogleDriveService se parchea).
+    @override_settings(GOOGLE_DRIVE_ENABLED=True,GOOGLE_DRIVE_CREDENTIALS_FILE='credenciales-simuladas.json',GOOGLE_DRIVE_ROOT_FOLDER_ID='raiz-simulada')
     def test_document_retry_after_remote_success_db_failure_no_duplicate(self):
         Documento.objects.filter(pk=self.documento.pk).update(estado_sincronizacion='PENDIENTE')
         Proyecto.objects.filter(pk=self.proyecto.pk).update(drive_folder_id='folder-test')

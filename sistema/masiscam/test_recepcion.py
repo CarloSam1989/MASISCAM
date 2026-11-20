@@ -126,7 +126,7 @@ class RecepcionTests(TestCase):
         self.assertEqual(ExpedienteMantenimiento.objects.get().numero, exp.numero)
 
     def test_roles_sin_bypass_superusuario(self):
-        for rol in ["TECNICO", "PLANTA", "GERENCIA", "ADMIN", "CONSULTA"]:
+        for rol in ["ADMIN", "TALLER"]:  # los roles retirados ya no pueden asignarse
             self.rol.rol = rol
             self.rol.save()
             with self.assertRaises(PermissionDenied):
@@ -291,9 +291,9 @@ class RecepcionTests(TestCase):
         visor = object.__new__(EquipoDriveDocuments)
         with self.assertRaises(DocumentUnavailable):
             visor.authorize("protegido-qa")
-        self.rol.rol, self.rol.cliente = "CLIENTE", self.cliente
+        self.rol.rol = "TALLER"  # el rol CLIENTE fue retirado; TALLER ajeno al equipo tampoco accede
         self.rol.save()
-        self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertEqual(self.client.get(url).status_code, 404)  # sin acceso: el documento ni siquiera se revela
 
     def test_recargar_solicitud_no_reserva_otra_emision(self):
         exp = abrir_recepcion(**self.args)
@@ -336,7 +336,7 @@ class RecepcionTests(TestCase):
             ContadorExpediente.objects.get(empresa=self.empresa).ultimo_numero)
         before = counts()
         qr = self.equipo.token_publico
-        for rol in ("OFICINA", "ADMIN", "PLANTA", "GERENCIA", "TECNICO", "CONSULTA"):
+        for rol in ("OFICINA", "ADMIN", "TALLER"):
             self.rol.rol = rol
             self.rol.save()
             for _ in range(2):

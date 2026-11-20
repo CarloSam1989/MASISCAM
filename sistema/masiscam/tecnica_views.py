@@ -456,3 +456,31 @@ def biblioteca_componentes(request,pk=None):
 def biblioteca_documento(request,pk):
     ref=get_object_or_404(svc.referencias_visibles(request.user,request.empresa_activa),pk=pk)
     return _archivo(ref.documento,request.empresa_activa,inline=request.GET.get('ver')=='1')
+
+
+@require_GET
+@local
+@masiscam_access_required
+def catalogo_vista_previa(request):
+    """Catálogos activos de la empresa con la configuración indicada: PDF, piezas y marcadores disponibles."""
+    svc.autorizar_tecnica(request.user,request.empresa_activa,{'TALLER','ADMIN','OFICINA'})
+    datos={c:request.GET.get(c,'').strip()[:120] for c in ('marca','modelo','ratio','rotacion','operacion')}
+    if not all(datos[c] for c in ('marca','modelo','ratio','rotacion')):
+        return JsonResponse({'candidatos':[]})
+    candidatos=[]
+    for r in svc.catalogos_activos_compatibles(request.empresa_activa,**datos)[:10]:
+        mapa=r.mapas.order_by('-version').first()
+        candidatos.append(dict(pk=r.pk,codigo=r.codigo,revision=r.revision,titulo=r.titulo,piezas=r.partes.count(),
+            marcadores=mapa.posiciones.count() if mapa else 0,
+            pdf=reverse('masiscam:catalogo_documento',args=[r.pk])+'?ver=1'))
+    return JsonResponse({'candidatos':candidatos})
+
+
+@require_GET
+@local
+@masiscam_access_required
+def catalogo_documento(request,pk):
+    """PDF original de un catálogo activo, para la vista previa al registrar un reductor."""
+    svc.autorizar_tecnica(request.user,request.empresa_activa,{'TALLER','ADMIN','OFICINA'})
+    ref=get_object_or_404(ReferenciaTecnica,pk=pk,empresa=request.empresa_activa,tipo='PLANO',estado='PUBLICADA',expediente_trabajo__isnull=True)
+    return _archivo(ref.documento,request.empresa_activa,inline=True)
