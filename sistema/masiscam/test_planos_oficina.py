@@ -387,6 +387,8 @@ class RegistroReductorCatalogoTests(TestCase):
         r = self.registrar(marca='QAMARCA', modelo='QM-1', ratio='5:1', rotacion='#2')
         self.assertEqual(r.status_code, 302, getattr(r, 'context', None) and r.context['form'].errors)
         equipo = Equipo.objects.get(numero_serie='SERIE-NUEVA-1')
+        self.assertEqual(list(ReferenciaTecnica.objects.filter(aplicabilidades__equipo=equipo).values_list('pk', flat=True)),
+                         [self.refs[''].pk])  # se vincula al registrar, sin abrir la ficha
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
         self.assertEqual([c.pk for c in res['candidatos']], [self.refs[''].pk])
         self.assertTrue(res['candidatos'][0].aprobada)  # aplicable de inmediato
@@ -504,3 +506,49 @@ class RegistroReductorCatalogoTests(TestCase):
         self.assertEqual(r.status_code, 200)
         equipo.refresh_from_db()
         self.assertEqual(equipo.modelo, 'L-1')
+
+    def test_taller_accede_a_su_listado_de_reductores_y_sin_catalogos_se_informa(self):
+        from accounts.models import Empresa
+        from .models import Cliente, Proyecto
+        propio = Equipo.objects.get(pk=self.exp.registro.equipo_id)  # registrado por TALLER en setUp
+        otro_taller = Equipo.objects.create(proyecto=propio.proyecto, cliente=propio.cliente, nombre='EQ-AJENO', numero_serie='AJENO-1',
+            tipo_producto='REDUCTOR', registrado_por=self.planta)
+        otra = Empresa.objects.create(nombre='Otra empresa QA')
+        cli = Cliente.objects.create(empresa=otra, nombre_comercial='Cliente otra', ruc='77', razon_social='Otra')
+        pro = Proyecto.objects.create(empresa=otra, codigo='OT', nombre='Otra', cliente='Otra', responsable='QA',
+            fecha_inicio='2026-11-20', creado_por=self.planta)
+        Equipo.objects.create(proyecto=pro, cliente=cli, nombre='EQ-OTRA-EMPRESA', numero_serie='OTRA-1', tipo_producto='REDUCTOR', registrado_por=self.tecnico)
+        Equipo.objects.filter(pk=propio.pk).update(tipo_producto='REDUCTOR')
+        self.client.force_login(self.tecnico)
+        url = reverse('masiscam:producto_listado', args=['reductor'])
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, propio.numero_serie)
+        self.assertNotContains(r, 'AJENO-1')
+        self.assertNotContains(r, 'OTRA-1')
+        self.assertContains(r, reverse('masiscam:taller_equipo', args=[propio.pk]))
+        self.assertNotContains(r, reverse('masiscam:ficha_detalle', args=[propio.pk]))
+        self.assertEqual(self.client.post(url, {'equipo_id': propio.pk, 'estado': 'INACTIVO'}).status_code, 403)  # sin administración
+        self.assertEqual(self.client.get(reverse('masiscam:producto_listado', args=['bomba'])).status_code, 403)  # solo Reductores
+        from .templatetags.masiscam_navigation import menu_compartido
+        from django.test import RequestFactory
+        rq = RequestFactory().get('/'); rq.user = self.tecnico; rq.empresa_activa = self.empresa; rq.rol_masiscam = self.tecnico.perfiles.get().rol_masiscam
+        hijos = {h['label']: h['url'] for it in menu_compartido({'request': rq})['items'] for h in it.get('children', [])}
+        self.assertEqual(hijos['Reductores'], url)
+        self.assertIsNone(hijos['Bombas'])
+        self.assertEqual(self.client.get(url, {'cliente': cli.pk}).status_code, 404)  # cliente de otra empresa
+        self.assertEqual(self.client.get(reverse('masiscam:ficha_detalle', args=[propio.pk])).status_code, 403)
+        # ADMIN sigue viendo todo; OFICINA conserva su listado.
+        self.client.force_login(self.planta)
+        self.assertContains(self.client.get(url), 'AJENO-1')
+        self.client.force_login(self.oficina)
+        self.assertEqual(self.client.get(url).status_code, 200)
+        # Formulario con catálogos activos: datos para la cascada; sin catálogos: mensaje explícito.
+        self.client.force_login(self.tecnico)
+        self.assertContains(self.client.get(reverse('masiscam:ficha_crear')), 'data-catalogo=')
+        for ref in ReferenciaTecnica.objects.filter(empresa=self.empresa, tipo='PLANO', estado='PUBLICADA'):
+            svc.estado_referencia(usuario=self.planta, empresa=self.empresa, referencia_id=ref.pk, estado='RETIRADA', clave=uuid.uuid4())
+        r = self.client.get(reverse('masiscam:ficha_crear'))
+        self.assertFalse(r.context['form'].catalogo)
+        self.assertContains(r, 'No hay configuraciones disponibles')
+        self.assertContains(r, 'registrar sin plano')

@@ -38,6 +38,7 @@
     }
     window.masiscamEnhanceForms(body);
     window.masiscamInitClienteSelector(body);
+    if (window.masiscamInitCatalogo) window.masiscamInitCatalogo(body);
     form.addEventListener('submit', submitForm);
   };
   const submitForm = async event => {

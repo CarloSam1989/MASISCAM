@@ -37,7 +37,7 @@ def menu_compartido(context):
                             ('Motores eléctricos', None), ('Motores diésel', None),
                             ('Embarcaciones', None), ('Lubricantes', None),
                             ('Recubrimientos', None), ('Servicios', None)]:
-            products.append(item(label, 'producto_listado', [code]) if code and rol != 'TALLER'
+            products.append(item(label, 'producto_listado', [code]) if code and (rol != 'TALLER' or code == 'reductor')  # TALLER solo accede a Reductores
                             else dict(label=label, url=None))
         items.insert(1, dict(label='Productos', children=products, url=''))
     for entry in items:entry['activo']=request.path==entry['url'].split('#')[0] and '#' not in entry['url']

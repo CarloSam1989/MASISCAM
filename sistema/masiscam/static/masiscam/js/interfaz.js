@@ -81,13 +81,33 @@ btn.addEventListener('click',e=>{e.stopPropagation();set(list.hidden);});list.ad
 document.addEventListener('click',e=>{if(!box.contains(e.target))set(false);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!list.hidden){set(false);btn.focus();}});
 })();
-(()=>{const form=document.querySelector('form[data-catalogo]');if(!form)return;
+(()=>{function iniciar(root){const form=(root||document).querySelector('form[data-catalogo]');if(!form||form.dataset.catalogoListo)return;form.dataset.catalogoListo='1';
 let cat=[];try{cat=JSON.parse(form.dataset.catalogo||'[]');}catch{return;}
 const f=n=>form.querySelector('#id_'+n),dl=n=>document.getElementById('cat-'+n),estado=document.getElementById('cat-estado');
 const norm=v=>(v||'').trim().toLowerCase(),uniq=a=>[...new Set(a)].filter(Boolean);
 const igual=(o,campo)=>!norm(f(campo)?.value)||norm(o[campo])===norm(f(campo).value);
+const NOMBRES=['marca','modelo','ratio','rotacion','operacion'],sinCatalogo=()=>!!form.querySelector('#id_sin_catalogo')?.checked,sels={};
+NOMBRES.forEach(nombre=>{const input=f(nombre);if(!input)return;const sel=document.createElement('select');sel.className='form-select';sel.id='sel-'+nombre;
+  sel.setAttribute('aria-label',(form.querySelector('label[for="id_'+nombre+'"]')?.textContent||nombre).replace('*','').trim());input.after(sel);sels[nombre]=sel;
+  sel.addEventListener('change',()=>{input.value=sel.value;input.dispatchEvent(new Event('input',{bubbles:true}));});});
+// Selectores en cascada: cada nivel solo ofrece lo que existe para la selección anterior.
+const selectores=niveles=>{const libre=sinCatalogo();
+  NOMBRES.forEach((nombre,i)=>{const input=f(nombre),sel=sels[nombre];if(!input||!sel)return;
+    sel.hidden=libre;input.classList.toggle('d-none',!libre);if(libre)return;
+    const previo=i===0||norm(f(NOMBRES[i-1])?.value);
+    const valores=previo?[...new Set(niveles[nombre].map(o=>o[nombre]||''))]:[];
+    const hayVacio=valores.includes(''),reales=valores.filter(Boolean).sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+    const opciones=[];if(nombre==='operacion'){opciones.push(['',hayVacio?'Sin operación':(reales.length?'Seleccione…':'Sin operación')]);}else opciones.push(['','Seleccione…']);
+    reales.forEach(v=>opciones.push([v,v]));
+    sel.replaceChildren(...opciones.map(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;return o;}));
+    const actual=[...sel.options].find(o=>norm(o.value)===norm(input.value));sel.value=actual?actual.value:'';
+    sel.disabled=!previo||(!reales.length&&nombre!=='operacion');});};
 const llenar=(n,valores)=>{const l=dl(n);if(!l)return;l.replaceChildren(...uniq(valores).map(v=>{const o=document.createElement('option');o.value=v;return o;}));};
+const nivelesActuales=()=>{const m=cat.filter(o=>igual(o,'marca')),mo=m.filter(o=>igual(o,'modelo')),r=mo.filter(o=>igual(o,'ratio')),ro=r.filter(o=>igual(o,'rotacion'));return {marca:cat,modelo:m,ratio:mo,rotacion:r,operacion:ro};};
 const refrescar=()=>{
+  if(!sinCatalogo()){for(let k=0;k<5;k++){const nv=nivelesActuales();let cambio=false;
+    NOMBRES.forEach(nombre=>{const input=f(nombre);if(input&&norm(input.value)&&!nv[nombre].some(o=>norm(o[nombre])===norm(input.value))){input.value='';cambio=true;}});if(!cambio)break;}}
+  selectores(nivelesActuales());
   const m=cat.filter(o=>igual(o,'marca')),mo=m.filter(o=>igual(o,'modelo')),r=mo.filter(o=>igual(o,'ratio')),ro=r.filter(o=>igual(o,'rotacion'));
   llenar('marca',cat.map(o=>o.marca));llenar('modelo',m.map(o=>o.modelo));llenar('ratio',mo.map(o=>o.ratio));
   llenar('rotacion',r.map(o=>o.rotacion));llenar('operacion',ro.map(o=>o.operacion));
@@ -119,4 +139,5 @@ const vistaPrevia=activa=>{
   }).catch(()=>{if(mia===vistaSeq)caja.textContent='No se pudo cargar la vista previa; el plano se vinculará al guardar.';});
 };
 ['marca','modelo','ratio','rotacion','operacion'].forEach(n=>f(n)?.addEventListener('input',refrescar));form.querySelector('#id_sin_catalogo')?.addEventListener('change',refrescar);refrescar();
-})();
+}
+iniciar(document);window.masiscamInitCatalogo=iniciar;})();

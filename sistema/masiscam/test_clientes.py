@@ -321,9 +321,14 @@ class ClientesRBACTests(TestCase):
         for url, datos in [(reverse('masiscam:clientes'), {}),
                            (reverse('masiscam:cliente_detalle', args=[self.cliente.pk]), {}),
                            (reverse('masiscam:cliente_detalle', args=[self.otro_cliente.pk]), {}),
-                           (reverse('masiscam:producto_listado', args=['reductor']), {'cliente': self.otro_cliente.pk})]:
+                           ]:
             self.assertEqual(self.client.get(url, datos).status_code, 403, url)
         self.assertEqual(self.client.get(reverse('masiscam:cliente_crear')).status_code, 403)
+        # Productos → Reductores sí está habilitado para TALLER, solo con sus equipos; un cliente ajeno no existe para él.
+        lista = reverse('masiscam:producto_listado', args=['reductor'])
+        self.assertEqual(self.client.get(lista).status_code, 200)
+        r = self.client.get(lista, {'cliente': self.otro_cliente.pk})  # el filtro no revela equipos que TALLER no registró
+        self.assertEqual((r.status_code, len(r.context['equipos'])), (200, 0))
 
     def test_sesion_rol_cambiado_y_post_no_modifican_clientes(self):
         self.login_rol('OFICINA')

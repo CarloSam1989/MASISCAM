@@ -138,6 +138,12 @@ def producto_listado(request, tipo):
     if request.cliente_usuario:
         return _listado_cliente(request, codigo)
     base = Equipo.objects.filter(proyecto__empresa=request.empresa_activa, tipo_producto=codigo)
+    if request.rol_masiscam and request.rol_masiscam.rol == "TALLER":
+        if codigo != "REDUCTOR":
+            raise PermissionDenied
+        # TALLER solo ve el listado de los equipos que él registró (nunca los de otros ni los de otra empresa).
+        from .access import equipos_taller
+        base = base.filter(pk__in=equipos_taller(usuario=request.user, empresa=request.empresa_activa).values("pk"))
     from .access import puede_auditar_inactivos
     if not puede_auditar_inactivos(request):
         base=base.exclude(estado='INACTIVO')
@@ -304,6 +310,13 @@ def ficha_crear(request):
             form.add_error(None, str(exc))
         else:
             auditar(empresa=request.empresa_activa, usuario=request.user, accion="FICHA_EQUIPO_CREADA", objeto=equipo)
+            if equipo.tipo_producto == Equipo.TipoProducto.REDUCTOR and settings.MASISCAM_TECNICA_LOCAL:
+                # Vincula de inmediato el catálogo activo de configuración exacta (si hay uno solo); no bloquea el registro.
+                from .tecnica_services import planos_compatibles_equipo
+                try:
+                    planos_compatibles_equipo(usuario=request.user, empresa=request.empresa_activa, equipo=equipo)
+                except (PermissionDenied, ValidationError):
+                    pass
             if _es_modal(request):
                 messages.success(request, "Equipo registrado correctamente.")
                 return JsonResponse({"success": True, "id": equipo.pk})

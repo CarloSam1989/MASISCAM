@@ -67,7 +67,7 @@ VISTAS_TALLER = {
     "masiscam.operacion_views": {"inicio", "detalle", "operar", "documento"},
     "masiscam.calibracion_views": {"inicio", "expediente", "revision", "documento", "fuente"},
     "masiscam.cierre_views": {"detalle", "documento", "historial"},
-    "masiscam.views": {"dashboard", "ficha_crear", "equipo_crear", "clientes", "equipo_foto_privada"},
+    "masiscam.views": {"dashboard", "ficha_crear", "equipo_crear", "clientes", "equipo_foto_privada", "producto_listado"},
     "masiscam.taller_views": {"taller_inicio", "taller_estado", "taller_cuenta", "taller_equipo", "vincular_plano"},
     "masiscam.recepcion_views": {"expedientes", "recepcion_crear", "expediente_detalle",
         "recepcion_finalizar", "recepcion_documento", "recepcion_foto_previsualizar"},
