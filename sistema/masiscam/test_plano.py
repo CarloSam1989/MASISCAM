@@ -187,24 +187,6 @@ class PlanoTests(TestCase):
         with self.assertRaises(PermissionDenied):
             tecnica.planos_compatibles_equipo(usuario=self.oficina, empresa=self.empresa, equipo=equipo)
 
-    def test_solicitud_plano_es_auditada_y_no_duplica(self):
-        from .models import Auditoria
-        equipo = self.exp.registro.equipo
-        equipo.registrado_por = self.tecnico
-        equipo.marca, equipo.modelo = 'DERAN', 'M20A'
-        equipo.operacion, equipo.rotacion, equipo.ratio = 'VERTICAL', '#1', '3:1'
-        equipo.save(update_fields=['registrado_por', 'marca', 'modelo', 'operacion', 'rotacion', 'ratio'])
-        self.ref.aplicabilidades.filter(equipo=equipo).update(activa=False)
-        url = reverse('masiscam:solicitar_plano', args=[equipo.pk])
-        for unused in range(2):
-            self.assertEqual(self.client.post(url, {'referencia': self.ref.pk}).status_code, 302)
-        self.assertEqual(Auditoria.objects.filter(empresa=self.empresa, accion='PLANO_APLICABILIDAD_SOLICITADA',
-            objeto_id=str(self.ref.pk), detalle__equipo=equipo.pk).count(), 1)
-        self.assertFalse(self.ref.aplicabilidades.filter(equipo=equipo, activa=True).exists())
-        equipo.rotacion = '#2'
-        equipo.save(update_fields=['rotacion'])
-        self.assertEqual(self.client.post(url, {'referencia': self.ref.pk}).status_code, 404)
-
     def test_csv_revision_humana_no_inventa_datos(self):
         text='posicion,numero_parte,descripcion,unidad,cantidad_referencia,pagina\n91,,STEADY BUSHING V2030-SB-____,,,1\n'
         row = svc.leer_materiales(text)[0]
@@ -249,7 +231,7 @@ class PlanoTests(TestCase):
             rotacion='#1', operacion='', clave=str(uuid.uuid4())))
         self.assertEqual(response.status_code, 302)
         nuevo = ReferenciaTecnica.objects.get(marca='QAMARCA')
-        self.assertEqual((nuevo.estado, nuevo.documento.proyecto.codigo), ('BORRADOR', 'BIBLIOTECA-TECNICA'))
+        self.assertEqual((nuevo.estado, nuevo.documento.proyecto.codigo), ('PUBLICADA', 'BIBLIOTECA-TECNICA'))
         parte = nuevo.partes.get()
         self.assertEqual((parte.posicion, parte.numero_parte, parte.cantidad_referencia), ('91', '', None))
 

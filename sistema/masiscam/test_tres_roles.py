@@ -3,6 +3,7 @@ import os
 from unittest import skipUnless
 from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
@@ -236,7 +237,9 @@ class TresRolesTests(TresRolesFixture, TestCase):
             self.client.force_login(user)
             for name in ('usuarios', 'biblioteca_referencia_crear', 'calibracion_plantillas'):
                 response = self.client.get(reverse('masiscam:' + name))
-                self.assertEqual(response.status_code, 200 if rol == 'ADMIN' else 403, (rol, name))
+                # OFICINA administra el catálogo técnico (Planos y piezas); usuarios y calibración siguen siendo de ADMIN.
+                permitido = rol == 'ADMIN' or (rol == 'OFICINA' and name == 'biblioteca_referencia_crear')
+                self.assertEqual(response.status_code, 200 if permitido else 403, (rol, name))
         user = get_user_model().objects.create_superuser(username='sin-asignacion', email='', password='QA-123456!')
         Perfil.objects.create(user=user, empresa=self.empresa)
         self.client.force_login(user)
@@ -282,6 +285,10 @@ class TresRolesMigracionTests(TransactionTestCase):
     def test_0040_conserva_asignaciones_historicas_sin_conversion(self):
         old = [('masiscam', '0039_posiciones_provisionales')]
         new = [('masiscam', '0040_tres_roles_operativos')]
+        def al_esquema_vigente():  # las migraciones posteriores a 0040 siguen siendo parte del esquema actual
+            ejecutor = MigrationExecutor(connection)
+            ejecutor.migrate(ejecutor.loader.graph.leaf_nodes())
+        self.addCleanup(al_esquema_vigente)
         executor = MigrationExecutor(connection)
         executor.migrate(old)
         try:
@@ -375,6 +382,10 @@ class Transicion0040Tests(TresRolesFixture, TransactionTestCase):
         exp = self.recepcion(equipo)
         old = [('masiscam', '0039_posiciones_provisionales')]
         new = [('masiscam', '0040_tres_roles_operativos')]
+        def al_esquema_vigente():  # las migraciones posteriores a 0040 siguen siendo parte del esquema actual
+            ejecutor = MigrationExecutor(connection)
+            ejecutor.migrate(ejecutor.loader.graph.leaf_nodes())
+        self.addCleanup(al_esquema_vigente)
         executor = MigrationExecutor(connection)
         executor.migrate(old)
         try:
@@ -388,10 +399,14 @@ class Transicion0040Tests(TresRolesFixture, TransactionTestCase):
                     cliente_id=self.cliente.pk if code == 'CLIENTE' else None)
             models = (get_user_model(), Perfil, RolMasiscam, Equipo,
                       ExpedienteMantenimiento, AsignacionTecnica, Documento, Auditoria)
-            before = [list(model.objects.order_by('pk').values()) for model in models]
+            # En el esquema de la migración 0040 aún no existen las columnas posteriores (p. ej. Equipo.operacion).
+            before = [list(model.objects.order_by('pk').values(*[f.attname for f in model._meta.concrete_fields
+                      if f.name != 'operacion'])) for model in models]
         finally:
             MigrationExecutor(connection).migrate(new)
-        self.assertEqual(before, [list(model.objects.order_by('pk').values()) for model in models])
+        self.assertEqual(before, [list(model.objects.order_by('pk').values(*[f.attname for f in model._meta.concrete_fields
+                                                                 if f.name != 'operacion'])) for model in models])
+        al_esquema_vigente()
         for code, row in historicos.items():
             user = get_user_model().objects.get(perfiles__rol_masiscam__pk=row.pk)
             self.assertIsNone(rol_masiscam_usuario(usuario=user, empresa=self.empresa), code)
@@ -591,7 +606,7 @@ class AprobacionPlanoTests(TresRolesFixture, TestCase):
         key = uuid.uuid4()
         url = reverse('masiscam:biblioteca_referencia', args=[self.ref.pk])
         documentos = Documento.objects.count()
-        response = self.client.post(url, dict(op='corregir_plano', clave=key, archivo=plano.pdf_trabajo()))
+        response = self.client.post(url, dict(op='corregir_plano', clave=key, archivo=SimpleUploadedFile('plano-qa.pdf', self.pdf, content_type='application/pdf')))
         self.assertEqual(response.status_code, 302, response.content)
         nueva = self.exp.planos_trabajo.get(sustituye=self.ref)
         self.assertEqual(nueva.revision, 2)
@@ -600,7 +615,7 @@ class AprobacionPlanoTests(TresRolesFixture, TestCase):
         self.assertEqual(nueva.partes.count(), 1)
         self.assertEqual(self.ref.partes.get().pk, parte.pk)
         self.assertEqual(self.client.post(url, dict(op='corregir_plano', clave=key,
-            archivo=plano.pdf_trabajo())).status_code, 302)
+            archivo=SimpleUploadedFile('plano-qa.pdf', self.pdf, content_type='application/pdf'))).status_code, 302)
         self.assertEqual(self.exp.planos_trabajo.count(), 2)
         sol.refresh_from_db(); self.assertEqual(sol.snapshot, snapshot)
         self.assertEqual(SolicitudRepuestos.objects.count(), 1)

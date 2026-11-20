@@ -295,20 +295,9 @@ def biblioteca(request):
     query=request.GET.get('q','').strip()
     from django.db.models import Count
     pagina=paginar_listado(request,qs.annotate(n_partes=Count('partes',distinct=True)).order_by('codigo','-revision'),{'codigo':'Codigo','titulo':'Titulo','marca':'Marca','modelo':'Modelo','estado':'Estado'})
-    pendientes=svc.ids_revision_pendiente(request.empresa_activa)
     for r in pagina:
-        r.pendiente=r.estado=='BORRADOR' and str(r.pk) in pendientes
         r.clave_revision=uuid.uuid4()
-    solicitudes = []
-    if _role(request) == 'ADMIN':
-        from .models import Auditoria, Equipo, AplicabilidadReferenciaEquipo
-        eventos = Auditoria.objects.filter(empresa=request.empresa_activa, accion='PLANO_APLICABILIDAD_SOLICITADA').order_by('-pk')[:200]
-        for evento in eventos:
-            equipo = Equipo.objects.filter(pk=evento.detalle.get('equipo'), proyecto__empresa=request.empresa_activa).first()
-            ref = ReferenciaTecnica.objects.filter(pk=evento.objeto_id, empresa=request.empresa_activa, estado='PUBLICADA').first()
-            if equipo and ref and not AplicabilidadReferenciaEquipo.objects.filter(referencia=ref, equipo=equipo, activa=True).exists():
-                solicitudes.append(dict(equipo=equipo, referencia=ref, evento=evento))
-    return render(request,'masiscam/tecnica_biblioteca.html',dict(referencias=pagina,pagina=pagina,rol_tecnico=_role(request),solicitudes_plano=solicitudes))
+    return render(request,'masiscam/tecnica_biblioteca.html',dict(referencias=pagina,pagina=pagina,rol_tecnico=_role(request)))
 
 
 @require_http_methods(['GET','POST'])
@@ -373,7 +362,7 @@ def biblioteca_referencia(request,pk):
     forms={'parte':ParteForm(empresa=request.empresa_activa),'aplicabilidad':AplicabilidadForm(empresa=request.empresa_activa)}
     if request.method=='POST':
         action=request.POST.get('op')
-        svc.autorizar_tecnica(request.user,request.empresa_activa,{'ADMIN', 'OFICINA'} if action in {'parte','quitar_parte','solicitar_revision'} else {'ADMIN'})
+        svc.autorizar_tecnica(request.user,request.empresa_activa,{'ADMIN', 'OFICINA'} if action in {'parte','quitar_parte','PUBLICADA','revision'} else {'ADMIN'})
         form=(ParteForm(request.POST,empresa=request.empresa_activa) if action=='parte' else
               AplicabilidadForm(request.POST,empresa=request.empresa_activa) if action=='aplicabilidad' else BaseForm(request.POST))
         forms[action]=form
@@ -384,15 +373,18 @@ def biblioteca_referencia(request,pk):
                 base=dict(usuario=request.user,empresa=request.empresa_activa,referencia_id=pk,clave=key)
                 if action=='parte':
                     svc.guardar_parte(**base,datos=data,parte_id=request.POST.get('parte_id') or None)
-                elif action=='solicitar_revision':
-                    svc.solicitar_revision(**base)
-                    messages.success(request,'Catálogo enviado a ADMINISTRADOR para revisión y publicación.')
+                elif action=='revision':
+                    from .plano_services import crear_revision_catalogo
+                    nueva=crear_revision_catalogo(**base)
+                    messages.success(request,'Catálogo en edición: modifique los datos o las piezas y vuelva a activarlo.')
+                    return redirect('masiscam:biblioteca_referencia',pk=nueva.pk)
                 elif action=='quitar_parte':
                     svc.guardar_parte(**base,datos={},parte_id=int(request.POST.get('parte_id','0')),eliminar=True)
                 elif action=='aplicabilidad':
                     svc.aplicar_referencia(**base,**data)
                 elif action in {'PUBLICADA','RETIRADA'}:
                     svc.estado_referencia(**base,estado=action)
+                    messages.success(request,'Catálogo activo.' if action=='PUBLICADA' else 'Catálogo inactivo.')
                 elif action=='SINCRONIZAR':
                     svc.reintentar_referencia(**base)
                 else:
@@ -402,9 +394,18 @@ def biblioteca_referencia(request,pk):
             else:
                 return redirect('masiscam:biblioteca_referencia',pk=pk)
     editable=ref.estado=='BORRADOR' and ref.tipo=='PLANO' and _role(request) in {'ADMIN','OFICINA'}
+    historial=[]
+    if _role(request)=='ADMIN':
+        from .models import Auditoria
+        codigo_revs=list(ReferenciaTecnica.objects.filter(empresa=request.empresa_activa,codigo=ref.codigo).values_list('pk',flat=True))
+        historial=list(Auditoria.objects.filter(empresa=request.empresa_activa,objeto_tipo='BibliotecaTecnica',
+            objeto_id__in=[str(i) for i in codigo_revs]).select_related('usuario').order_by('-pk')[:100])
+        historial+=list(Auditoria.objects.filter(empresa=request.empresa_activa,accion='BIBLIOTECA_PARTE_CAMBIO',
+            detalle__referencia__in=codigo_revs).select_related('usuario').order_by('-pk')[:200])
+        historial.sort(key=lambda e:e.pk,reverse=True)
     filas=[(p,uuid.uuid4()) for p in ref.partes.order_by('pk')] if editable else []
     return render(request,'masiscam/tecnica_referencia.html',dict(referencia=ref,forms=forms,rol_tecnico=_role(request),clave=uuid.uuid4(),
-        editable_partes=editable,filas_partes=filas,revision_pendiente=str(ref.pk) in svc.ids_revision_pendiente(request.empresa_activa)),status=400 if request.method=='POST' else 200)
+        editable_partes=editable,filas_partes=filas,historial=historial,revisiones=ReferenciaTecnica.objects.filter(empresa=request.empresa_activa,codigo=ref.codigo).order_by('-revision')),status=400 if request.method=='POST' else 200)
 
 
 @require_http_methods(['GET','POST'])

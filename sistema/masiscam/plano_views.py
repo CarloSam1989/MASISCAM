@@ -331,7 +331,7 @@ def plano_importar(request):
         except (ValidationError, IntegrityError, OSError) as exc:
             form.add_error(None, ' '.join(exc.messages) if isinstance(exc, ValidationError) else 'No se pudo guardar el catálogo.')
         else:
-            messages.success(request, 'Catálogo guardado como borrador. Revise las piezas, ubique los marcadores y envíelo a ADMINISTRADOR.')
+            messages.success(request, 'Catálogo guardado y activo: ya está disponible para TALLER.' if ref.estado == 'PUBLICADA' else 'Catálogo guardado en edición: complete las descripciones de las piezas y actívelo.')
             return redirect('masiscam:biblioteca_referencia', pk=ref.pk)
     return render(request, 'masiscam/plano_importar.html', {'form': form}, status=400 if request.method == 'POST' else 200)
 

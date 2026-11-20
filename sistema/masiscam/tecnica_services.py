@@ -552,14 +552,27 @@ def planos_compatibles_equipo(*, usuario, empresa, equipo):
         return {'faltantes': missing, 'candidatos': []}
     from django.db.models import Exists, OuterRef
     newer = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=OuterRef('codigo'),
-        estado='PUBLICADA', revision__gt=OuterRef('revision'))
+        estado__in=['PUBLICADA', 'RETIRADA'], revision__gt=OuterRef('revision'))
     qs = ReferenciaTecnica.objects.filter(empresa=empresa, tipo='PLANO', estado='PUBLICADA',
         expediente_trabajo__isnull=True).annotate(version_superada=Exists(newer)).filter(version_superada=False)
     for field, value in values.items():
         qs = qs.filter(**{field + '__iexact': value.strip()})
     qs = qs.annotate(aprobada=Exists(AplicabilidadReferenciaEquipo.objects.filter(
         referencia_id=OuterRef('pk'), equipo=equipo, activa=True)))
-    return {'faltantes': [], 'candidatos': list(qs.order_by('codigo', '-revision'))}
+    candidatos = list(qs.order_by('codigo', '-revision'))
+    # Un catálogo activo con configuración exacta es aplicable sin aprobación administrativa; solo se
+    # respeta una exclusión explícita (aplicabilidad inactiva registrada para ese equipo).
+    with transaction.atomic():
+        for ref in candidatos:
+            if ref.aprobada:
+                continue
+            if not AplicabilidadReferenciaEquipo.objects.filter(referencia=ref, equipo=equipo).exists():
+                ap = AplicabilidadReferenciaEquipo.objects.create(referencia=ref, equipo=equipo, activa=True, autor=usuario,
+                    fundamento='Compatibilidad exacta automática: marca, modelo, relación, rotación y operación del catálogo activo.')
+                _libevent(empresa, usuario, uuid.uuid4(), 'BIBLIOTECA_APLICABILIDAD_AUTOMATICA',
+                          dict(referencia=ref.pk, equipo=equipo.pk), ap.pk)
+                ref.aprobada = True
+    return {'faltantes': [], 'candidatos': candidatos}
 
 def _parte_aplicable(parte,exp):
     return parte.referencia.empresa_id==exp.empresa_id and parte.referencia.estado=='PUBLICADA' and parte.referencia.tipo=='PLANO' and AplicabilidadReferenciaEquipo.objects.filter(referencia=parte.referencia,equipo=exp.registro.equipo,activa=True).exists()
@@ -755,7 +768,7 @@ def opciones_catalogo(usuario, empresa):
     """Configuraciones de planos publicados (vigentes) para elegir al registrar un reductor."""
     autorizar_tecnica(usuario, empresa, {'TALLER', 'ADMIN', 'OFICINA'})
     from django.db.models import Exists, OuterRef
-    newer = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=OuterRef('codigo'), estado='PUBLICADA', revision__gt=OuterRef('revision'))
+    newer = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=OuterRef('codigo'), estado__in=['PUBLICADA', 'RETIRADA'], revision__gt=OuterRef('revision'))
     qs = ReferenciaTecnica.objects.filter(empresa=empresa, tipo='PLANO', estado='PUBLICADA', expediente_trabajo__isnull=True)
     qs = qs.annotate(superada=Exists(newer)).filter(superada=False)
     vistos, opciones = set(), []
@@ -767,41 +780,17 @@ def opciones_catalogo(usuario, empresa):
     return opciones
 
 
-def ids_revision_pendiente(empresa):
-    """Planos en borrador enviados a ADMINISTRADOR (sin nuevo estado ni migración)."""
-    return set(Auditoria.objects.filter(empresa=empresa,objeto_tipo='BibliotecaTecnica',
-        accion='BIBLIOTECA_REVISION_SOLICITADA').values_list('objeto_id',flat=True))
-
-
-@transaction.atomic
-def solicitar_revision(*,usuario,empresa,referencia_id,clave):
-    _liblock(usuario,empresa,{'ADMIN','OFICINA'})
-    payload=dict(id=referencia_id)
-    old=_libretry(empresa,clave,'BIBLIOTECA_REVISION_SOLICITADA',payload)
-    if old:
-        return ReferenciaTecnica.objects.get(pk=old)
-    obj=ReferenciaTecnica.objects.get(pk=referencia_id,empresa=empresa)
-    if obj.estado!='BORRADOR' or obj.tipo!='PLANO':
-        raise ValidationError('Solo un plano en borrador puede enviarse a revisión.')
-    documento_valido(obj.documento,empresa)
-    if not obj.partes.exists():
-        raise ValidationError('Importe o registre repuestos antes de enviar a revisión.')
-    if obj.partes.filter(descripcion__regex=r'^\s*$').exists():
-        raise ValidationError('Corrija las posiciones sin descripción antes de enviar a revisión.')
-    if str(obj.pk) in ids_revision_pendiente(empresa):
-        raise ValidationError('El catálogo ya está pendiente de revisión.')
-    _libevent(empresa,usuario,clave,'BIBLIOTECA_REVISION_SOLICITADA',payload,obj.pk)
-    return obj
-
-
 @transaction.atomic
 def estado_referencia(*,usuario,empresa,referencia_id,estado,clave):
-    _liblock(usuario,empresa)
+    _liblock(usuario,empresa,{'ADMIN','OFICINA'})
     payload=dict(id=referencia_id,estado=estado)
     old=_libretry(empresa,clave,'BIBLIOTECA_ESTADO',payload)
     if old:
         return ReferenciaTecnica.objects.get(pk=old)
     obj=ReferenciaTecnica.objects.get(pk=referencia_id,empresa=empresa)
+    # OFICINA activa catálogos propios de la biblioteca; desactivar y los planos de trabajo son de ADMINISTRADOR.
+    if not (estado=='PUBLICADA' and not obj.expediente_trabajo_id):
+        autorizar_tecnica(usuario,empresa,{'ADMIN'})
     if estado == 'PUBLICADA' and obj.expediente_trabajo_id:
         validar_revisor_plano(usuario, obj)
     if (obj.estado,estado) not in {('BORRADOR','PUBLICADA'),('PUBLICADA','RETIRADA')}:
@@ -818,7 +807,7 @@ def estado_referencia(*,usuario,empresa,referencia_id,estado,clave):
             guardar_mapa(usuario=usuario, empresa=empresa, referencia_id=obj.pk,
                 base_version=mapa.version, clave=uuid.uuid5(uuid.UUID(str(clave)), 'aprobar-mapa'),
                 posiciones=[dict(parte=p.parte_id, pagina=p.pagina, x=str(p.x), y=str(p.y))
-                            for p in mapa.posiciones.all()])
+                            for p in mapa.posiciones.all()], activacion=True)
     _libevent(empresa,usuario,clave,'BIBLIOTECA_ESTADO',payload,obj.pk)
     if estado=='PUBLICADA' and settings.GOOGLE_DRIVE_ENABLED:
         transaction.on_commit(lambda:_encolar_documento(obj.documento_id))
@@ -881,14 +870,24 @@ def guardar_parte(*,usuario,empresa,referencia_id,datos,clave,parte_id=None,elim
     if datos.get('componente_id') and not ComponenteTecnico.objects.filter(pk=datos['componente_id'],empresa=empresa).exists():
         raise PermissionDenied('Componente de otra empresa.')
     obj=ParteReferenciaTecnica.objects.get(pk=parte_id,referencia=ref) if parte_id else ParteReferenciaTecnica(referencia=ref)
+    cambios=[]
     if eliminar:
         result=obj.pk
+        cambios=[('(eliminada)',f'{obj.posicion} {obj.descripcion}'.strip(),'')]
         obj.delete()
     else:
+        nueva=obj.pk is None
         for name,value in datos.items():
+            anterior='' if nueva else getattr(obj,name)
+            if str(anterior if anterior is not None else '')!=str(value if value is not None else ''):
+                cambios.append((name,'' if anterior is None else str(anterior),'' if value is None else str(value)))
             setattr(obj,name,value)
         _save(obj)
         result=obj.pk
+    for campo,antes,despues in cambios:  # auditoría por campo: parte, campo, valor anterior/nuevo, usuario y fecha
+        Auditoria.objects.create(empresa=empresa,usuario=usuario,accion='BIBLIOTECA_PARTE_CAMBIO',
+            objeto_tipo='ParteReferenciaTecnica',objeto_id=str(result),
+            detalle=dict(referencia=ref.pk,codigo=ref.codigo,revision=ref.revision,posicion=obj.posicion,campo=campo,anterior=antes,nuevo=despues))
     _libevent(empresa,usuario,clave,'BIBLIOTECA_PARTE',payload,result)
     return result
 

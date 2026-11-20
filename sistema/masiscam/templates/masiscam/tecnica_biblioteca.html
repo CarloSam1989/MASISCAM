@@ -2,13 +2,13 @@
 <div class="container-fluid px-3 px-lg-4 py-3 mc-biblioteca">
   <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
     <div><h1 class="h3 mb-1">Planos y piezas</h1>
-      <p class="text-muted mb-0">Catálogos de reductores: plano PDF, repuestos y ubicación de piezas. Solo ADMINISTRADOR publica; la coincidencia de fabricante, modelo y configuración no acredita compatibilidad mecánica.</p></div>
+      <p class="text-muted mb-0">Catálogos de reductores: plano PDF, repuestos y ubicación de piezas. Al guardar quedan activos para TALLER; ADMINISTRADOR puede desactivarlos. La coincidencia de fabricante, modelo y configuración no acredita compatibilidad mecánica.</p></div>
     {% if rol_tecnico == 'ADMIN' or rol_tecnico == 'OFICINA' %}<div class="d-flex flex-wrap gap-2">
       <a class="btn btn-primary" href="{% url 'masiscam:plano_importar' %}">Nuevo catálogo</a>
       {% if rol_tecnico == 'ADMIN' %}<a class="btn btn-outline-primary" href="{% url 'masiscam:biblioteca_componentes' %}">Componentes</a>{% endif %}
     </div>{% endif %}
   </div>
-  {% if rol_tecnico == 'ADMIN' or rol_tecnico == 'OFICINA' %}<ol class="mc-pasos" aria-label="Flujo del catálogo"><li>Catálogo y PDF</li><li>Repuestos</li><li>Marcadores</li><li>Borrador o envío a revisión</li><li>ADMINISTRADOR publica</li></ol>{% endif %}
+  {% if rol_tecnico == 'ADMIN' or rol_tecnico == 'OFICINA' %}<ol class="mc-pasos" aria-label="Flujo del catálogo"><li>Catálogo y PDF</li><li>Repuestos</li><li>Marcadores</li><li>Activo para TALLER</li></ol>{% endif %}
   {% if solicitudes_plano %}<section class="card masiscam-card card-body mb-3"><h2 class="h5">Solicitudes de aplicabilidad</h2><p class="mb-2">Abra el catálogo para revisar y registrar la aplicabilidad por equipo.</p><ul class="mb-0">{% for solicitud in solicitudes_plano %}<li>{{ solicitud.equipo }} - <a href="{% url 'masiscam:biblioteca_referencia' solicitud.referencia.pk %}">{{ solicitud.referencia }}</a> - {{ solicitud.evento.usuario }} - {{ solicitud.evento.creado_en }}</li>{% endfor %}</ul></section>{% endif %}
   <form method="get" class="card masiscam-card card-body mb-3 mc-filtros-producto">
     <div class="mc-filtro-buscar"><label class="form-label" for="buscar">Código o título</label><div class="input-group"><input id="buscar" class="form-control" name="q" value="{{ request.GET.q }}"><button class="btn btn-primary">Filtrar</button></div></div>
@@ -24,14 +24,20 @@
       <td>{{ r.operacion|default:'—' }} · {{ r.rotacion|default:'—' }} · {{ r.ratio|default:'—' }}</td>
       <td>{{ r.version_fabricante|default:'No consta' }}<div class="text-muted small">Rev. {{ r.revision }}</div></td>
       <td>{{ r.n_partes }}</td>
-      <td>{% if r.pendiente %}<span class="badge text-bg-warning">Pendiente de revisión</span>{% elif r.estado == 'BORRADOR' %}<span class="badge text-bg-secondary">Borrador</span>{% elif r.estado == 'PUBLICADA' %}<span class="badge text-bg-success">Publicado</span>{% else %}<span class="badge text-bg-light border">Retirado</span>{% endif %}</td>
+      <td>{% if r.estado == 'PUBLICADA' %}<span class="badge text-bg-success">Activo</span>{% elif r.estado == 'BORRADOR' %}<span class="badge text-bg-secondary">En edición</span>{% else %}<span class="badge text-bg-light border">Inactivo</span>{% endif %}</td>
       <td class="masiscam-actions-cell"><div class="mc-acciones mc-acciones-wrap">
         <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:biblioteca_referencia' r.pk %}">Ver</a>
-        {% if r.estado == 'BORRADOR' and rol_tecnico == 'ADMIN' or r.estado == 'BORRADOR' and rol_tecnico == 'OFICINA' %}
-          <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:biblioteca_referencia_editar' r.pk %}">Editar</a>
-          <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:biblioteca_referencia' r.pk %}#repuestos">Repuestos</a>
-          {% if r.tipo == 'PLANO' %}<a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:plano' r.pk %}">Marcadores</a>{% endif %}
-          {% if r.tipo == 'PLANO' and not r.pendiente %}<form method="post" action="{% url 'masiscam:biblioteca_referencia' r.pk %}" class="d-inline">{% csrf_token %}<input type="hidden" name="op" value="solicitar_revision"><input type="hidden" name="clave" value="{{ r.clave_revision }}"><button class="btn btn-sm btn-outline-secondary">Enviar a revisión</button></form>{% endif %}
+        {% if rol_tecnico == 'ADMIN' or rol_tecnico == 'OFICINA' %}
+          {% if r.estado == 'BORRADOR' %}
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:biblioteca_referencia_editar' r.pk %}">Editar</a>
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:biblioteca_referencia' r.pk %}#repuestos">Repuestos</a>
+            {% if r.tipo == 'PLANO' %}<a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:plano' r.pk %}">Marcadores</a>{% endif %}
+            <form method="post" action="{% url 'masiscam:biblioteca_referencia' r.pk %}" class="d-inline">{% csrf_token %}<input type="hidden" name="op" value="PUBLICADA"><input type="hidden" name="clave" value="{{ r.clave_revision }}"><button class="btn btn-sm btn-success">Activar</button></form>
+          {% elif r.tipo == 'PLANO' %}
+            <form method="post" action="{% url 'masiscam:biblioteca_referencia' r.pk %}" class="d-inline">{% csrf_token %}<input type="hidden" name="op" value="revision"><input type="hidden" name="clave" value="{{ r.clave_revision }}"><button class="btn btn-sm btn-outline-primary">Editar</button></form>
+            {% if r.estado == 'PUBLICADA' and rol_tecnico == 'ADMIN' %}<form method="post" action="{% url 'masiscam:biblioteca_referencia' r.pk %}" class="d-inline">{% csrf_token %}<input type="hidden" name="op" value="RETIRADA"><input type="hidden" name="clave" value="{{ r.clave_revision }}"><button class="btn btn-sm btn-outline-danger">Desactivar</button></form>{% endif %}
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:plano' r.pk %}">Marcadores</a>
+          {% endif %}
         {% elif r.tipo == 'PLANO' %}<a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:plano' r.pk %}">Marcadores</a>{% endif %}
       </div></td>
     </tr>{% empty %}<tr><td colspan="6" class="text-center py-5 text-muted">Sin catálogos autorizados.</td></tr>{% endfor %}</tbody>

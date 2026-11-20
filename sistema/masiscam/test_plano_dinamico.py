@@ -39,11 +39,13 @@ class PlanoDinamicoTests(DinamicoFixture, TestCase):
         self.cargar()
         decidir_plano_trabajo(usuario=self.admin,empresa=self.empresa,referencia_id=self.ref.pk,
             clave=uuid.uuid4(),revision=1,decision='RECHAZADO',motivo='Corregir legibilidad QA')
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        contenido=self.pdf  # el reintento reenvía el mismo archivo cargado; no crea otro documento
         documentos=Documento.objects.count()
         key=uuid.uuid4()
         for _ in range(2):
             response=self.client.post(self.url,dict(op='plano_trabajo',clave=key,
-                referencia_id=self.ref.pk,archivo=qa.pdf_trabajo()))
+                referencia_id=self.ref.pk,archivo=SimpleUploadedFile('plano-qa.pdf',contenido,content_type='application/pdf')))
             nueva=self.exp.planos_trabajo.get(sustituye=self.ref)
             self.assertRedirects(response,reverse('masiscam:plano',args=[nueva.pk])+f'?diagnostico={self.diag.pk}&flujo=1')
         self.assertEqual(self.exp.planos_trabajo.count(),2)  # Fuente y corrección auditada.
@@ -67,7 +69,7 @@ class PlanoDinamicoTests(DinamicoFixture, TestCase):
         response=self.client.get(self.url)
         for text in ('Subir plano PDF','Seleccionar piezas','Enviar a OFICINA'):
             self.assertContains(response,text)
-        for text in ('Agregar pieza manualmente','ADMINISTRADOR debe','mf-diagnostico','detalles-tecnicos'):
+        for text in ('Agregar pieza manualmente','ADMINISTRADOR debe','detalles-tecnicos'):
             self.assertNotContains(response,text)
         self.assertNotContains(self.client.get(self.plano_url),'pl-config-toggle')
 

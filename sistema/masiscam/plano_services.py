@@ -97,7 +97,8 @@ def decidir_plano_trabajo(*, usuario, empresa, referencia_id, clave, revision, d
         tecnica.aplicar_referencia(**base, equipo_id=exp.registro.equipo_id,
             fundamento=f'Plano r{ref.revision} aprobado para el equipo del expediente {exp.numero}.',
             clave=uuid.uuid5(key, 'aplicabilidad'))
-        # Publicar una copia revisada del mapa parcial, sin alterar el original.
+        # La publicación ya generó la copia revisada del mapa parcial (sin alterar el original).
+        mapa = ref.mapas.order_by('-version').first()
         if mapa and mapa.provisional:
             mapa = guardar_mapa(**base, base_version=mapa.version, clave=uuid.uuid5(key, 'mapa'),
                 posiciones=[dict(parte=p.parte_id, pagina=p.pagina, x=str(p.x), y=str(p.y))
@@ -200,7 +201,7 @@ def documento_info(ref, empresa):
 
 
 @transaction.atomic
-def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, clave):
+def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, clave, activacion=False):
     rol = tecnica.autorizar_tecnica(usuario, empresa, {'ADMIN', 'TALLER', 'OFICINA'})
     ref = ReferenciaTecnica.objects.get(pk=referencia_id, empresa=empresa)
     if rol.rol == 'TALLER':
@@ -214,7 +215,7 @@ def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, c
         tecnica.seleccion_editable(etapa.diagnostico)
     else:
         tecnica._liblock(usuario, empresa, {'ADMIN', 'OFICINA'})
-        if rol.rol == 'OFICINA' and (ref.estado != 'BORRADOR' or ref.expediente_trabajo_id):
+        if rol.rol == 'OFICINA' and ((ref.estado != 'BORRADOR' and not activacion) or ref.expediente_trabajo_id):
             raise PermissionDenied('OFICINA solo configura planos de biblioteca en borrador.')
     ref = ReferenciaTecnica.objects.select_for_update().get(pk=ref.pk, empresa=empresa)
     payload = dict(referencia=ref.pk, base=base_version, posiciones=posiciones)
@@ -730,10 +731,34 @@ def crear_catalogo(*, usuario, empresa, archivo, marca, modelo, ratio, rotacion,
                    tipo='PLANO', titulo=configuracion[:200], marca=campos['marca'], modelo=campos['modelo'],
                    ratio=campos['ratio'], rotacion=campos['rotacion'], operacion=campos['operacion'],
                    procedencia=f'Plano {getattr(archivo, "name", "")} cargado en Planos y piezas por {usuario.get_username()}.',
-                   autorizacion_uso='Uso técnico interno de la empresa; su publicación requiere la aprobación de ADMINISTRADOR.',
+                   autorizacion_uso='Uso técnico interno de la empresa.',
                    proyecto_id=tecnica.proyecto_biblioteca(usuario, empresa).pk))
     for fila in filas:
         tecnica.guardar_parte(usuario=usuario, empresa=empresa, referencia_id=ref.pk, datos=fila,
                               clave=uuid.uuid5(clave, 'parte-' + fila['posicion']))
     tecnica._libevent(empresa, usuario, clave, 'BIBLIOTECA_CATALOGO_CREADO', dict(payload, partes=len(filas)), ref.pk)
+    # Se activa al guardar, sin aprobación; con posiciones sin descripción queda en edición hasta completarlas.
+    if not ref.partes.filter(descripcion__regex=r'^\s*$').exists():
+        tecnica.estado_referencia(usuario=usuario, empresa=empresa, referencia_id=ref.pk, estado='PUBLICADA',
+                                  clave=uuid.uuid5(clave, 'activar'))
+        ref.refresh_from_db()
     return ref
+
+
+@transaction.atomic
+def crear_revision_catalogo(*, usuario, empresa, referencia_id, clave):
+    """Devuelve un catálogo activo o inactivo a edición: nueva revisión borrador con piezas y marcadores heredados."""
+    tecnica._liblock(usuario, empresa, {'ADMIN', 'OFICINA'})
+    clave = uuid.UUID(str(clave))
+    ref = ReferenciaTecnica.objects.get(pk=referencia_id, empresa=empresa, tipo='PLANO', expediente_trabajo__isnull=True)
+    if ref.estado == 'BORRADOR':
+        return ref
+    abierta = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=ref.codigo, estado='BORRADOR').first()
+    if abierta:
+        return abierta
+    datos = {c: getattr(ref, c) for c in ('codigo', 'tipo', 'titulo', 'marca', 'modelo', 'operacion', 'rotacion',
+             'ratio', 'version_fabricante', 'procedencia', 'autorizacion_uso')}
+    datos.update(documento_id=ref.documento_id, sustituye_id=ref.pk)
+    destino = tecnica.guardar_referencia(usuario=usuario, empresa=empresa, clave=uuid.uuid5(clave, 'revision'), datos=datos)
+    _heredar_marcadores(ref, destino, usuario, empresa, clave)
+    return destino

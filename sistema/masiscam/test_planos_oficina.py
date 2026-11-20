@@ -57,47 +57,39 @@ class PlanosOficinaTests(TestCase):
             ratio='5:1', rotacion='#2', operacion='vertical', clave=str(uuid.uuid4())))
         self.assertEqual(r.status_code, 400)
         self.assertEqual(ReferenciaTecnica.objects.filter(marca__iexact='qamarca').count(), 1)
-        # Excel con posición 88 sin descripción: queda incompleta y bloquea el envío.
+        # Excel con posición 88 sin descripción: queda en edición (no se inventa la descripción).
         self.assertEqual(ref.partes.count(), 2)
         p88 = ref.partes.get(posicion='88')
         self.assertEqual((p88.descripcion, p88.numero_parte), ('', 'C88'))
         url = reverse('masiscam:biblioteca_referencia', args=[ref.pk])
         self.assertContains(c.get(url), 'Pendiente de corrección')
-        r = c.post(url, dict(op='solicitar_revision', clave=str(uuid.uuid4())))
-        self.assertEqual(r.status_code, 400)
-        self.assertEqual(Auditoria.objects.filter(accion='BIBLIOTECA_REVISION_SOLICITADA').count(), 0)
-        # Tabla editable: OFICINA corrige la posición 88.
+        self.assertEqual(c.post(url, dict(op='PUBLICADA', clave=str(uuid.uuid4()))).status_code, 400)
+        self.assertNotIn('Enviar a revisión', c.get(reverse('masiscam:biblioteca')).content.decode())
+        # Tabla editable: OFICINA corrige la posición 88 y activa sin aprobación de ADMINISTRADOR.
         r = c.post(url, dict(op='parte', parte_id=p88.pk, posicion='88', numero_parte='', descripcion='Tuerca QA',
             unidad='', cantidad_referencia='', pagina='', clave=str(uuid.uuid4())))
         self.assertEqual(r.status_code, 302)
         p88.refresh_from_db()
         self.assertEqual(p88.descripcion, 'Tuerca QA')
+        cambio = Auditoria.objects.get(accion='BIBLIOTECA_PARTE_CAMBIO', objeto_id=str(p88.pk), detalle__campo='descripcion')
+        self.assertEqual((cambio.usuario_id, cambio.detalle['anterior'], cambio.detalle['nuevo'], cambio.detalle['posicion']),
+                         (self.oficina.pk, '', 'Tuerca QA', '88'))
+        self.assertTrue(cambio.creado_en)
         self.assertEqual(c.get(reverse('masiscam:plano', args=[ref.pk])).status_code, 200)
-        # Biblioteca: columnas, repuestos y estado real; el borrador se conserva.
         lista = c.get(reverse('masiscam:biblioteca')).content.decode()
         self.assertIn('QAMARCA QM-1', lista)
         self.assertIn('VERTICAL · #2 · 5:1', lista)
-        self.assertIn('Borrador', lista)
-        self.assertIn('Enviar a revisión', lista)
-        # Envío a ADMINISTRADOR; sin duplicados.
-        k = str(uuid.uuid4())
-        self.assertEqual(c.post(url, dict(op='solicitar_revision', clave=k)).status_code, 302)
-        self.assertEqual(c.post(url, dict(op='solicitar_revision', clave=k)).status_code, 302)
-        self.assertEqual(c.post(url, dict(op='solicitar_revision', clave=str(uuid.uuid4()))).status_code, 400)
-        self.assertEqual(Auditoria.objects.filter(accion='BIBLIOTECA_REVISION_SOLICITADA', objeto_id=str(ref.pk)).count(), 1)
-        self.assertIn('Pendiente de revisión', c.get(reverse('masiscam:biblioteca')).content.decode())
-        # OFICINA no publica.
-        r = c.post(url, dict(op='PUBLICADA', clave=str(uuid.uuid4())))
-        self.assertEqual(r.status_code, 403)
-        ref.refresh_from_db()
-        self.assertEqual(ref.estado, 'BORRADOR')
-        # ADMINISTRADOR publica.
-        a = self.entrar(self.planta)
-        self.assertEqual(a.post(url, dict(op='PUBLICADA', clave=str(uuid.uuid4()))).status_code, 302)
+        self.assertIn('En edición', lista)
+        self.assertEqual(c.post(url, dict(op='PUBLICADA', clave=str(uuid.uuid4()))).status_code, 302)
         ref.refresh_from_db()
         self.assertEqual(ref.estado, 'PUBLICADA')
-        self.assertIn('Publicado', a.get(reverse('masiscam:biblioteca')).content.decode())
-        # TALLER: coincidencia exacta automática; aplicabilidad aún por aprobar.
+        self.assertIn('Activo', c.get(reverse('masiscam:biblioteca')).content.decode())
+        # OFICINA no desactiva; ADMINISTRADOR sí y consulta el historial.
+        self.assertEqual(c.post(url, dict(op='RETIRADA', clave=str(uuid.uuid4()))).status_code, 403)
+        a = self.entrar(self.planta)
+        self.assertContains(a.get(url), 'Historial de modificaciones')
+        self.assertContains(a.get(url), '«Tuerca QA»')
+        # TALLER: coincidencia exacta; aplicable de inmediato, sin aprobación.
         equipo = self.exp.registro.equipo
         Equipo.objects.filter(pk=equipo.pk).update(tipo_producto='REDUCTOR', marca='qamarca', modelo='QM-1',
             operacion='vertical', rotacion='#2', ratio='5:1')
@@ -105,12 +97,25 @@ class PlanosOficinaTests(TestCase):
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
         candidatos = [x for x in res['candidatos'] if x.pk == ref.pk]
         self.assertEqual(len(candidatos), 1)
-        self.assertFalse(candidatos[0].aprobada)
-        svc.aplicar_referencia(usuario=self.planta, empresa=self.empresa, referencia_id=ref.pk, equipo_id=equipo.pk,
-            fundamento='Aplicabilidad QA aprobada', clave=uuid.uuid4())
+        self.assertTrue(candidatos[0].aprobada)
+        self.assertEqual(ref.aplicabilidades.filter(equipo=equipo, activa=True).count(), 1)
+        ap = ref.aplicabilidades.get(equipo=equipo)
+        self.assertEqual((ap.autor_id, 'automática' in ap.fundamento), (self.tecnico.pk, True))
+        self.assertTrue(Auditoria.objects.filter(accion='BIBLIOTECA_APLICABILIDAD_AUTOMATICA', objeto_id=str(ap.pk), usuario=self.tecnico).exists())
+        # Editar un catálogo activo crea una revisión en edición; el activo no cambia hasta activarla.
+        r = c.post(url, dict(op='revision', clave=str(uuid.uuid4())))
+        self.assertEqual(r.status_code, 302)
+        rev = ReferenciaTecnica.objects.get(codigo=ref.codigo, revision=2)
+        self.assertEqual((rev.estado, rev.documento_id, rev.partes.count()), ('BORRADOR', ref.documento_id, 2))
+        ref.refresh_from_db()
+        self.assertEqual(ref.estado, 'PUBLICADA')
+        # ADMINISTRADOR desactiva: TALLER ya no lo encuentra.
+        a.post(reverse('masiscam:biblioteca_referencia', args=[rev.pk]), dict(op='PUBLICADA', clave=str(uuid.uuid4())))
+        rev.refresh_from_db()
+        self.assertEqual(rev.estado, 'PUBLICADA')
+        self.assertEqual(a.post(reverse('masiscam:biblioteca_referencia', args=[rev.pk]), dict(op='RETIRADA', clave=str(uuid.uuid4()))).status_code, 302)
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
-        self.assertTrue([x for x in res['candidatos'] if x.pk == ref.pk][0].aprobada)
-        # Configuración distinta: no hay coincidencia.
+        self.assertEqual([x.pk for x in res['candidatos'] if x.pk in (ref.pk, rev.pk)], [])
         Equipo.objects.filter(pk=equipo.pk).update(ratio='3:1')
         equipo.refresh_from_db()
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
@@ -258,12 +263,11 @@ class ImportarRepuestosCatalogoTests(TestCase):
         marca = nueva.mapas.get().posiciones.get()
         self.assertEqual((marca.parte.posicion, float(marca.x)), ('1', 0.25))
         self.assertEqual(self.ref.mapas.order_by('-version').first().posiciones.get().parte_id, self.partes['1'])
-        # OFICINA envía la nueva revisión pero no puede publicarla.
+        # OFICINA activa la nueva revisión sin aprobación; la anterior queda superada.
         url = reverse('masiscam:biblioteca_referencia', args=[nueva.pk])
-        self.assertEqual(self.client.post(url, dict(op='solicitar_revision', clave=str(uuid.uuid4()))).status_code, 302)
-        self.assertEqual(self.client.post(url, dict(op='PUBLICADA', clave=str(uuid.uuid4()))).status_code, 403)
+        self.assertEqual(self.client.post(url, dict(op='PUBLICADA', clave=str(uuid.uuid4()))).status_code, 302)
         nueva.refresh_from_db()
-        self.assertEqual(nueva.estado, 'BORRADOR')
+        self.assertEqual(nueva.estado, 'PUBLICADA')
 
 
 @override_settings(**qa.FLAGS)
@@ -281,9 +285,7 @@ class RegistroReductorCatalogoTests(TestCase):
                 excel=xlsx([('1', '2', 'QA-1', 'Eje QA')])))
             self.assertEqual(r.status_code, 302)
             ref = ReferenciaTecnica.objects.get(marca='QAMARCA', operacion=operacion)
-            c.force_login(self.planta)
-            self.assertEqual(c.post(reverse('masiscam:biblioteca_referencia', args=[ref.pk]),
-                dict(op='PUBLICADA', clave=str(uuid.uuid4()))).status_code, 302)
+            self.assertEqual(ref.estado, 'PUBLICADA')  # se activa al guardar, sin aprobación
             self.refs[operacion] = ref
         Equipo.objects.filter(pk=self.exp.registro.equipo_id).update(registrado_por=self.tecnico)
 
@@ -313,18 +315,21 @@ class RegistroReductorCatalogoTests(TestCase):
         equipo = Equipo.objects.get(numero_serie='SERIE-NUEVA-1')
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
         self.assertEqual([c.pk for c in res['candidatos']], [self.refs[''].pk])
-        self.assertFalse(res['candidatos'][0].aprobada)
+        self.assertTrue(res['candidatos'][0].aprobada)  # aplicable de inmediato
         r = self.registrar(marca='qamarca', modelo='qm-1', ratio='5:1', rotacion='#2', operacion='vertical',
                            numero='NUEVO-2', serie='SERIE-NUEVA-2')
         self.assertEqual(r.status_code, 302)
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa,
                                             equipo=Equipo.objects.get(numero_serie='SERIE-NUEVA-2'))
         self.assertEqual([c.pk for c in res['candidatos']], [self.refs['VERTICAL'].pk])
-        # Tras la aprobación de ADMINISTRADOR, el plano aparece aprobado para ese equipo.
+        # ADMINISTRADOR puede excluir el plano para un equipo concreto; el catálogo inactivo no se ofrece.
         svc.aplicar_referencia(usuario=self.planta, empresa=self.empresa, referencia_id=self.refs[''].pk,
-            equipo_id=equipo.pk, fundamento='Aplicabilidad QA aprobada', clave=uuid.uuid4())
+            equipo_id=equipo.pk, fundamento='Exclusión QA', clave=uuid.uuid4(), activa=False)
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
-        self.assertTrue(res['candidatos'][0].aprobada)
+        self.assertFalse(res['candidatos'][0].aprobada)
+        svc.estado_referencia(usuario=self.planta, empresa=self.empresa, referencia_id=self.refs[''].pk, estado='RETIRADA', clave=uuid.uuid4())
+        res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
+        self.assertEqual(res['candidatos'], [])
 
     def test_configuracion_sin_catalogo_registra_sin_plano_incorrecto(self):
         r = self.registrar(marca='OTRAMARCA', modelo='XX-9', ratio='7:1', rotacion='#1', numero='NUEVO-3', serie='SERIE-3')

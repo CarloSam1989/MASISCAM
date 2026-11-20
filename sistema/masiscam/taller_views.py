@@ -114,31 +114,3 @@ def taller_equipo(request, pk):
                 'MASISCAM_TECNICA_ENABLED para habilitar inspección y selección de piezas.')
     return render(request,'masiscam/taller_equipo.html',dict(equipo=equipo,expediente=exp,mantenimientos=mantenimientos,
         pasos=pasos,paso=2,mensaje=mensaje,accion=accion,planos_compatibles=planos,plano_acceso_expediente=asignado))
-
-
-@require_POST
-@masiscam_access_required
-def solicitar_plano(request, pk):
-    from accounts.models import Empresa
-    from .models import Auditoria
-    from .tecnica_services import planos_compatibles_equipo
-    equipo = get_object_or_404(equipos_taller(usuario=request.user, empresa=request.empresa_activa), pk=pk)
-    raw = request.POST.get('referencia', '')
-    if not raw.isascii() or not raw.isdecimal() or len(raw) > 18:
-        raise Http404
-    with transaction.atomic():
-        Empresa.objects.select_for_update().get(pk=request.empresa_activa.pk, activa=True)
-        lista = planos_compatibles_equipo(usuario=request.user, empresa=request.empresa_activa, equipo=equipo)
-        ref = next((r for r in lista['candidatos'] if r.pk == int(raw)), None)
-        if ref is None:
-            raise Http404
-        if not ref.aprobada and not Auditoria.objects.filter(empresa=request.empresa_activa,
-                accion='PLANO_APLICABILIDAD_SOLICITADA', objeto_tipo='ReferenciaTecnica',
-                objeto_id=str(ref.pk), detalle__equipo=equipo.pk).exists():
-            Auditoria.objects.create(empresa=request.empresa_activa, usuario=request.user,
-                proyecto=equipo.proyecto, accion='PLANO_APLICABILIDAD_SOLICITADA',
-                objeto_tipo='ReferenciaTecnica', objeto_id=str(ref.pk),
-                detalle={'equipo': equipo.pk, 'revision': ref.revision})
-    messages.success(request, 'Solicitud registrada para revision de ADMINISTRADOR.' if not ref.aprobada
-                     else 'La aplicabilidad ya esta aprobada.')
-    return redirect('masiscam:taller_equipo', pk=equipo.pk)

@@ -129,8 +129,9 @@ class PlanoTrabajoTests(TrabajoFixture, TestCase):
         self.assertTrue(revisado.provisional)
         tecnica.estado_referencia(usuario=planta, empresa=self.empresa, referencia_id=self.ref.pk,
             estado='PUBLICADA', clave=uuid.uuid4())
-        publicado = planos.guardar_mapa(usuario=planta, empresa=self.empresa, referencia_id=self.ref.pk,
-            base_version=3, posiciones=posiciones, clave=uuid.uuid4())
+        # Al publicar se genera sola la copia revisada (no provisional) del mapa parcial.
+        publicado = self.ref.mapas.order_by('-version').first()
+        self.assertEqual(publicado.version, 4)
         self.assertFalse(publicado.provisional)
         mapa.refresh_from_db()
         self.assertTrue(mapa.provisional)
@@ -162,16 +163,21 @@ class PlanoTrabajoTests(TrabajoFixture, TestCase):
         self.assertEqual(pieza.fotografias.get().pk, foto.pk)
         self.assertEqual(Documento.objects.count(), documentos)
         self.diag.refresh_from_db()
+        # Flujo vigente: la pantalla exige enviar antes el diagnóstico; el envío preliminar se conserva en el servicio.
         response = self.client.post(self.url, dict(op='enviar_piezas', clave=uuid.uuid4(), version=self.diag.version_edicion))
-        self.assertRedirects(response, self.url)
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(SolicitudRepuestos.objects.filter(diagnostico=self.diag).exists())
+        from . import flujo_services as _flujo
+        _flujo.enviar_solicitud(usuario=self.taller, empresa=self.empresa, diagnostico_id=self.diag.pk,
+            version=self.diag.version_edicion, clave=uuid.uuid4(), preliminar=True)
         sol = SolicitudRepuestos.objects.get(diagnostico=self.diag)
         self.assertTrue(sol.snapshot['preliminar'])
         self.diag.refresh_from_db()
         self.assertIsNone(self.diag.enviado_en)
         self.assertEqual(self.diag.fallas, '')
         self.assertEqual(sol.snapshot['piezas'][0]['fotos'][0]['documento'], pieza.fotografias.get().documento_id)
-        self.assertEqual(self.client.post(self.url, dict(op='enviar_piezas', clave=uuid.uuid4(),
-            version=self.diag.version_edicion)).status_code, 302)
+        _flujo.enviar_solicitud(usuario=self.taller, empresa=self.empresa, diagnostico_id=self.diag.pk,
+            version=self.diag.version_edicion, clave=uuid.uuid4(), preliminar=True)
         self.assertEqual(SolicitudRepuestos.objects.count(), 1)
         with transaction.atomic(), self.assertRaises(IntegrityError):
             self.diag.piezas.filter(pk=pieza.pk).update(cantidad=5)
@@ -234,7 +240,7 @@ class PlanoTrabajoTests(TrabajoFixture, TestCase):
             self.assertEqual(self.client.post(self.url, dict(op='plano_trabajo', clave=uuid.uuid4(),
                 archivo=qa.pdf_plano())).status_code, 403)
         self.client.force_login(self.oficina)
-        self.assertEqual(self.client.get(self.plano_url).status_code, 404)
+        self.assertEqual(self.client.get(self.plano_url).status_code, 403)
         self.client.force_login(self.taller)
         docs = Documento.objects.count()
         invalid = SimpleUploadedFile('no.pdf', b'no es un PDF', content_type='application/pdf')
