@@ -1,3 +1,4 @@
+from .campos import DecimalFlexible
 import uuid
 from decimal import Decimal
 from django import forms
@@ -67,7 +68,7 @@ class PiezaForm(BaseForm):
     parte_id=forms.ModelChoiceField(queryset=ParteReferenciaTecnica.objects.none(),required=False,label='Posición / parte del plano')
     descripcion=forms.CharField(required=False,max_length=20000,widget=forms.Textarea,label='Descripción manual (la biblioteca conserva su descripción)')
     numero_parte=forms.CharField(required=False,max_length=120,label='Número de parte; vacío si pendiente')
-    cantidad=forms.DecimalField(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'))
+    cantidad=DecimalFlexible(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'))
     unidad=forms.CharField(required=False,max_length=80)
     motivo_unidad_pendiente=forms.CharField(required=False,max_length=20000,widget=forms.Textarea)
     condicion=forms.CharField(max_length=20000,widget=forms.Textarea,label='Condición')
@@ -129,7 +130,7 @@ class ParteForm(BaseForm):
     numero_parte=forms.CharField(max_length=120,required=False)
     descripcion=forms.CharField(max_length=20000,widget=forms.Textarea)
     unidad=forms.CharField(max_length=80,required=False)
-    cantidad_referencia=forms.DecimalField(required=False,max_digits=20,decimal_places=6)
+    cantidad_referencia=DecimalFlexible(required=False,max_digits=20,decimal_places=6,min_value=0)
     pagina=forms.CharField(max_length=40,required=False)
 
     def __init__(self,*args,empresa,**kwargs):

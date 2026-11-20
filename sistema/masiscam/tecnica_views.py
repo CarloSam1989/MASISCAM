@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError, ObjectDoesNotExist
 from django.db import IntegrityError
 from django.db.models import Q, F, Value, Case, When, IntegerField, OuterRef, Subquery, Exists, Count
 from django.db.models.functions import Greatest, Coalesce, Cast
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import render,redirect,get_object_or_404
 from django.views.decorators.http import require_GET,require_POST,require_http_methods
 from .access import masiscam_access_required
@@ -363,16 +363,31 @@ def biblioteca_referencia(request,pk):
     if request.method=='POST':
         action=request.POST.get('op')
         svc.autorizar_tecnica(request.user,request.empresa_activa,{'ADMIN', 'OFICINA'} if action in {'parte','quitar_parte','PUBLICADA','revision'} else {'ADMIN'})
-        form=(ParteForm(request.POST,empresa=request.empresa_activa) if action=='parte' else
+        datos_post=request.POST
+        if action=='parte' and request.POST.get('campos') and request.POST.get('parte_id','').isdecimal():
+            # Guardado parcial: solo se aplican los campos modificados; el resto conserva el valor vigente
+            # (otra pestaña o usuario pudo haberlo cambiado después de cargar esta pantalla).
+            actual=ref.partes.filter(pk=request.POST['parte_id']).first()
+            if actual:
+                datos_post=request.POST.copy()
+                cambiados=set(request.POST['campos'].split(','))
+                for campo in ('posicion','numero_parte','descripcion','unidad','cantidad_referencia','pagina'):
+                    if campo not in cambiados:
+                        valor=getattr(actual,campo)
+                        datos_post[campo]='' if valor is None else str(valor)
+        form=(ParteForm(datos_post,empresa=request.empresa_activa) if action=='parte' else
               AplicabilidadForm(request.POST,empresa=request.empresa_activa) if action=='aplicabilidad' else BaseForm(request.POST))
         forms[action]=form
+        ajax=request.headers.get('x-requested-with')=='XMLHttpRequest' and action in {'parte','quitar_parte'}
+        if ajax and not form.is_valid():
+            return JsonResponse({'ok':False,'errores':{c:[str(e) for e in errs] for c,errs in form.errors.items() if c!='clave'}},status=400)
         if form.is_valid():
             data=_ids(form.cleaned_data.copy())
             key=data.pop('clave')
             try:
                 base=dict(usuario=request.user,empresa=request.empresa_activa,referencia_id=pk,clave=key)
                 if action=='parte':
-                    svc.guardar_parte(**base,datos=data,parte_id=request.POST.get('parte_id') or None)
+                    parte_guardada=svc.guardar_parte(**base,datos=data,parte_id=request.POST.get('parte_id') or None)
                 elif action=='revision':
                     from .plano_services import crear_revision_catalogo
                     nueva=crear_revision_catalogo(**base)
@@ -391,7 +406,14 @@ def biblioteca_referencia(request,pk):
                     raise ValidationError('Operación de biblioteca inválida.')
             except (ValidationError,IntegrityError,OSError,ObjectDoesNotExist,ValueError) as exc:
                 _error(form,exc)
+                if ajax:
+                    return JsonResponse({'ok':False,'errores':{c:[str(e) for e in errs] for c,errs in form.errors.items() if c!='clave'}},status=400)
             else:
+                if ajax:
+                    vigente=ref.partes.filter(pk=parte_guardada).first() if action=='parte' else None
+                    return JsonResponse({'ok':True,'parte_id':parte_guardada if action=='parte' else None,
+                        'valores':{c:('' if getattr(vigente,c) is None else str(getattr(vigente,c))) for c in
+                                   ('posicion','numero_parte','descripcion','unidad','cantidad_referencia','pagina')} if vigente else None})
                 return redirect('masiscam:biblioteca_referencia',pk=pk)
     editable=ref.estado=='BORRADOR' and ref.tipo=='PLANO' and _role(request) in {'ADMIN','OFICINA'}
     historial=[]

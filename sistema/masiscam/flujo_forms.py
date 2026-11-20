@@ -1,3 +1,4 @@
+from .campos import DecimalFlexible
 from decimal import Decimal
 from django import forms
 from .tecnica_forms import BaseForm, AplicabilidadForm
@@ -56,7 +57,7 @@ class CotizacionForm(BaseForm):
             observaciones=propuesta.observaciones if propuesta else '')
         for pieza in solicitud.diagnostico.piezas.prefetch_related('fotografias__documento').order_by('pk'):
             name=f'precio_{pieza.pk}'
-            self.fields[name]=forms.DecimalField(max_digits=14,decimal_places=2,min_value=0,
+            self.fields[name]=DecimalFlexible(max_digits=14,decimal_places=2,min_value=0,
                 label=f'Precio unitario de {pieza.descripcion}',widget=forms.NumberInput(attrs={'class':'form-control','step':'.01','min':'0','data-precio':pieza.pk}))
             self.initial[name]=precios.get(pieza.pk,{}).get('precio_unitario','')
             self.filas.append(dict(pieza=pieza,posicion=(pieza.snapshot or {}).get('posicion',''),precio=self[name],total=precios.get(pieza.pk,{}).get('total','')))
@@ -88,7 +89,7 @@ class CotizacionForm(BaseForm):
 
 class AdquisicionForm(BaseForm):
     pieza_id=forms.ModelChoiceField(queryset=PiezaRequerida.objects.none(),label='Pieza solicitada')
-    cantidad=forms.DecimalField(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'))
+    cantidad=DecimalFlexible(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'))
     proveedor=forms.CharField(max_length=200,label='Proveedor o procedencia')
     referencia=forms.CharField(max_length=200,label='Factura, orden o referencia de adquisición')
     fecha=forms.DateTimeField(widget=forms.DateTimeInput(attrs={'type':'datetime-local'}))
@@ -112,7 +113,7 @@ class EnvioForm(BaseForm):
             n=disponible(adq)
             name=f'cantidad_{adq.pk}'
             self.lineas.append((name,adq.pk))
-            self.fields[name]=forms.DecimalField(required=False,max_digits=20,decimal_places=6,min_value=0,max_value=adq.cantidad,
+            self.fields[name]=DecimalFlexible(required=False,max_digits=20,decimal_places=6,min_value=0,max_value=adq.cantidad,
                 label=f'{adq.pieza.descripcion} · {adq.unidad} · disponible {n}',help_text='Indica la cantidad que sale físicamente. Deja vacío lo que no se envía.')
             self.fields[name].widget.attrs.update({'class':'form-control','inputmode':'decimal'})
 
@@ -130,7 +131,7 @@ class ConfirmarEnvioForm(BaseForm):
         for det in envio.lineas.select_related('adquisicion__pieza').order_by('pk'):
             name=f'cantidad_{det.pk}'; motivo=f'diferencia_{det.pk}'
             self.lineas.append((name,motivo,det.pk))
-            self.fields[name]=forms.DecimalField(max_digits=20,decimal_places=6,min_value=0,
+            self.fields[name]=DecimalFlexible(max_digits=20,decimal_places=6,min_value=0,
                 label=f'{det.adquisicion.pieza.descripcion} · enviados {det.cantidad} {det.unidad}',
                 help_text='Confirma la cantidad realmente recibida. Cero registra un faltante; no se completa automáticamente.')
             self.fields[motivo]=forms.CharField(required=False,max_length=20000,label='Faltantes o diferencias',widget=forms.Textarea(attrs={'rows':2}))
@@ -145,7 +146,7 @@ class PiezaManualForm(BaseForm):
     version=forms.IntegerField(min_value=1,widget=forms.HiddenInput)
     descripcion=forms.CharField(max_length=20000,label='Descripción de la pieza')
     numero_parte=forms.CharField(required=False,max_length=120,label='Código, si se conoce')
-    cantidad=forms.DecimalField(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'))
+    cantidad=DecimalFlexible(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'))
     unidad=forms.CharField(max_length=80)
     condicion=forms.CharField(max_length=20000,label='Condición observada',widget=forms.Textarea(attrs={'rows':2}))
     accion=forms.ChoiceField(choices=[('','Selecciona una acción'),('REEMPLAZAR','Reemplazar'),('REPARAR','Reparar'),('REUTILIZAR','Reutilizar'),('EVALUAR','Evaluar')])

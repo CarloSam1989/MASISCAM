@@ -1,3 +1,4 @@
+from .campos import DecimalFlexible
 from django import forms
 from decimal import Decimal
 from .tecnica_forms import BaseForm
@@ -37,7 +38,7 @@ class OperacionForm(BaseForm):
                 return f'Actividad {obj.actividad_id} · resultado v{obj.version}'
             F[name].label_from_instance=label
         def qty():
-            F['cantidad']=forms.DecimalField(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'))
+            F['cantidad']=DecimalFlexible(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'))
         def file(name,required=False):
             F[name]=forms.FileField(required=required,label=name.capitalize())
         if op=='propuesta':

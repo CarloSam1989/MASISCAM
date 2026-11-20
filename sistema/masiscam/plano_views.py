@@ -1,3 +1,4 @@
+from .campos import DecimalFlexible
 import json
 import uuid
 from decimal import Decimal
@@ -144,11 +145,11 @@ class PosicionTrabajoForm(BaseForm):
     punto_id = forms.IntegerField(min_value=1, required=False)
     parte_id = forms.IntegerField(min_value=1, required=False)
     pagina = forms.IntegerField(min_value=1, required=False)
-    x = forms.DecimalField(max_digits=9, decimal_places=8, min_value=0, max_value=1, required=False)
-    y = forms.DecimalField(max_digits=9, decimal_places=8, min_value=0, max_value=1, required=False)
+    x = DecimalFlexible(max_digits=9, decimal_places=8, min_value=0, max_value=1, required=False)
+    y = DecimalFlexible(max_digits=9, decimal_places=8, min_value=0, max_value=1, required=False)
     posicion = forms.CharField(max_length=80, required=False)
     descripcion = forms.CharField(max_length=20000, required=False)
-    cantidad = forms.DecimalField(max_digits=20, decimal_places=6, min_value=Decimal('0.000001'), required=False)
+    cantidad = DecimalFlexible(max_digits=20, decimal_places=6, min_value=Decimal('0.000001'), required=False)
     condicion = forms.CharField(max_length=20000, required=False)
     unidad = forms.CharField(max_length=80, required=False)
 
@@ -250,7 +251,7 @@ class SeleccionForm(BaseForm):
     version = forms.IntegerField(min_value=1)
     parte_id = forms.IntegerField(min_value=1)
     posicion_plano_id = forms.IntegerField(min_value=1, required=False)
-    cantidad = forms.DecimalField(max_digits=20, decimal_places=6, min_value=Decimal('0.000001'))
+    cantidad = DecimalFlexible(max_digits=20, decimal_places=6, min_value=Decimal('0.000001'))
     unidad = forms.CharField(max_length=80)
     condicion = forms.CharField(max_length=20000)
     accion = forms.ChoiceField(choices=[(s, s) for s in ('REEMPLAZAR', 'REPARAR', 'REUTILIZAR', 'EVALUAR')])

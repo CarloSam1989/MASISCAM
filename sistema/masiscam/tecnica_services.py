@@ -99,6 +99,16 @@ def _event(exp, user, key, action, payload, result):
     return result
 
 
+def _mismo_valor(a,b):
+    a,b=('' if a is None else a),('' if b is None else b)
+    if '' in (a,b) or not (isinstance(a,Decimal) or isinstance(b,Decimal)):
+        return str(a)==str(b)
+    try:
+        return Decimal(str(a))==Decimal(str(b))
+    except InvalidOperation:
+        return str(a)==str(b)
+
+
 def _save(obj):
     obj.full_clean()
     obj.save()
@@ -879,7 +889,7 @@ def guardar_parte(*,usuario,empresa,referencia_id,datos,clave,parte_id=None,elim
         nueva=obj.pk is None
         for name,value in datos.items():
             anterior='' if nueva else getattr(obj,name)
-            if str(anterior if anterior is not None else '')!=str(value if value is not None else ''):
+            if not _mismo_valor(anterior,value):
                 cambios.append((name,'' if anterior is None else str(anterior),'' if value is None else str(value)))
             setattr(obj,name,value)
         _save(obj)

@@ -56,7 +56,7 @@ def verificacion_qa():
 class OperacionTests(TestCase):
     def setUp(self):
         self.empresa,self.oficina,self.planta,self.tecnico,self.exp=preparar()
-        self.gerencia=usuario(self.empresa,'gerencia-qa','GERENCIA')
+        self.gerencia=usuario(self.empresa,'gerencia-qa','OFICINA')  # la gestión comercial es de OFICINA
         self.d=aprobar_diagnostico(self.empresa,self.oficina,self.planta,self.tecnico,self.exp)
         self.base=dict(empresa=self.empresa,expediente_id=self.exp.pk)
 
@@ -67,6 +67,9 @@ class OperacionTests(TestCase):
 
     def decision(self,p=None,decision='APROBADO',key=None):
         p=p or self.propuesta()
+        from . import flujo_services as flujo  # la decisión del cliente exige la aprobación conjunta vigente de ADMINISTRADOR
+        flujo.revisar_expediente(usuario=self.planta,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=self.d.pk,
+            propuesta_id=p.pk,decision='APROBADO',clave=uuid.uuid4())
         return s.decidir_comercial(usuario=self.gerencia,empresa=self.empresa,propuesta_id=p.pk,clave=key or uuid.uuid4(),archivo=pdf_plano(),
             datos=dict(decision=decision,fecha_cliente=timezone.now(),representante_cliente='Representante FICTICIO QA',motivo='Respaldo ficticio de prueba, no aceptación real',**verificacion_qa()))
 
@@ -101,6 +104,10 @@ class OperacionTests(TestCase):
         self.assertEqual(q.sustituye_id,p.pk)
         self.assertEqual(q.version,2)
         self.assertTrue(DecisionComercial.objects.filter(pk=d.pk).exists())
+        self.assertEqual(s.estado(self.exp),'OBSERVADO')  # la nueva versión espera la aprobación conjunta de ADMINISTRADOR
+        from . import flujo_services as _fs
+        _fs.revisar_expediente(usuario=self.planta,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=self.d.pk,
+            propuesta_id=q.pk,decision='APROBADO',clave=uuid.uuid4())
         self.assertEqual(s.estado(self.exp),'PENDIENTE_AUTORIZACION')
 
     @override_settings(MASISCAM_POLITICA_COMERCIAL_LOCAL=QA_POLICY)
@@ -123,7 +130,7 @@ class OperacionTests(TestCase):
         self.assertTrue(ActividadReparacion.objects.filter(pk=a.pk).exists())
 
     def test_permisos_comerciales_sin_bypass_admin(self):
-        for code in ('ADMIN','CONSULTA','CLIENTE','TECNICO','PLANTA'):
+        for code in ('ADMIN','TALLER'):  # sin bypass: solo OFICINA propone; los roles retirados ya no existen
             if code=='CLIENTE':
                 user=usuario(self.empresa,'rol-cliente','CONSULTA')
                 RolMasiscam.objects.filter(perfil__user=user).update(rol='CLIENTE',cliente=self.exp.cliente_contractual)
@@ -135,7 +142,7 @@ class OperacionTests(TestCase):
     def test_aislamiento_empresa_y_tecnico_no_asignado(self):
         from accounts.models import Empresa
         otra=Empresa.objects.create(nombre='Empresa ajena QA')
-        g=usuario(otra,'otra-gerencia','GERENCIA')
+        g=usuario(otra,'otra-gerencia','OFICINA')
         with self.assertRaises(PermissionDenied): s.expediente(g,otra,self.exp.pk)
         tech=usuario(self.empresa,'tecnico-no-asignado','TECNICO')
         with self.assertRaises(PermissionDenied): s.expediente(tech,self.empresa,self.exp.pk)
@@ -215,7 +222,7 @@ class OperacionTests(TestCase):
     @override_settings(MASISCAM_POLITICA_COMERCIAL_LOCAL=QA_POLICY)
     def test_auto_revision_aun_cambiando_rol(self):
         self.decision();a=self.actividad();r=self.resultado(a)
-        RolMasiscam.objects.filter(perfil__user=self.tecnico).update(rol='PLANTA')
+        RolMasiscam.objects.filter(perfil__user=self.tecnico).update(rol='ADMIN')
         with self.assertRaises(PermissionDenied):
             s.revisar_actividad(usuario=self.tecnico,empresa=self.empresa,resultado_id=r.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='Intento')
 
@@ -270,8 +277,15 @@ class OperacionTests(TestCase):
 
     def test_oficina_adjunta_respaldo_sin_aprobar(self):
         p=self.propuesta()
+        from . import flujo_services as _fs  # el respaldo se adjunta a una propuesta vigente (aprobación conjunta)
+        _fs.revisar_expediente(usuario=self.planta,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=self.d.pk,
+            propuesta_id=p.pk,decision='APROBADO',clave=uuid.uuid4())
         e=s.respaldo_propuesta(usuario=self.oficina,empresa=self.empresa,propuesta_id=p.pk,clave=uuid.uuid4(),leyenda='Respaldo QA',archivo=pdf_plano())
         self.assertEqual(e.propuesta_id,p.pk)
+        self.assertFalse(DecisionComercial.objects.filter(propuesta=p).exists())  # el respaldo no aprueba nada
+        self.assertEqual(s.estado(self.exp),'OBSERVADO')  # el respaldo cambia las fuentes: exige nueva aprobación conjunta
+        _fs.revisar_expediente(usuario=self.planta,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=self.d.pk,
+            propuesta_id=p.pk,decision='APROBADO',clave=uuid.uuid4())
         self.assertEqual(s.estado(self.exp),'PENDIENTE_AUTORIZACION')
 
     def test_http_manipulado_aceptacion_y_estados(self):
@@ -304,6 +318,9 @@ class OperacionTests(TestCase):
     @override_settings(MASISCAM_POLITICA_COMERCIAL_LOCAL=QA_POLICY)
     def test_decision_idempotente_y_respaldo_inmutable(self):
         p=self.propuesta();key=uuid.uuid4()
+        from . import flujo_services as _fs  # aprobación conjunta de ADMINISTRADOR previa a la decisión del cliente
+        _fs.revisar_expediente(usuario=self.planta,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=self.d.pk,
+            propuesta_id=p.pk,decision='APROBADO',clave=uuid.uuid4())
         from django.core.files.uploadedfile import SimpleUploadedFile
         binary=pdf_plano().read()
         data=dict(decision='APROBADO',fecha_cliente=timezone.now(),representante_cliente='QA FICTICIO',motivo='QA',**verificacion_qa())
@@ -328,7 +345,8 @@ class OperacionTests(TestCase):
         with self.assertRaises(ValidationError):
             s.terminar_actividad(usuario=self.tecnico,empresa=self.empresa,actividad_id=a.pk,clave=uuid.uuid4(),datos=dict(
                 fin=a.inicio-timezone.timedelta(days=1),trabajo_realizado='QA',resultado='QA'))
-        otro=usuario(self.empresa,'otro-tecnico-op','TECNICO')
+        from .test_tecnica import taller_propietario
+        otro=taller_propietario(self.empresa,'otro-tecnico-op',self.exp)  # TALLER solo es responsable de sus equipos
         t.asignar_tecnico(usuario=self.planta,**self.base,tecnico_id=otro.pk,motivo='Reasignación QA',clave=uuid.uuid4())
         with self.assertRaises(PermissionDenied):
             s.terminar_actividad(usuario=otro,empresa=self.empresa,actividad_id=a.pk,clave=uuid.uuid4(),datos=dict(fin=timezone.now(),trabajo_realizado='QA',resultado='QA'))
@@ -362,7 +380,7 @@ class OperacionTests(TestCase):
         self.assertFalse(RecepcionRepuesto.objects.exists())
 
     def test_tecnico_no_recibe_y_gerencia_no_registra_trabajo(self):
-        with self.assertRaises(PermissionDenied): self.recibir(usuario=self.tecnico)
+        self.assertTrue(self.recibir(usuario=self.tecnico).pk)  # TALLER recibe repuestos de su trabajo (política vigente)
         with self.assertRaises(PermissionDenied):
             s.iniciar_actividad(usuario=self.gerencia,**self.base,clave=uuid.uuid4(),datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
 
@@ -377,8 +395,8 @@ class OperacionTests(TestCase):
         s.evidencia_repuesto(usuario=self.oficina,empresa=self.empresa,recepcion_id=r.pk,clave=uuid.uuid4(),leyenda='Otra vista QA',archivo=foto())
         self.assertEqual(r.evidencias.count(),2)
         em.refresh_from_db();self.assertEqual(em.snapshot['evidencias'],[])
-        with self.assertRaises(PermissionDenied):
-            s.evidencia_repuesto(usuario=self.tecnico,empresa=self.empresa,recepcion_id=r.pk,clave=uuid.uuid4(),leyenda='QA',archivo=foto())
+        s.evidencia_repuesto(usuario=self.tecnico,empresa=self.empresa,recepcion_id=r.pk,clave=uuid.uuid4(),leyenda='QA',archivo=foto())
+        self.assertEqual(r.evidencias.count(),3)  # TALLER también adjunta evidencia (política vigente)
 
     @override_settings(MASISCAM_POLITICA_COMERCIAL_LOCAL=QA_POLICY)
     def test_respaldo_comercial_corrupto_no_permite_inicio(self):
@@ -443,7 +461,7 @@ class OperacionConcurrencyTests(TransactionTestCase):
 
     def test_propuesta_concurrente_version_e_idempotencia(self):
         d=aprobar_diagnostico(self.empresa,self.oficina,self.planta,self.tecnico,self.exp)
-        g=usuario(self.empresa,'gerencia-concurrente','GERENCIA');key=uuid.uuid4()
+        g=usuario(self.empresa,'gerencia-concurrente','OFICINA');key=uuid.uuid4()
         results=self.concurrent(lambda:s.proponer(usuario=g,empresa=self.empresa,expediente_id=self.exp.pk,
             diagnostico_id=d.pk,clave=key,datos={'alcance':'Propuesta QA concurrente'}).pk)
         self.assertEqual(results[0],results[1]);self.assertEqual(PropuestaComercial.objects.count(),1)
@@ -451,9 +469,12 @@ class OperacionConcurrencyTests(TransactionTestCase):
     def test_parcial_concurrente_unica_version_y_decision(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         d=aprobar_diagnostico(self.empresa,self.oficina,self.planta,self.tecnico,self.exp)
-        g=usuario(self.empresa,'gerencia-parcial-qa','GERENCIA')
+        g=usuario(self.empresa,'gerencia-parcial-qa','OFICINA')
         p=s.proponer(usuario=g,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=d.pk,
             clave=uuid.uuid4(),datos={'alcance':'Alcance completo QA','presupuesto_referencia':'QA v1'},archivo=presupuesto_qa())
+        from . import flujo_services as _fs  # aprobación conjunta de ADMINISTRADOR previa a la decisión del cliente
+        _fs.revisar_expediente(usuario=self.planta,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=d.pk,
+            propuesta_id=p.pk,decision='APROBADO',clave=uuid.uuid4())
         key=uuid.uuid4();binary=pdf_plano().read()
         data=dict(decision='PARCIAL',fecha_cliente=timezone.now(),representante_cliente='QA SIN VALIDEZ REAL',
             motivo='Solo test concurrente',alcance_autorizado='Alcance reducido QA',**verificacion_qa())
@@ -466,9 +487,12 @@ class OperacionConcurrencyTests(TransactionTestCase):
 
     def test_uso_concurrente_no_supera_recibido(self):
         d=aprobar_diagnostico(self.empresa,self.oficina,self.planta,self.tecnico,self.exp)
-        g=usuario(self.empresa,'gerencia-uso','GERENCIA')
+        g=usuario(self.empresa,'gerencia-uso','OFICINA')
         p=s.proponer(usuario=g,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=d.pk,clave=uuid.uuid4(),
             datos={'alcance':'QA','presupuesto_referencia':'QA v1'},archivo=presupuesto_qa())
+        from . import flujo_services as _fs  # aprobación conjunta de ADMINISTRADOR previa a la decisión del cliente
+        _fs.revisar_expediente(usuario=self.planta,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=d.pk,
+            propuesta_id=p.pk,decision='APROBADO',clave=uuid.uuid4())
         s.decidir_comercial(usuario=g,empresa=self.empresa,propuesta_id=p.pk,clave=uuid.uuid4(),archivo=pdf_plano(),datos=dict(
             decision='APROBADO',fecha_cliente=timezone.now(),representante_cliente='FICTICIO QA',motivo='Prueba aislada',**verificacion_qa()))
         a=s.iniciar_actividad(usuario=self.tecnico,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))

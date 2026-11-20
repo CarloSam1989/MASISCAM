@@ -42,7 +42,7 @@ urlpatterns = [
     path('expedientes/<int:pk>/tecnico/documentos/<int:documento_pk>/',tecnica_views.tecnica_documento,name='tecnica_documento'),
     path('biblioteca-tecnica/',tecnica_views.biblioteca,name='biblioteca'),
     path('biblioteca-tecnica/nuevo-catalogo/',plano_views.plano_importar,name='plano_importar'),
-    path('biblioteca-tecnica/importar-m20/',RedirectView.as_view(pattern_name='masiscam:plano_importar',query_string=True,permanent=True)),
+    path('biblioteca-tecnica/importar-m20/',RedirectView.as_view(pattern_name='masiscam:plano_importar',query_string=True,permanent=True),name='plano_importar_antiguo'),
     path('biblioteca-tecnica/<int:pk>/repuestos/importar/',plano_views.repuestos_importar,name='repuestos_importar'),
     path('biblioteca-tecnica/<int:pk>/plano/',plano_views.plano,name='plano'),
     path('biblioteca-tecnica/<int:pk>/plano/datos/',plano_views.plano_datos,name='plano_datos'),

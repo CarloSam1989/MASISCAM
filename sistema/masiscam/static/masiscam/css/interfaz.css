@@ -78,3 +78,31 @@
 .sistema-masiscam .mc-tabla-biblioteca td.masiscam-actions-cell{width:auto;white-space:normal}
 .sistema-masiscam .mc-tabla-repuestos td{padding:6px 8px}.sistema-masiscam .mc-tabla-repuestos input{min-width:90px;min-height:36px}.sistema-masiscam .mc-tabla-repuestos td:nth-child(3) input{min-width:260px}
 @media(max-width:991px){.sistema-masiscam .mc-tabla-biblioteca,.sistema-masiscam .mc-tabla-repuestos{min-width:900px}}
+
+/* === Componentes compartidos (20261121) === */
+/* Barra de filtros unificada: búsqueda, filtros, ordenamiento y botón en una sola barra compacta. */
+body.sistema-masiscam .mc-toolbar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 12px;padding:12px 14px;margin:12px 0 16px;background:#fff;border:1px solid var(--mc-line,#d9e4ed);border-radius:12px}
+body.sistema-masiscam .mc-toolbar>label,body.sistema-masiscam .mc-toolbar>.mc-filtro-campo,body.sistema-masiscam .mc-toolbar>.mc-filtro-buscar{display:flex;flex-direction:column;gap:4px;flex:1 1 170px;min-width:150px;max-width:320px;margin:0;font-size:.8rem;font-weight:600;color:var(--mc-ink,#172b40)}
+body.sistema-masiscam .mc-toolbar>.mc-filtro-buscar,body.sistema-masiscam .mc-toolbar>label:first-child{flex:2 1 280px;max-width:none}
+body.sistema-masiscam .mc-toolbar .form-label{margin:0;font-size:.8rem;font-weight:600}
+body.sistema-masiscam .mc-toolbar input:not([type=hidden]),body.sistema-masiscam .mc-toolbar select{min-height:40px;width:100%;font-size:.9rem;font-weight:400}
+body.sistema-masiscam .mc-toolbar .input-group{flex-wrap:nowrap}
+body.sistema-masiscam .mc-toolbar .input-group .btn{white-space:nowrap;min-height:40px}
+body.sistema-masiscam .mc-toolbar>button,body.sistema-masiscam .mc-toolbar>.btn{order:90;flex:0 0 auto;align-self:flex-end;min-height:40px;white-space:nowrap}
+body.sistema-masiscam .mc-toolbar>details{order:80;flex:0 0 auto;align-self:flex-end;min-width:0;padding:0 4px 9px;font-size:.85rem}
+body.sistema-masiscam .mc-toolbar>details[open]{order:95;flex:1 1 100%;padding:0}
+@media(max-width:575px){body.sistema-masiscam .mc-toolbar>label,body.sistema-masiscam .mc-toolbar>.mc-filtro-campo,body.sistema-masiscam .mc-toolbar>.mc-filtro-buscar{flex:1 1 100%;max-width:none}body.sistema-masiscam .mc-toolbar>button,body.sistema-masiscam .mc-toolbar>.btn{flex:1 1 100%}body.sistema-masiscam .mc-toolbar>details{flex:1 1 100%;padding:0}}
+/* Grupos de botones: una sola fila, misma altura; ajuste ordenado en pantallas pequeñas. */
+body.sistema-masiscam .mc-acciones{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+body.sistema-masiscam .mc-acciones>form,body.sistema-masiscam .mc-acciones>.d-inline{display:inline-flex;margin:0}
+body.sistema-masiscam .mc-acciones .btn{min-height:36px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
+body.sistema-masiscam .mc-acciones .badge{align-self:center}
+/* Repuestos con guardado automático */
+body.sistema-masiscam .mc-tabla-repuestos .mc-autoguardado-col{min-width:170px;width:1%;white-space:nowrap}
+body.sistema-masiscam .mc-autoguardado{font-size:.8rem}
+body.sistema-masiscam .mc-autoguardado .btn-link{font-size:.8rem;white-space:normal;text-align:left}
+body.sistema-masiscam .mc-tabla-repuestos input[aria-invalid=true]{border-color:#c0392b;background:#fdf1ef}
+body.sistema-masiscam .mc-toolbar.mc-filtros-producto>label,body.sistema-masiscam .mc-toolbar.mc-filtros-producto .form-label{font-size:.8rem;font-weight:600;line-height:1.2;margin:0}
+/* Acciones de tabla: una sola fila; la tabla se desplaza dentro de su contenedor, no la página. */
+body.sistema-masiscam .mc-tabla-producto td .mc-acciones.mc-acciones-wrap{flex-wrap:nowrap}body.sistema-masiscam .mc-tabla-biblioteca td.masiscam-actions-cell{white-space:nowrap}
+@media(max-width:991px){body.sistema-masiscam .mc-tabla-biblioteca{min-width:1080px}}

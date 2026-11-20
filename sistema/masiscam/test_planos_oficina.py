@@ -216,6 +216,80 @@ class ImportarRepuestosCatalogoTests(TestCase):
         self.client.force_login(self.tecnico)
         self.assertEqual(self.client.get(self.url).status_code, 403)
 
+    def test_autoguardado_decimales_validacion_auditoria_y_catalogo_congelado(self):
+        from decimal import Decimal
+        from .campos import normalizar_decimal
+        for texto, esperado in (('2,5', '2.5'), ('1.250', '1.250'), ('1.234,50', '1234.50'), ('1,234.50', '1234.50'),
+                                ('1,000000', '1.000000'), (' 3 ', '3'), ('1,234,567', '1234567'), ('-2,5', '-2.5'),
+                                ('1.234.567,89', '1234567.89'), ('1,234', '1.234'),  # un solo separador es decimal
+                                ('1,2,3', '1,2,3'), ('1.2.3', '1.2.3'), ('12,34,56', '12,34,56'), ('1,23.4', '1,23.4'),
+                                ('abc', 'abc'), ('', ''), ('--1', '--1')):
+            self.assertEqual(normalizar_decimal(texto), esperado, texto)
+        from django import forms as _f
+        from .campos import DecimalFlexible
+        campo = DecimalFlexible(max_digits=20, decimal_places=6, min_value=0, required=False)
+        self.assertEqual(campo.clean('1.234,5'), Decimal('1234.5'))
+        for malo in ('1,2,3', 'NaN', 'Infinity', 'abc', '-1', '1.2.3', '1,23.4'):
+            with self.assertRaises(_f.ValidationError, msg=malo):
+                campo.clean(malo)
+        url = reverse('masiscam:biblioteca_referencia', args=[self.ref.pk])
+        ajax = dict(HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+
+        def guardar(parte, **cambios):
+            datos = dict(op='parte', parte_id=parte or '', clave=str(uuid.uuid4()), posicion='1', numero_parte='A1',
+                         descripcion='Eje', unidad='', cantidad_referencia='', pagina='')
+            datos.update(cambios)
+            return self.client.post(url, datos, **ajax)
+
+        pk = self.partes['1']
+        eventos = lambda: Auditoria.objects.filter(accion='BIBLIOTECA_PARTE_CAMBIO', objeto_id=str(pk), detalle__campo='cantidad_referencia')
+        for texto, valor in (('2,5', '2.5'), ('1.250', '1.25'), ('1.234,50', '1234.5')):
+            r = guardar(pk, cantidad_referencia=texto)
+            self.assertEqual((r.status_code, r.json()['ok'], r.json()['parte_id']), (200, True, pk), texto)
+            self.assertEqual(ParteReferenciaTecnica.objects.get(pk=pk).cantidad_referencia, Decimal(valor))
+        self.assertEqual(eventos().count(), 3)
+        ultimo = eventos().order_by('-pk').first()
+        self.assertEqual((ultimo.usuario_id, ultimo.detalle['campo'], ultimo.detalle['nuevo'], ultimo.detalle['posicion']),
+                         (self.oficina.pk, 'cantidad_referencia', '1234.50', '1'))
+        self.assertEqual(guardar(pk, cantidad_referencia='1234,5').status_code, 200)  # mismo valor: sin evento nuevo
+        self.assertEqual(guardar(pk, cantidad_referencia='-1').status_code, 400)  # no admite negativas
+        # Guardado parcial: una pantalla desactualizada no pisa lo que otro cambió después.
+        ParteReferenciaTecnica.objects.filter(pk=pk).update(unidad='kg')  # cambio hecho en otra pestaña
+        r = guardar(pk, pagina='5', unidad='', campos='pagina')
+        self.assertEqual((r.status_code, r.json()['valores']['unidad'], r.json()['valores']['pagina']), (200, 'kg', '5'))
+        self.assertEqual(ParteReferenciaTecnica.objects.get(pk=pk).unidad, 'kg')
+        ParteReferenciaTecnica.objects.filter(pk=pk).update(unidad='')
+        # Un reintento con la misma clave (respuesta perdida) no duplica ni repite eventos.
+        clave = str(uuid.uuid4())
+        for _ in range(2):
+            self.assertEqual(guardar(None, posicion='77', descripcion='Reintento', clave=clave).status_code, 200)
+        self.assertEqual(ParteReferenciaTecnica.objects.filter(referencia=self.ref, posicion='77').count(), 1)
+        self.assertEqual(eventos().count(), 3)
+        # El formulario muestra el decimal con punto, nunca «1,000000».
+        self.client.force_login(self.oficina)
+        self.assertNotRegex(self.client.get(url).content.decode(), r'value="\d+,\d+"')
+        # Validación: no confirma nada y las demás piezas siguen editables.
+        r = guardar(pk, descripcion='')
+        self.assertEqual((r.status_code, r.json()['ok'], 'descripcion' in r.json()['errores']), (400, False, True))
+        r = guardar(pk, cantidad_referencia='abc')
+        self.assertEqual((r.status_code, 'cantidad_referencia' in r.json()['errores']), (400, True))
+        self.assertEqual(ParteReferenciaTecnica.objects.get(pk=pk).descripcion, 'Eje')
+        r = guardar(self.partes['88'], posicion='88', numero_parte='', descripcion='Tuerca QA')
+        self.assertEqual(r.status_code, 200)
+        r = guardar(None, posicion='9', numero_parte='N9', descripcion='Pieza nueva', cantidad_referencia='4,25')
+        self.assertEqual(r.status_code, 200)
+        nueva = ParteReferenciaTecnica.objects.get(pk=r.json()['parte_id'])
+        self.assertEqual((nueva.posicion, nueva.cantidad_referencia), ('9', Decimal('4.25')))
+        self.assertTrue(Auditoria.objects.filter(accion='BIBLIOTECA_PARTE_CAMBIO', objeto_id=str(nueva.pk), detalle__campo='descripcion').exists())
+        self.assertEqual(guardar(None, posicion='9', descripcion='Duplicada').status_code, 400)  # posición repetida
+        # TALLER no edita el catálogo; un catálogo activo (congelado) no se modifica directamente.
+        self.client.force_login(self.tecnico)
+        self.assertEqual(guardar(pk, descripcion='Intruso').status_code, 403)
+        self.client.force_login(self.oficina)
+        self.assertEqual(self.client.post(url, dict(op='PUBLICADA', clave=str(uuid.uuid4()))).status_code, 302)
+        self.assertEqual(guardar(pk, descripcion='Congelado').status_code, 403)
+        self.assertEqual(ParteReferenciaTecnica.objects.get(pk=pk).descripcion, 'Eje')
+
     def test_url_anterior_redirige_al_nuevo_catalogo(self):
         r = self.client.get('/app/biblioteca-tecnica/importar-m20/?x=1')
         self.assertEqual((r.status_code, r['Location']), (301, reverse('masiscam:plano_importar') + '?x=1'))

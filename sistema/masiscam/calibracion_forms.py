@@ -1,3 +1,4 @@
+from .campos import DecimalFlexible
 from decimal import Decimal
 from django import forms
 from django.forms import formset_factory
@@ -28,8 +29,8 @@ class PuntoForm(forms.Form):
     nombre=forms.CharField(required=False,max_length=200,label='Posición / punto según fuente')
     unidad=forms.CharField(required=False,max_length=80)
     fuente=forms.CharField(required=False,max_length=2000,label='Referencia documental')
-    minimo=forms.DecimalField(required=False,max_digits=30,decimal_places=12,label='Mínimo de referencia')
-    maximo=forms.DecimalField(required=False,max_digits=30,decimal_places=12,label='Máximo de referencia')
+    minimo=DecimalFlexible(required=False,max_digits=30,decimal_places=12,label='Mínimo de referencia')
+    maximo=DecimalFlexible(required=False,max_digits=30,decimal_places=12,label='Máximo de referencia')
     tolerancia=forms.CharField(required=False,max_length=2000,label='Tolerancia documentada')
     criterio=forms.CharField(required=False,max_length=2000,label='Criterio documentado de evaluación')
     def __init__(self,*args,**kwargs):
@@ -63,14 +64,14 @@ class DatosForm(BaseForm):
         self.parametros=[]
         for n,r in enumerate(calibracion.plantilla.definicion.get('parametros',[])):
             name=f'param_{n}';self.parametros.append((name,r['codigo']))
-            self.fields[name]=forms.DecimalField(required=False,max_digits=30,decimal_places=12,
+            self.fields[name]=DecimalFlexible(required=False,max_digits=30,decimal_places=12,
                 initial=calibracion.parametros.get(r['codigo']),label=f"{r['nombre']} ({r.get('unidad','unidad pendiente')})",widget=forms.NumberInput(attrs={'class':'form-control','step':'any'}))
 
 
 class MedicionForm(BaseForm):
     version=forms.IntegerField(min_value=1,widget=forms.HiddenInput)
     punto=forms.ChoiceField(label='Punto definido por plantilla')
-    valor=forms.DecimalField(required=False,max_digits=30,decimal_places=12,label='Valor registrado (vacío = pendiente)')
+    valor=DecimalFlexible(required=False,max_digits=30,decimal_places=12,label='Valor registrado (vacío = pendiente)')
     observaciones=forms.CharField(required=False,widget=forms.Textarea)
     def __init__(self,*args,calibracion,**kwargs):
         super().__init__(*args,initial={'version':calibracion.version_edicion},**kwargs)
