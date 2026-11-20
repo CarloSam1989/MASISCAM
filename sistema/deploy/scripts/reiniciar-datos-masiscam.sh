@@ -85,5 +85,5 @@ echo "Respaldo verificado: $CUST/verificacion.json"
 if [[ "$MODO" == --simular ]]; then echo "Simulación completa; no se borró nada."; exit 0; fi
 
 echo "== 5/5 Verificaciones superadas: reinicio completo =="
-mc eliminar --huella "$HUELLA" --respaldo /backup/masiscam.dump --verificacion /custodia/verificacion.json \
+mc ejecutar --huella "$HUELLA" --respaldo /backup/masiscam.dump --verificacion /custodia/verificacion.json \
    --carpeta /custodia --motivo "Reinicio completo de datos operativos"
