@@ -3,7 +3,8 @@
 # Reinicio TOTAL de datos operativos y biblioteca técnica (con sus PDF exclusivos). Conserva usuarios,
 # contraseñas, roles, permisos, auditoría y estructura. Detecta la única empresa y el único ADMINISTRADOR activo.
 # --simular: respaldo + restauración verificada + ensayo con rollback; NUNCA borra.
-# Sin --simular pide, además, confirmación escrita exacta antes del borrado definitivo.
+# Sin --simular, si TODAS las verificaciones pasan (respaldo, SHA-256, restauración y ensayo con rollback),
+# ejecuta el reinicio sin más preguntas; si alguna falla, se cancela sin borrar nada.
 set -euo pipefail
 umask 077
 MODO=${1:-}
@@ -83,9 +84,6 @@ mc verificar-respaldo --huella "$HUELLA" --respaldo /backup/masiscam.dump --qa-u
 echo "Respaldo verificado: $CUST/verificacion.json"
 if [[ "$MODO" == --simular ]]; then echo "Simulación completa; no se borró nada."; exit 0; fi
 
-echo "== 5/5 Borrado definitivo =="
-CONF="REINICIAR TODOS LOS DATOS OPERATIVOS $HUELLA"
-read -r -p "Escriba exactamente '$CONF' para borrar (otra cosa cancela): " ANS
-[[ "$ANS" == "$CONF" ]] || { echo "Cancelado; no se borró nada."; exit 1; }
+echo "== 5/5 Verificaciones superadas: reinicio completo =="
 mc eliminar --huella "$HUELLA" --respaldo /backup/masiscam.dump --verificacion /custodia/verificacion.json \
-   --carpeta /custodia --motivo "Reinicio completo de datos operativos" --confirmar "$CONF"
+   --carpeta /custodia --motivo "Reinicio completo de datos operativos"

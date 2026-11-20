@@ -84,13 +84,19 @@ class ReinicioDatosTests(TransactionTestCase):
         self.assertEqual(self.operativos(), antes)  # el ensayo con rollback no alteró la fuente
         base = dict(usuario=self.planta.pk, respaldo=str(ruta), verificacion=str(constancia), huella=sim['huella'],
                     carpeta=str(Path(self.temp.name) / 'custodia'), motivo='Reinicio QA')
-        confirmar = 'REINICIAR TODOS LOS DATOS OPERATIVOS ' + sim['huella']
+        # Cualquier verificación fallida cancela sin borrar: huella ajena, usuario no ADMINISTRADOR, respaldo alterado.
         with self.assertRaises(CommandError):
-            self.run_command('ejecutar', confirmar='si', **base)
+            self.run_command('ejecutar', **{**base, 'huella': 'x' * 64})
+        with self.assertRaises(CommandError):
+            self.run_command('ejecutar', **{**base, 'usuario': self.oficina.pk})
+        with open(ruta, 'ab') as dump:
+            dump.write(b'0')
+        with self.assertRaises(CommandError):
+            self.run_command('ejecutar', **base)
         self.assertEqual(self.operativos(), antes)
-        with self.assertRaises(CommandError):
-            self.run_command('ejecutar', confirmar=confirmar, **{**base, 'usuario': self.oficina.pk})
-        res = self.run_command('ejecutar', confirmar=confirmar, **base)
+        ruta.write_bytes(ruta.read_bytes()[:-1])
+        # Sin confirmación escrita: las verificaciones superadas bastan.
+        res = self.run_command('ejecutar', **base)
         self.assertEqual(res['registros_eliminados'], plan['cantidades']['registros'])
         # Todo cero; auditoría y acceso intactos.
         self.assertEqual(set(self.operativos().values()), {0})
@@ -111,5 +117,5 @@ class ReinicioDatosTests(TransactionTestCase):
         self.assertEqual((cliente.pk, proyecto.pk, equipo.pk), (1, 1, 1))
         # Segunda ejecución: la constancia ya no corresponde y no se borra nada más.
         with self.assertRaises(CommandError):
-            self.run_command('ejecutar', confirmar=confirmar, **base)
+            self.run_command('ejecutar', **base)
         self.assertEqual(Equipo.objects.count(), 1)

@@ -27,7 +27,6 @@ class Command(DepuracionBase):
         parser.add_argument('--salida', help='Constancia nueva de restauración verificada.')
         parser.add_argument('--verificacion', help='Constancia emitida por verificar-respaldo.')
         parser.add_argument('--huella')
-        parser.add_argument('--confirmar')
         parser.add_argument('--motivo')
 
     def _preparar(self, opts):
@@ -61,8 +60,9 @@ class Command(DepuracionBase):
         from masiscam.management.depuracion_mensual import purge_files
         from masiscam.management.depuracion_confirmada import read_signed, save_signed, verify_assets
         from masiscam.management.depuracion_reinicio import PROFILE, apply_reset, inspect_reset
-        if not all(opts.get(k) for k in ('respaldo', 'verificacion', 'motivo', 'confirmar', 'huella', 'carpeta')):
-            raise CommandError('Faltan respaldo restaurado, constancia, huella, carpeta, motivo o confirmación explícita.')
+        opts['motivo'] = (opts.get('motivo') or 'Reinicio completo de datos operativos').strip()
+        if not all(opts.get(k) for k in ('respaldo', 'verificacion', 'huella', 'carpeta')):
+            raise CommandError('Faltan respaldo restaurado, constancia, huella o carpeta de custodia.')
         receipt = json.loads(Path(opts['verificacion']).read_text(encoding='utf-8'))
         try:
             verified = signing.loads(receipt.get('firma', ''), salt='masiscam.depuracion.respaldo')
@@ -85,9 +85,6 @@ class Command(DepuracionBase):
                     or receipt.get('sha256_respaldo') != backup_hash or receipt.get('origen') != source_identity()
                     or receipt.get('perfil_confirmado') != PROFILE):
                 raise CommandError('Respaldo o constancia no corresponden a esta base y a esta simulación.')
-            esperado = f"REINICIAR TODOS LOS DATOS OPERATIVOS {fingerprint(plan)}"
-            if opts['confirmar'] != esperado or not opts['motivo'].strip():
-                raise CommandError('Confirme exactamente: ' + esperado + ' ; indique un motivo no vacío.')
             if not plan['cantidades']['registros']:
                 raise CommandError('No hay datos operativos que reiniciar.')
             verify_assets(receipt['archivos_locales'])
