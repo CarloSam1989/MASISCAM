@@ -28,7 +28,7 @@ from .test_recepcion import fixtures,argumentos,foto
 def usuario(empresa,nombre,rol):
     user=get_user_model().objects.create_user(username=nombre,password='QA-only-12345')
     perfil=Perfil.objects.create(user=user,empresa=empresa)
-    RolMasiscam.objects.create(perfil=perfil,rol={'PLANTA': 'ADMIN', 'TECNICO': 'TALLER'}.get(rol, rol))
+    RolMasiscam.objects.create(perfil=perfil,rol={'PLANTA': 'ADMIN', 'TECNICO': 'TALLER', 'GERENCIA': 'ADMIN', 'CONSULTA': 'OFICINA'}.get(rol, rol))
     return user
 
 

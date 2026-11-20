@@ -1,3 +1,40 @@
-{% extends 'masiscam/base.html' %}{% block content %}<div class="container py-4"><h1>Biblioteca técnica privada</h1><p>Seleccione una versión explícita. La coincidencia de marca, modelo o ratio no acredita compatibilidad mecánica.</p>{% if rol_tecnico == 'ADMIN' or rol_tecnico == 'OFICINA' %}<a class="btn btn-outline-primary" href="{% url 'masiscam:plano_importar' %}">Incorporar M20A-HNRC / revisar materiales</a>{% endif %} {% if rol_tecnico == 'ADMIN' %}<a class="btn btn-primary mb-3" href="{% url 'masiscam:biblioteca_referencia_crear' %}">Registrar plano o manual / nueva revisión</a> <a href="{% url 'masiscam:biblioteca_componentes' %}">Componentes</a>{% endif %}
-{% if solicitudes_plano %}<section class="card p-3 my-3"><h2>Solicitudes de aplicabilidad</h2><p>Abra la referencia para revisar y registrar la aplicabilidad por equipo.</p><ul>{% for solicitud in solicitudes_plano %}<li>{{ solicitud.equipo }} - <a href="{% url 'masiscam:biblioteca_referencia' solicitud.referencia.pk %}">{{ solicitud.referencia }}</a> - {{ solicitud.evento.usuario }} - {{ solicitud.evento.creado_en }}</li>{% endfor %}</ul></section>{% endif %}<form method="get" class="row g-2 mb-3"><div class="col-12 col-lg-4"><label for="buscar">Código o título</label><input id="buscar" class="form-control" name="q" value="{{ request.GET.q }}"></div><div class="col-6 col-lg-2"><label for="marca">Marca</label><input id="marca" class="form-control" name="marca" value="{{ request.GET.marca }}"></div><div class="col-6 col-lg-2"><label for="modelo">Modelo</label><input id="modelo" class="form-control" name="modelo" value="{{ request.GET.modelo }}"></div><div class="col-6 col-lg-2"><label for="ratio">Ratio</label><input id="ratio" class="form-control" name="ratio" value="{{ request.GET.ratio }}"></div><div class="col-6 col-lg-2"><label for="version">Versión fabricante</label><input id="version" class="form-control" name="version_fabricante" value="{{ request.GET.version_fabricante }}"></div><div class="col-12"><button class="btn btn-outline-primary">Filtrar</button></div></form>
-<ul class="list-group" data-listado>{% for r in referencias %}<li class="list-group-item"><a href="{% url 'masiscam:biblioteca_referencia' r.pk %}">{{ r }}</a> · {{ r.get_estado_display }} · {{ r.marca }} / {{ r.modelo }} / {{ r.ratio|default:'Ratio no registrado' }} · Versión fabricante: {{ r.version_fabricante|default:'No consta' }}</li>{% empty %}<li class="list-group-item">Sin referencias autorizadas.</li>{% endfor %}</ul></div>{% endblock %}
+{% extends 'masiscam/base.html' %}{% block content %}
+<div class="container-fluid px-3 px-lg-4 py-3 mc-biblioteca">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div><h1 class="h3 mb-1">Planos y piezas</h1>
+      <p class="text-muted mb-0">Catálogos de reductores: plano PDF, repuestos y ubicación de piezas. Solo ADMINISTRADOR publica; la coincidencia de fabricante, modelo y configuración no acredita compatibilidad mecánica.</p></div>
+    {% if rol_tecnico == 'ADMIN' or rol_tecnico == 'OFICINA' %}<div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-primary" href="{% url 'masiscam:biblioteca_referencia_crear' %}">Nuevo catálogo</a>
+      <a class="btn btn-outline-primary" href="{% url 'masiscam:plano_importar' %}">Subir PDF e importar repuestos (Excel)</a>
+      {% if rol_tecnico == 'ADMIN' %}<a class="btn btn-outline-primary" href="{% url 'masiscam:biblioteca_componentes' %}">Componentes</a>{% endif %}
+    </div>{% endif %}
+  </div>
+  {% if rol_tecnico == 'ADMIN' or rol_tecnico == 'OFICINA' %}<ol class="mc-pasos" aria-label="Flujo del catálogo"><li>Catálogo y PDF</li><li>Repuestos</li><li>Marcadores</li><li>Borrador o envío a revisión</li><li>ADMINISTRADOR publica</li></ol>{% endif %}
+  {% if solicitudes_plano %}<section class="card masiscam-card card-body mb-3"><h2 class="h5">Solicitudes de aplicabilidad</h2><p class="mb-2">Abra el catálogo para revisar y registrar la aplicabilidad por equipo.</p><ul class="mb-0">{% for solicitud in solicitudes_plano %}<li>{{ solicitud.equipo }} - <a href="{% url 'masiscam:biblioteca_referencia' solicitud.referencia.pk %}">{{ solicitud.referencia }}</a> - {{ solicitud.evento.usuario }} - {{ solicitud.evento.creado_en }}</li>{% endfor %}</ul></section>{% endif %}
+  <form method="get" class="card masiscam-card card-body mb-3 mc-filtros-producto">
+    <div class="mc-filtro-buscar"><label class="form-label" for="buscar">Código o título</label><div class="input-group"><input id="buscar" class="form-control" name="q" value="{{ request.GET.q }}"><button class="btn btn-primary">Filtrar</button></div></div>
+    <div class="mc-filtro-campo"><label class="form-label" for="marca">Fabricante</label><input id="marca" class="form-control" name="marca" value="{{ request.GET.marca }}"></div>
+    <div class="mc-filtro-campo"><label class="form-label" for="modelo">Modelo</label><input id="modelo" class="form-control" name="modelo" value="{{ request.GET.modelo }}"></div>
+    <div class="mc-filtro-campo"><label class="form-label" for="ratio">Relación</label><input id="ratio" class="form-control" name="ratio" value="{{ request.GET.ratio }}"></div>
+    <div class="mc-filtro-campo"><label class="form-label" for="version">Versión técnica</label><input id="version" class="form-control" name="version_fabricante" value="{{ request.GET.version_fabricante }}"></div>
+  </form>
+  <div class="card masiscam-card"><div class="table-responsive"><table class="table table-hover align-middle mb-0 mc-tabla-producto mc-tabla-biblioteca">
+    <thead><tr><th>Fabricante y modelo</th><th>Configuración técnica</th><th>Versión</th><th>Repuestos</th><th>Estado</th><th>Acciones</th></tr></thead>
+    <tbody>{% for r in referencias %}<tr>
+      <td><strong>{{ r.marca|default:'Sin fabricante' }} {{ r.modelo }}</strong><div class="text-muted small">{{ r.codigo }} · {{ r.titulo }}</div></td>
+      <td>{{ r.operacion|default:'—' }} · {{ r.rotacion|default:'—' }} · {{ r.ratio|default:'—' }}</td>
+      <td>{{ r.version_fabricante|default:'No consta' }}<div class="text-muted small">Rev. {{ r.revision }}</div></td>
+      <td>{{ r.n_partes }}</td>
+      <td>{% if r.pendiente %}<span class="badge text-bg-warning">Pendiente de revisión</span>{% elif r.estado == 'BORRADOR' %}<span class="badge text-bg-secondary">Borrador</span>{% elif r.estado == 'PUBLICADA' %}<span class="badge text-bg-success">Publicado</span>{% else %}<span class="badge text-bg-light border">Retirado</span>{% endif %}</td>
+      <td class="masiscam-actions-cell"><div class="mc-acciones mc-acciones-wrap">
+        <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:biblioteca_referencia' r.pk %}">Ver</a>
+        {% if r.estado == 'BORRADOR' and rol_tecnico == 'ADMIN' or r.estado == 'BORRADOR' and rol_tecnico == 'OFICINA' %}
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:biblioteca_referencia_editar' r.pk %}">Editar</a>
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:biblioteca_referencia' r.pk %}#repuestos">Repuestos</a>
+          {% if r.tipo == 'PLANO' %}<a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:plano' r.pk %}">Marcadores</a>{% endif %}
+          {% if r.tipo == 'PLANO' and not r.pendiente %}<form method="post" action="{% url 'masiscam:biblioteca_referencia' r.pk %}" class="d-inline">{% csrf_token %}<input type="hidden" name="op" value="solicitar_revision"><input type="hidden" name="clave" value="{{ r.clave_revision }}"><button class="btn btn-sm btn-outline-secondary">Enviar a revisión</button></form>{% endif %}
+        {% elif r.tipo == 'PLANO' %}<a class="btn btn-sm btn-outline-primary" href="{% url 'masiscam:plano' r.pk %}">Marcadores</a>{% endif %}
+      </div></td>
+    </tr>{% empty %}<tr><td colspan="6" class="text-center py-5 text-muted">Sin catálogos autorizados.</td></tr>{% endfor %}</tbody>
+  </table></div></div>
+</div>{% endblock %}

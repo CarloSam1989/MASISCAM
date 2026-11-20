@@ -42,12 +42,15 @@ def protocolo_pdf():
 
 def preparar_calibracion(criterios=True):
     empresa,oficina,planta,tecnico,exp=preparar()
-    gerente=usuario(empresa,'gerencia-cal-qa','GERENCIA')
     revisor=usuario(empresa,'planta-cal-independiente','PLANTA')
     diag=aprobar_diagnostico(empresa,oficina,planta,tecnico,exp)
-    prop=o.proponer(usuario=gerente,empresa=empresa,expediente_id=exp.pk,diagnostico_id=diag.pk,clave=uuid.uuid4(),
+    prop=o.proponer(usuario=oficina,empresa=empresa,expediente_id=exp.pk,diagnostico_id=diag.pk,clave=uuid.uuid4(),
         datos={'alcance':'Alcance FICTICIO QA, no autorización real','presupuesto_referencia':'QA v1'},archivo=presupuesto_qa())
-    o.decidir_comercial(usuario=gerente,empresa=empresa,propuesta_id=prop.pk,clave=uuid.uuid4(),archivo=pdf_plano(),datos=dict(
+    # Revisión conjunta de ADMINISTRADOR (requisito vigente) antes de registrar la aceptación comercial.
+    from . import flujo_services as fs
+    fs.revisar_expediente(usuario=planta,empresa=empresa,expediente_id=exp.pk,diagnostico_id=diag.pk,propuesta_id=prop.pk,
+        decision='APROBADO',clave=uuid.uuid4())
+    o.decidir_comercial(usuario=oficina,empresa=empresa,propuesta_id=prop.pk,clave=uuid.uuid4(),archivo=pdf_plano(),datos=dict(
         decision='APROBADO',fecha_cliente=timezone.now(),representante_cliente='PERSONA FICTICIA QA',motivo='Fixture aislada, no decisión real',**verificacion_qa()))
     act=o.iniciar_actividad(usuario=tecnico,empresa=empresa,expediente_id=exp.pk,clave=uuid.uuid4(),datos=dict(trabajo='Actividad FICTICIA QA',componentes='Componente QA',inicio=timezone.now()))
     res=o.terminar_actividad(usuario=tecnico,empresa=empresa,actividad_id=act.pk,clave=uuid.uuid4(),datos=dict(fin=timezone.now(),trabajo_realizado='Trabajo ficticio QA',resultado='Sin resultado industrial'))
@@ -173,7 +176,7 @@ class CalibracionTests(TestCase):
         with self.assertRaises(IntegrityError),transaction.atomic(): Calibracion.objects.filter(pk=c.pk).update(instrumentos='Cambio')
 
     def test_autoaprobacion_cambio_rol_prohibida(self):
-        c=self.enviar();RolMasiscam.objects.filter(perfil__user=self.tecnico).update(rol='PLANTA')
+        c=self.enviar();RolMasiscam.objects.filter(perfil__user=self.tecnico).update(rol='ADMIN')
         with self.assertRaises(PermissionDenied): s.decidir(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,clave=uuid.uuid4(),decision='APROBADA',motivo='Intento',evaluaciones={})
 
     def test_observacion_correccion_rechazo_y_autoria_fuente(self):
@@ -299,10 +302,11 @@ class CalibracionTests(TestCase):
     def test_autoria_antecesora_protegida_tras_reasignar_y_cambiar_rol(self):
         c=self.enviar();self.decidir(c,'OBSERVADA',{})
         other=usuario(self.empresa,'otro-tecnico-cal-qa','TECNICO')
+        Equipo.objects.filter(pk=self.exp.registro.equipo_id).update(registrado_por=other)  # TALLER responde solo por sus equipos
         t.asignar_tecnico(usuario=self.planta,**self.base,tecnico_id=other.pk,motivo='Reasignación QA',clave=uuid.uuid4())
         q=s.iniciar(usuario=self.planta,**self.base,plantilla_id=self.p.pk,clave=uuid.uuid4(),motivo='Corrección QA con autor nuevo')
         q=completar(self.empresa,other,q);q=s.enviar(usuario=other,empresa=self.empresa,calibracion_id=q.pk,version=q.version_edicion,clave=uuid.uuid4())
-        RolMasiscam.objects.filter(perfil__user=self.tecnico).update(rol='PLANTA')
+        RolMasiscam.objects.filter(perfil__user=self.tecnico).update(rol='ADMIN')
         with self.assertRaises(PermissionDenied): s.decidir(usuario=self.tecnico,empresa=self.empresa,calibracion_id=q.pk,clave=uuid.uuid4(),decision='OBSERVADA',motivo='Intento de revisar derivada',evaluaciones={})
 
     def test_task_fallo_y_reintento_sin_documento_duplicado(self):

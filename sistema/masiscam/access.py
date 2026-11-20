@@ -74,14 +74,14 @@ VISTAS_TALLER = {
 }
 
 VISTAS_OFICINA = {
-    'masiscam.plano_views': {'plano', 'plano_datos', 'plano_importar', 'plano_mapa'},
+    'masiscam.plano_views': {'plano', 'plano_datos', 'plano_importar', 'plano_mapa', 'repuestos_importar'},
     'masiscam.oficina_views': {'inicio'},
     'masiscam.flujo_views': {'bandeja','detalle','documento'},
     'masiscam.views': {'dashboard','clientes','cliente_detalle','cliente_crear','cliente_editar',
         'producto_listado','ficha_detalle','equipo_informe','equipo_foto_privada','equipo_documento_privado'},
     'masiscam.recepcion_views': {'expedientes','recepcion_crear','expediente_detalle','recepcion_finalizar',
         'guia_emitir','guia_reintentar','recepcion_documento','recepcion_foto_previsualizar'},
-    'masiscam.tecnica_views': {'tecnica_informe','tecnica_documento','biblioteca_documento','biblioteca','biblioteca_referencia'},
+    'masiscam.tecnica_views': {'tecnica_informe','tecnica_documento','biblioteca_documento','biblioteca','biblioteca_referencia','biblioteca_referencia_form'},
     'masiscam.operacion_views': {'inicio','detalle','operar','documento'},
     'masiscam.cierre_views': {'detalle','documento'},
 }

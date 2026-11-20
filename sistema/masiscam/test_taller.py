@@ -23,11 +23,13 @@ class TallerTests(TestCase):
     def setUp(self):
         self.empresa, self.oficina, _, self.cliente, self.historico = fixtures()
         self.usuarios = {'OFICINA': self.oficina}
-        for codigo in ('ADMIN', 'TECNICO', 'PLANTA', 'GERENCIA', 'CONSULTA', 'TALLER', 'CLIENTE'):
+        # Solo existen tres roles operativos; las claves históricas se conservan como alias de usuarios vigentes.
+        vigente = {'ADMIN': 'ADMIN', 'TECNICO': 'TALLER', 'PLANTA': 'ADMIN', 'GERENCIA': 'ADMIN',
+                   'CONSULTA': 'OFICINA', 'TALLER': 'TALLER', 'CLIENTE': 'OFICINA'}
+        for codigo, rol in vigente.items():
             user = get_user_model().objects.create_user(username='taller-test-' + codigo, password='Taller-QA-2026!')
             perfil = Perfil.objects.create(user=user, empresa=self.empresa)
-            RolMasiscam.objects.create(perfil=perfil, rol=codigo,
-                cliente=self.cliente if codigo == 'CLIENTE' else None)
+            RolMasiscam.objects.create(perfil=perfil, rol=rol)
             self.usuarios[codigo] = user
         self.taller = self.usuarios['TALLER']
         self.otro = get_user_model().objects.create_user(username='otro-taller')
@@ -49,7 +51,7 @@ class TallerTests(TestCase):
         url = reverse('accounts:seleccionar_empresa')
         response = self.client.get(url)
         self.assertEqual(response.wsgi_request.rol_masiscam.rol, 'TALLER')
-        self.assertContains(response, 'aria-label="MASISCAM · Inicio de taller"')
+        self.assertContains(response, 'aria-label="MASISCAM · Inicio"')
         self.assertContains(response, '/static/masiscam/css/taller.css')
         self.assertContains(response, 'Salir</button>')
         self.assertNotContains(response, '>Clientes</a>')
@@ -72,20 +74,24 @@ class TallerTests(TestCase):
 
     def test_navegacion_de_los_demas_roles_se_conserva(self):
         for codigo, user in self.usuarios.items():
-            if codigo in {'TALLER', 'CLIENTE'}:
+            # TECNICO y CONSULTA son alias de TALLER y OFICINA: sus menús se comprueban en los roles reales.
+            if codigo not in {'OFICINA', 'ADMIN', 'PLANTA', 'GERENCIA'}:
                 continue
             self.client.force_login(user)
             response = self.client.get(reverse('masiscam:dashboard'),follow=True)
             with self.subTest(rol=codigo):
                 self.assertEqual(response.status_code, 200)
                 self.assertNotContains(response, '/static/masiscam/css/taller.css')
-                for texto in (('Inicio de oficina','Clientes','Cotizaciones','Compras','Ventas') if codigo=='OFICINA' else ('Panel', 'Reductores', 'Bombas', 'Clientes', 'Proyectos')):
+                for texto in (('Inicio','Clientes','Solicitudes de taller','Cotizaciones','Planos y piezas') if codigo=='OFICINA' else ('Inicio', 'Reductores', 'Bombas', 'Clientes', 'Proyectos')):
                     self.assertContains(response, '>' + texto + '</a>')
+                self.assertContains(response, 'app-products-toggle')
                 self.assertNotContains(response, '>Mis expedientes</a>')
-        self.client.force_login(self.usuarios['CLIENTE'])
-        response = self.client.get(reverse('masiscam:cliente_productos'))
-        self.assertContains(response, '>Mis productos</a>')
-        self.assertNotContains(response, '>Proyectos</a>')
+        # El acceso de cliente ya no puede crearse (rol CLIENTE vedado en la base); su usuario alias no es un cliente.
+        from django.db import IntegrityError, transaction
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            RolMasiscam.objects.create(perfil=self.usuarios['CLIENTE'].perfiles.get(), rol='CLIENTE', cliente=self.cliente)
+        from .access import acceso_cliente_usuario
+        self.assertIsNone(acceso_cliente_usuario(self.usuarios['CLIENTE']))
 
     def test_panel_muestra_solo_equipos_y_pendientes_propios(self):
         propio = self.crear('PANEL')
@@ -158,7 +164,7 @@ class TallerTests(TestCase):
     def test_exclusividad_urls_ajax_y_superusuario_sin_equivalencia(self):
         total = Equipo.objects.count()
         for codigo, user in {**self.usuarios, 'ROOT': self.root}.items():
-            if codigo == 'TALLER':
+            if codigo in {'TALLER', 'TECNICO'}:  # TECNICO es ahora un alias de TALLER
                 continue
             self.client.force_login(user)
             for url in (reverse('masiscam:ficha_crear'),
@@ -180,7 +186,7 @@ class TallerTests(TestCase):
             self.assertEqual(autorizar(self.taller, self.empresa).rol, 'TALLER')
             with self.assertRaises(PermissionDenied):
                 autorizar(self.taller, self.empresa, {'PLANTA'})
-        for user in (self.root, self.oficina, self.usuarios['TECNICO']):
+        for user in (self.root, self.oficina, self.usuarios['PLANTA']):
             with self.assertRaises(PermissionDenied):
                 autorizar_creacion_equipo(usuario=user, empresa=self.empresa)
             form = FichaEquipoForm(self.datos(), empresa=self.empresa)
@@ -197,7 +203,7 @@ class TallerTests(TestCase):
 
     def test_menu_login_cuenta_y_busqueda_ruc_solo_empresa(self):
         response = self.client.get(reverse('masiscam:taller_inicio'))
-        for vista in ('taller_inicio', 'ficha_crear', 'expedientes', 'taller_estado', 'taller_cuenta'):
+        for vista in ('taller_inicio', 'taller_estado', 'biblioteca', 'taller_cuenta'):
             self.assertContains(response, 'href="' + reverse('masiscam:' + vista) + '"')
         for vista in ('usuarios', 'clientes', 'proyectos', 'cierre_dashboard'):
             self.assertNotContains(response, 'href="' + reverse('masiscam:' + vista) + '"')
@@ -278,6 +284,8 @@ class TallerTests(TestCase):
             clave=uuid.uuid4(), placa='SIN_PLACA', motivo_sin_placa='Ausencia QA',
             motivo_sin_guia='Ausencia QA', general_id=exp.recepcion.evidencias.get().pk)
         tecnico, planta = self.usuarios['TECNICO'], self.usuarios['PLANTA']
+        # TALLER solo puede ser responsable de sus propios equipos.
+        Equipo.objects.filter(pk=equipo.pk).update(registrado_por=tecnico)
         tecnica.asignar_tecnico(usuario=planta, empresa=self.empresa, expediente_id=exp.pk,
             tecnico_id=tecnico.pk, motivo='Asignación expresa QA', clave=uuid.uuid4())
         with self.assertRaises(PermissionDenied):
@@ -292,6 +300,8 @@ class TallerTests(TestCase):
             diagnostico_id=diagnostico.pk, decision='APROBADO', motivo='', clave=uuid.uuid4())
         diagnostico.refresh_from_db()
         self.assertEqual(diagnostico.estado, 'APROBADO')
+        # El técnico asignado (responsable del equipo) ve su expediente sin el detalle técnico.
+        self.client.force_login(tecnico)
         response = self.client.get(reverse('masiscam:taller_estado'))
         self.assertContains(response, exp.numero)
         self.assertNotContains(response, diagnostico.fallas)
@@ -314,7 +324,11 @@ class TallerTests(TestCase):
 
     def test_roles_historicos_sin_conversion_y_alta_explicita(self):
         self.assertEqual(self.oficina.perfiles.get().rol_masiscam.rol, 'OFICINA')
-        self.assertEqual(self.usuarios['TECNICO'].perfiles.get().rol_masiscam.rol, 'TECNICO')
+        # Los roles históricos ya no se asignan: la base rechaza cualquier alta o conversión a un rol no vigente.
+        from django.db import IntegrityError, transaction
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            RolMasiscam.objects.filter(pk=self.usuarios['TECNICO'].perfiles.get().rol_masiscam.pk).update(rol='TECNICO')
+        self.assertEqual(self.usuarios['TECNICO'].perfiles.get().rol_masiscam.rol, 'TALLER')
         self.assertFalse(Equipo.objects.filter(registrado_por__isnull=False).exists())
         self.client.force_login(self.usuarios['ADMIN'])
         response = self.client.post(reverse('masiscam:usuario_crear'), {
@@ -330,12 +344,18 @@ class TallerTests(TestCase):
         url = reverse('admin:masiscam_equipo_add')
         self.assertEqual(self.client.get(url).status_code, 200)
         rol = self.root.perfiles.get().rol_masiscam
-        for codigo in ('TECNICO', 'OFICINA', 'PLANTA', 'GERENCIA', 'CONSULTA'):
+        from django.db import IntegrityError, transaction
+        for historico in ('TECNICO', 'PLANTA', 'GERENCIA', 'CONSULTA'):
+            rol.rol = historico
+            with self.assertRaises(IntegrityError), transaction.atomic():
+                rol.save(update_fields=['rol'])
+        rol.refresh_from_db()
+        for codigo in ('TALLER', 'OFICINA'):
             rol.rol = codigo
             rol.save(update_fields=['rol'])
             with self.subTest(rol=codigo):
-                self.assertIn(self.client.get(url).status_code, (302,403) if codigo=='OFICINA' else (403,))
-                self.assertIn(self.client.post(url, {}).status_code, (302,403) if codigo=='OFICINA' else (403,))
+                self.assertIn(self.client.get(url).status_code, (302,403))
+                self.assertIn(self.client.post(url, {}).status_code, (302,403))
 
 
 @override_settings(GOOGLE_DRIVE_ENABLED=False, MASISCAM_RECEPCION_LOCAL=True)

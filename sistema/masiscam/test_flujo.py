@@ -182,8 +182,12 @@ class FlujoTests(TestCase):
         with self.assertRaises(IntegrityError),transaction.atomic(): SolicitudRepuestos.objects.filter(pk=self.sol.pk).update(snapshot={})
         with self.assertRaises(IntegrityError),transaction.atomic(): self.sol.delete()
         with self.assertRaises(PermissionDenied): t.decidir_diagnostico(usuario=self.taller,empresa=self.empresa,diagnostico_id=self.diag.pk,decision='APROBADO',motivo='QA',clave=uuid.uuid4())
-        with self.assertRaises(ValidationError): s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),referencia='QA')
-        self.assertFalse(PropuestaComercial.objects.exists())
+        # Desde el nuevo orden, OFICINA puede cotizar de forma preliminar; la autorización técnica sigue pendiente.
+        propuesta=s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),referencia='QA')
+        self.assertEqual(PropuestaComercial.objects.count(),1)
+        self.assertFalse(t._aprobado(self.diag))
+        self.assertFalse(hasattr(propuesta,'decision'))
+        self.assertFalse(AdquisicionRepuesto.objects.exists())
 
     def test_planta_puede_solicitar_revision_sin_confirmacion_de_recepcion(self):
         self.preparar_solicitud(confirmar=False)
@@ -237,9 +241,13 @@ class FlujoTests(TestCase):
         self.assertTrue(consumir_respuesta(response).startswith(b'\x89PNG'))
         self.client.force_login(self.taller)
         self.assertEqual(self.client.get(reverse('masiscam:flujo_bandeja')).status_code,403)
-        for codigo in ['TECNICO','ADMIN','CONSULTA','CLIENTE']:
+        # TECNICO (alias de TALLER) no asignado y CLIENTE (solo sus productos) no acceden; ADMINISTRADOR y OFICINA sí.
+        for codigo in ['TECNICO']:
             self.client.force_login(self.usuarios[codigo])
             self.assertEqual(self.client.get(url).status_code,403)
+        for codigo in ['ADMIN','CONSULTA']:
+            self.client.force_login(self.usuarios[codigo])
+            self.assertEqual(self.client.get(url).status_code,200)
         self.client.force_login(self.otro)
         self.assertEqual(self.client.get(url).status_code,403)
         self.assertEqual(self.client.get(doc).status_code,403)

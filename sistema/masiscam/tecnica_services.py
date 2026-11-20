@@ -737,6 +737,33 @@ def copiar_partes_referencia(source, obj):
         ParteReferenciaTecnica.objects.create(referencia=obj,**values)
 
 
+def ids_revision_pendiente(empresa):
+    """Planos en borrador enviados a ADMINISTRADOR (sin nuevo estado ni migración)."""
+    return set(Auditoria.objects.filter(empresa=empresa,objeto_tipo='BibliotecaTecnica',
+        accion='BIBLIOTECA_REVISION_SOLICITADA').values_list('objeto_id',flat=True))
+
+
+@transaction.atomic
+def solicitar_revision(*,usuario,empresa,referencia_id,clave):
+    _liblock(usuario,empresa,{'ADMIN','OFICINA'})
+    payload=dict(id=referencia_id)
+    old=_libretry(empresa,clave,'BIBLIOTECA_REVISION_SOLICITADA',payload)
+    if old:
+        return ReferenciaTecnica.objects.get(pk=old)
+    obj=ReferenciaTecnica.objects.get(pk=referencia_id,empresa=empresa)
+    if obj.estado!='BORRADOR' or obj.tipo!='PLANO':
+        raise ValidationError('Solo un plano en borrador puede enviarse a revisión.')
+    documento_valido(obj.documento,empresa)
+    if not obj.partes.exists():
+        raise ValidationError('Importe o registre repuestos antes de enviar a revisión.')
+    if obj.partes.filter(descripcion__regex=r'^\s*$').exists():
+        raise ValidationError('Corrija las posiciones sin descripción antes de enviar a revisión.')
+    if str(obj.pk) in ids_revision_pendiente(empresa):
+        raise ValidationError('El catálogo ya está pendiente de revisión.')
+    _libevent(empresa,usuario,clave,'BIBLIOTECA_REVISION_SOLICITADA',payload,obj.pk)
+    return obj
+
+
 @transaction.atomic
 def estado_referencia(*,usuario,empresa,referencia_id,estado,clave):
     _liblock(usuario,empresa)

@@ -29,13 +29,20 @@ class OficinaTests(TestCase):
         self.assertRedirects(self.client.get(reverse('masiscam:dashboard')),reverse('masiscam:oficina_inicio'))
         for section in ('inicio','solicitudes','cotizaciones','compras','ventas','guias','documentos','cuenta'):
             response=self.client.get(reverse('masiscam:oficina_inicio') if section=='inicio' else reverse('masiscam:oficina_seccion',args=[section]))
-            self.assertContains(response,'aria-label="Oficina MASISCAM"')
+            self.assertContains(response,'aria-label="Sistema MASISCAM"')
             self.assertContains(response,'aria-label="Migas de pan"',count=1)
             self.assertContains(response,'<ol class="breadcrumb ',count=1)
-            for text in ('Inicio de oficina','Clientes','Cotizaciones','Compras','Ventas','Guías de envío'):
+            for text in ('Inicio de oficina','Clientes','Cotizaciones','Solicitudes de taller','Planos y piezas'):
                 self.assertContains(response,text)
-            for text in ('>Planos técnicos</a>','>Reductores</a>','>Proyectos</a>','>Trabajo técnico</a>','>Calibración y mediciones</a>'):
+            # Menú de OFICINA: estas opciones se ocultan, pero sus rutas siguen autorizadas (se recorren arriba).
+            nav=response.content.decode().split('<nav id="appMenu"',1)[1].split('</nav>',1)[0]
+            for text in ('Compras','Ventas','Guías de envío','Documentación comercial autorizada','Mi cuenta'):
+                self.assertNotIn(text,nav)
+            for text in ('>Planos técnicos</a>','>Proyectos</a>','>Trabajo técnico</a>','>Calibración y mediciones</a>'):
                 self.assertNotContains(response,text)
+            # Reductores solo aparece como opción del desplegable Productos, nunca como sección propia.
+            self.assertEqual(response.content.decode().count('>Reductores</a>'),1)
+            self.assertIn('>Reductores</a>',nav.split('app-products-list',1)[1])
         for role in ('TALLER','TECNICO','PLANTA','GERENCIA','ADMIN'):
             self.client.force_login(self.usuarios[role])
             self.assertEqual(self.client.get(reverse('masiscam:oficina_inicio')).status_code,403)
@@ -106,7 +113,8 @@ class OficinaTests(TestCase):
         recuperacion=get_user_model().objects.create_superuser(username='recuperacion-sin-rol-qa',password='Solo-QA-2026!',email='')
         self.client.force_login(recuperacion)
         self.assertEqual(self.client.post(reverse('accounts:seleccionar_empresa'),{'empresa_id':self.empresa.pk}).status_code,302)
-        self.assertEqual(self.client.get(reverse('masiscam:ficha_detalle',args=[self.equipo.pk])).status_code,200)
+        # Un superusuario sin asignación ADMINISTRADOR/TALLER/OFICINA no obtiene acceso operativo.
+        self.assertEqual(self.client.get(reverse('masiscam:ficha_detalle',args=[self.equipo.pk])).status_code,403)
         self.assertFalse(recuperacion.perfiles.exists())
         self.client.force_login(self.root)
         self.assertEqual(self.client.post(listado,dict(equipo_id=self.equipo.pk,estado='ACTIVO')).status_code,302)
@@ -121,7 +129,9 @@ class OficinaTests(TestCase):
         self.assertEqual(self.client.get(reverse('masiscam:ficha_crear')).status_code,403)
         self.oficina.is_superuser=True;self.oficina.is_staff=True;self.oficina.save()
         self.client.force_login(self.oficina)
-        for name,args in [('usuarios',[]),('proyectos',[]),('biblioteca',[]),
+        # Planos y piezas es una ventana autorizada de OFICINA; el resto sigue vedado.
+        self.assertEqual(self.client.get(reverse('masiscam:biblioteca')).status_code,200)
+        for name,args in [('usuarios',[]),('proyectos',[]),
                 ('tecnica_expediente',[self.exp.pk]),('calibracion_expediente',[self.exp.pk])]:
             self.assertEqual(self.client.get(reverse('masiscam:'+name,args=args)).status_code,403)
         self.assertIn(self.client.get(reverse('admin:index')).status_code,(302,403))

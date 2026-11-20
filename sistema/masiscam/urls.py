@@ -42,6 +42,7 @@ urlpatterns = [
     path('expedientes/<int:pk>/tecnico/documentos/<int:documento_pk>/',tecnica_views.tecnica_documento,name='tecnica_documento'),
     path('biblioteca-tecnica/',tecnica_views.biblioteca,name='biblioteca'),
     path('biblioteca-tecnica/importar-m20/',plano_views.plano_importar,name='plano_importar'),
+    path('biblioteca-tecnica/<int:pk>/repuestos/importar/',plano_views.repuestos_importar,name='repuestos_importar'),
     path('biblioteca-tecnica/<int:pk>/plano/',plano_views.plano,name='plano'),
     path('biblioteca-tecnica/<int:pk>/plano/datos/',plano_views.plano_datos,name='plano_datos'),
     path('biblioteca-tecnica/<int:pk>/plano/componentes/',plano_views.plano_componente,name='plano_componente'),

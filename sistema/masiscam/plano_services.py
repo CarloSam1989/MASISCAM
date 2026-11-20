@@ -1,6 +1,8 @@
 """Manual, versioned drawing maps. Existing technical services remain authoritative."""
 import csv
 import io
+import hashlib
+import json
 import uuid
 from decimal import Decimal, InvalidOperation
 
@@ -583,3 +585,108 @@ def importar_m20(*, usuario, empresa, proyecto_id, archivo, materiales, proceden
             clave=uuid.uuid5(uuid.UUID(str(clave)), 'parte-' + str(index)))
     tecnica._libevent(empresa, usuario, clave, 'PLANO_M20_IMPORTADO', payload, ref.pk)
     return ref
+
+
+# --- Importación de repuestos sobre un catálogo existente -------------------------------------
+_CAMPOS_REPUESTO = ('numero_parte', 'descripcion', 'unidad', 'pagina')
+
+
+def _catalogo_importable(usuario, empresa, referencia_id):
+    tecnica.autorizar_tecnica(usuario, empresa, {'ADMIN', 'OFICINA'})
+    ref = ReferenciaTecnica.objects.filter(pk=referencia_id, empresa=empresa).first()
+    if not ref or ref.tipo != 'PLANO' or ref.expediente_trabajo_id:
+        raise ValidationError('Seleccione un catálogo de plano de la biblioteca.')
+    return ref
+
+
+def previsualizar_repuestos(*, usuario, empresa, referencia_id, materiales):
+    """Compara el Excel (ya convertido a CSV) con las partes del catálogo, sin escribir nada.
+
+    La identidad estable de una pieza es su posición dentro del plano (única por catálogo); la
+    descripción nunca identifica una fila. Una celda vacía del Excel no borra lo ya corregido."""
+    ref = _catalogo_importable(usuario, empresa, referencia_id)
+    existentes = {p.posicion: p for p in ref.partes.all()}
+    vista = dict(referencia=ref.pk, estado=ref.estado, nuevos=[], existentes=[], modificados=[], errores=[],
+                 ausentes=[], publicada=ref.estado == 'PUBLICADA')
+    try:
+        filas = leer_materiales(materiales, permitir_incompletas=True)
+    except ValidationError as exc:
+        vista['errores'] = list(exc.messages)
+        filas = []
+    vistas = set()
+    for fila in filas:
+        parte = existentes.get(fila['posicion'])
+        vistas.add(fila['posicion'])
+        if parte is None:
+            vista['nuevos'].append(dict(fila, incompleta=not fila['descripcion']))
+            continue
+        cambios = {}
+        for campo in _CAMPOS_REPUESTO:
+            if fila[campo] and fila[campo] != getattr(parte, campo):
+                cambios[campo] = [getattr(parte, campo), fila[campo]]
+        if fila['cantidad_referencia'] is not None and fila['cantidad_referencia'] != parte.cantidad_referencia:
+            cambios['cantidad_referencia'] = [str(parte.cantidad_referencia or ''), str(fila['cantidad_referencia'])]
+        (vista['modificados'] if cambios else vista['existentes']).append(
+            dict(fila, id=parte.pk, cambios=cambios, incompleta=not (fila['descripcion'] or parte.descripcion)))
+    vista['ausentes'] = sorted(set(existentes) - vistas)
+    if ref.estado not in {'BORRADOR', 'PUBLICADA'}:
+        vista['errores'].append('Un catálogo retirado no admite importaciones.')
+    estado = [[p.pk, p.posicion, p.numero_parte, p.descripcion, p.unidad, str(p.cantidad_referencia), p.pagina]
+              for p in sorted(existentes.values(), key=lambda p: p.pk)]
+    # Los navegadores envían los saltos de línea de un textarea como CRLF: no deben alterar la huella.
+    vista['huella'] = hashlib.sha256(json.dumps([ref.pk, ref.estado, materiales.replace('\r\n', '\n'), estado],
+        sort_keys=True, default=str).encode()).hexdigest()
+    vista['conteos'] = {k: len(vista[k]) for k in ('nuevos', 'existentes', 'modificados', 'errores', 'ausentes')}
+    return vista
+
+
+def _heredar_marcadores(origen, destino, usuario, empresa, clave):
+    mapa = origen.mapas.order_by('-version').first()
+    if not mapa:
+        return
+    por_posicion = {p.posicion: p for p in destino.partes.all()}
+    posiciones = [dict(parte=por_posicion[p.parte.posicion].pk, pagina=p.pagina, x=str(p.x), y=str(p.y))
+                  for p in mapa.posiciones.select_related('parte') if p.parte.posicion in por_posicion]
+    if posiciones:
+        guardar_mapa(usuario=usuario, empresa=empresa, referencia_id=destino.pk, base_version=0,
+                     posiciones=posiciones, clave=uuid.uuid5(clave, 'marcadores'))
+
+
+@transaction.atomic
+def aplicar_repuestos(*, usuario, empresa, referencia_id, materiales, huella, clave):
+    """Aplica lo previsualizado. Borrador: actualiza por identificador de parte. Publicado: nunca se
+    sobrescribe; se crea una nueva revisión (servicios existentes) con sus marcadores heredados."""
+    tecnica._liblock(usuario, empresa, {'ADMIN', 'OFICINA'})
+    clave = uuid.UUID(str(clave))
+    payload = dict(referencia=referencia_id, huella=huella)
+    previo = tecnica._libretry(empresa, clave, 'BIBLIOTECA_REPUESTOS_IMPORTADOS', payload)
+    if previo:
+        return ReferenciaTecnica.objects.get(pk=previo)
+    vista = previsualizar_repuestos(usuario=usuario, empresa=empresa, referencia_id=referencia_id, materiales=materiales)
+    if vista['errores']:
+        raise ValidationError(vista['errores'])
+    if vista['huella'] != huella:
+        raise ValidationError('El catálogo o el archivo cambió desde la vista previa; revise de nuevo.')
+    if not vista['nuevos'] and not vista['modificados']:
+        raise ValidationError('No hay registros nuevos ni modificados que importar.')
+    ref = ReferenciaTecnica.objects.get(pk=referencia_id, empresa=empresa)
+    destino = ref
+    if ref.estado == 'PUBLICADA':
+        datos = {c: getattr(ref, c) for c in ('codigo', 'tipo', 'titulo', 'marca', 'modelo', 'operacion', 'rotacion',
+                 'ratio', 'version_fabricante', 'procedencia', 'autorizacion_uso')}
+        datos.update(documento_id=ref.documento_id, sustituye_id=ref.pk)
+        destino = tecnica.guardar_referencia(usuario=usuario, empresa=empresa, clave=uuid.uuid5(clave, 'revision'),
+                                             datos=datos)
+        _heredar_marcadores(ref, destino, usuario, empresa, clave)
+    actuales = {p.posicion: p for p in destino.partes.all()}
+    for fila in vista['nuevos'] + vista['modificados']:
+        parte = actuales.get(fila['posicion'])
+        datos = {c: (fila[c] or (getattr(parte, c) if parte else '')) for c in _CAMPOS_REPUESTO}
+        cantidad = fila['cantidad_referencia'] if fila['cantidad_referencia'] is not None else (
+            parte.cantidad_referencia if parte else None)
+        tecnica.guardar_parte(usuario=usuario, empresa=empresa, referencia_id=destino.pk, clave=uuid.uuid5(clave, 'parte-' + fila['posicion']),
+            datos=dict(datos, posicion=fila['posicion'], cantidad_referencia=cantidad),
+            parte_id=parte.pk if parte else None)
+    tecnica._libevent(empresa, usuario, clave, 'BIBLIOTECA_REPUESTOS_IMPORTADOS',
+        dict(payload, resumen=vista['conteos'], destino=destino.pk), destino.pk)
+    return destino

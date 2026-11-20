@@ -1,0 +1,25 @@
+{% extends 'masiscam/base.html' %}{% block content %}
+<div class="container-fluid px-3 px-lg-4 py-3">
+  <a href="{% url 'masiscam:biblioteca_referencia' referencia.pk %}#repuestos">← {{ referencia.codigo }} r{{ referencia.revision }}</a>
+  <h1 class="h3 mt-2">Importar repuestos desde Excel</h1>
+  <p class="text-muted">Catálogo: <strong>{{ referencia.marca }} {{ referencia.modelo }}</strong> · {{ referencia.get_estado_display }}. Columnas: PARTE #, UNITS, CODIGO, DESCRIPCION y CHECK. Cada fila se identifica por su posición en el plano; una celda vacía no borra lo ya corregido.</p>
+  {% if referencia.estado == 'PUBLICADA' %}<div class="alert alert-info">Este catálogo está publicado: no se sobrescribe. Al confirmar se creará una nueva revisión en borrador con sus marcadores, y deberá enviarse a ADMINISTRADOR.</div>{% endif %}
+  {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" enctype="multipart/form-data" class="card masiscam-card card-body mb-3 mc-filtros-producto">{% csrf_token %}<input type="hidden" name="op" value="previsualizar">
+    <div class="mc-filtro-buscar"><label class="form-label" for="excel">Archivo Excel (.xlsx, máx. 2 MB)</label><input id="excel" class="form-control" type="file" name="excel" accept=".xlsx" required></div>
+    <button class="btn btn-primary">Ver vista previa</button>
+  </form>
+  {% if vista %}
+  <section aria-label="Vista previa">
+    <div class="d-flex flex-wrap gap-2 mb-3"><span class="badge text-bg-success">Nuevos: {{ vista.conteos.nuevos }}</span><span class="badge text-bg-warning">Modificados: {{ vista.conteos.modificados }}</span><span class="badge text-bg-secondary">Sin cambios: {{ vista.conteos.existentes }}</span><span class="badge text-bg-danger">Errores: {{ vista.conteos.errores }}</span>{% if vista.ausentes %}<span class="badge text-bg-light border">No incluidos en el Excel (se conservan): {{ vista.ausentes|length }}</span>{% endif %}</div>
+    {% if vista.errores %}<div class="alert alert-danger"><strong>Errores:</strong><ul class="mb-0">{% for e in vista.errores %}<li>{{ e }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if vista.nuevos %}<h2 class="h5">Registros nuevos</h2><div class="card masiscam-card mb-3" data-tabla-estatica><div class="table-responsive"><table class="table mb-0 mc-tabla-producto"><thead><tr><th>Posición</th><th>Código</th><th>Descripción</th><th>Unidad</th><th>Cantidad</th></tr></thead><tbody>{% for f in vista.nuevos %}<tr{% if f.incompleta %} class="table-warning"{% endif %}><td>{{ f.posicion }}</td><td>{{ f.numero_parte|default:'—' }}</td><td>{{ f.descripcion|default:'Sin descripción: complétela luego' }}</td><td>{{ f.unidad|default:'—' }}</td><td>{{ f.cantidad_referencia|default_if_none:'—' }}</td></tr>{% endfor %}</tbody></table></div></div>{% endif %}
+    {% if vista.modificados %}<h2 class="h5">Registros modificados</h2><div class="card masiscam-card mb-3" data-tabla-estatica><div class="table-responsive"><table class="table mb-0 mc-tabla-producto"><thead><tr><th>Posición</th><th>Campo</th><th>Actual</th><th>Excel</th></tr></thead><tbody>{% for f in vista.modificados %}{% for campo, par in f.cambios.items %}<tr><td>{{ f.posicion }}</td><td>{{ campo }}</td><td>{{ par.0|default:'—' }}</td><td>{{ par.1 }}</td></tr>{% endfor %}{% endfor %}</tbody></table></div></div>{% endif %}
+    {% if vista.existentes %}<details class="mb-3"><summary>Registros existentes sin cambios ({{ vista.existentes|length }})</summary><p class="mb-0">{% for f in vista.existentes %}{{ f.posicion }}{% if not forloop.last %}, {% endif %}{% endfor %}</p></details>{% endif %}
+    {% if not vista.errores and vista.nuevos or not vista.errores and vista.modificados %}
+    <form method="post" class="d-flex flex-wrap gap-2">{% csrf_token %}<input type="hidden" name="op" value="aplicar"><input type="hidden" name="huella" value="{{ vista.huella }}"><input type="hidden" name="clave" value="{{ clave }}"><textarea name="materiales" hidden>{{ materiales }}</textarea>
+      <button class="btn btn-primary">{% if referencia.estado == 'PUBLICADA' %}Crear nueva revisión con estos cambios{% else %}Aplicar al borrador{% endif %}</button><a class="btn btn-outline-secondary" href="{% url 'masiscam:biblioteca_referencia' referencia.pk %}">Cancelar</a></form>
+    {% elif not vista.errores %}<div class="alert alert-secondary">No hay registros nuevos ni modificados.</div>{% endif %}
+  </section>
+  {% endif %}
+</div>{% endblock %}

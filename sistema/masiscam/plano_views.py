@@ -343,3 +343,42 @@ def plano_importar(request):
             form.add_error(None, ' '.join(exc.messages) if isinstance(exc, ValidationError) else 'No se confirmó la importación.')
     return render(request, 'masiscam/plano_importar.html', {'form': form, 'filas': rows},
         status=400 if form.errors else 200)
+
+
+@require_http_methods(['GET', 'POST'])
+@local
+@masiscam_access_required
+def repuestos_importar(request, pk):
+    """Excel de repuestos sobre un catálogo existente: vista previa y confirmación explícita."""
+    from django.contrib import messages
+    tecnica.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN', 'OFICINA'})
+    ref = get_object_or_404(tecnica.referencias_visibles(request.user, request.empresa_activa), pk=pk, tipo='PLANO')
+    vista, materiales, error = None, '', None
+    if request.method == 'POST':
+        try:
+            if request.POST.get('op') == 'previsualizar':
+                excel = request.FILES.get('excel')
+                if not excel or not excel.name.lower().endswith('.xlsx'):
+                    raise ValidationError('Seleccione un archivo .xlsx.')
+                materiales = svc.leer_excel_materiales(excel)
+                vista = svc.previsualizar_repuestos(usuario=request.user, empresa=request.empresa_activa,
+                    referencia_id=ref.pk, materiales=materiales)
+            elif request.POST.get('op') == 'aplicar':
+                materiales = request.POST.get('materiales', '')
+                destino = svc.aplicar_repuestos(usuario=request.user, empresa=request.empresa_activa, referencia_id=ref.pk,
+                    materiales=materiales, huella=request.POST.get('huella', ''), clave=request.POST.get('clave', ''))
+                messages.success(request, 'Repuestos importados' + (' en una nueva revisión borrador; la versión publicada no se modificó.'
+                    if destino.pk != ref.pk else ' en el borrador del catálogo.'))
+                return redirect('masiscam:biblioteca_referencia', pk=destino.pk)
+            else:
+                raise ValidationError('Operación inválida.')
+        except (ValidationError, IntegrityError, OSError, ValueError) as exc:
+            error = ' '.join(exc.messages) if isinstance(exc, ValidationError) else 'No se pudo importar el archivo.'
+            if request.POST.get('op') == 'aplicar':
+                try:
+                    vista = svc.previsualizar_repuestos(usuario=request.user, empresa=request.empresa_activa,
+                        referencia_id=ref.pk, materiales=materiales)
+                except ValidationError:
+                    vista = None
+    return render(request, 'masiscam/plano_repuestos_importar.html', dict(referencia=ref, vista=vista,
+        materiales=materiales, clave=uuid.uuid4(), error=error), status=400 if error else 200)

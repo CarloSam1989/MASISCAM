@@ -126,12 +126,12 @@ class CierreTests(TestCase):
 
     def test_autoaprobacion_tras_cambio_rol(self):
         em=self.emitido()
-        RolMasiscam.objects.filter(perfil__user=self.tecnico,perfil__empresa=self.empresa).update(rol='PLANTA')
+        RolMasiscam.objects.filter(perfil__user=self.tecnico,perfil__empresa=self.empresa).update(rol='ADMIN')
         with self.assertRaises(PermissionDenied): s.revisar(usuario=self.tecnico,empresa=self.empresa,informe_id=em.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='Intento QA')
 
     def test_autor_oficina_no_aprueba_cambiando_rol(self):
         em=self.emitido()
-        RolMasiscam.objects.filter(perfil__user=self.oficina,perfil__empresa=self.empresa).update(rol='PLANTA')
+        RolMasiscam.objects.filter(perfil__user=self.oficina,perfil__empresa=self.empresa).update(rol='ADMIN')
         with self.assertRaises(PermissionDenied): s.revisar(usuario=self.oficina,empresa=self.empresa,informe_id=em.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='Intento QA')
 
     def test_roles_y_aislamiento(self):
@@ -224,7 +224,9 @@ class CierreTests(TestCase):
         client=Client();client.force_login(self.oficina)
         with override_settings(MASISCAM_CIERRE_LOCAL=False): self.assertEqual(client.get(reverse('masiscam:cierre_dashboard')).status_code,404)
         u=usuario(self.empresa,'cliente-final-qa','CONSULTA')
-        RolMasiscam.objects.filter(perfil__user=u,perfil__empresa=self.empresa).update(rol='CLIENTE',cliente=self.exp.cliente_contractual)
+        # El rol CLIENTE ya no puede asignarse (guarda de base); el usuario sin acceso operativo de cliente no ve el historial.
+        with self.assertRaises(IntegrityError),transaction.atomic():
+            RolMasiscam.objects.filter(perfil__user=u,perfil__empresa=self.empresa).update(rol='CLIENTE',cliente=self.exp.cliente_contractual)
         client.force_login(u)
         self.assertEqual(client.get(reverse('masiscam:cierre_historial',args=[self.exp.registro.equipo_id])).status_code,403)
 

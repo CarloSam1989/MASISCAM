@@ -21,7 +21,7 @@ def menu_compartido(context):
             item('Mis trabajos','taller_estado'),item('Planos y piezas','biblioteca'),item('Mi cuenta','taller_cuenta')]
     elif rol=='OFICINA':
         from masiscam.oficina_views import SECCIONES
-        items=[item('Inicio','oficina_inicio'),item('Clientes','clientes')]+[item(label,'oficina_seccion',[key]) for key,label in SECCIONES.items()]
+        items=[item('Inicio','oficina_inicio'),item('Clientes','clientes')]+[item(label,'oficina_seccion',[key]) for key,label in SECCIONES.items() if key in {'solicitudes','cotizaciones'}]
         if settings.MASISCAM_TECNICA_LOCAL:items.append(item('Planos y piezas','biblioteca'))
     elif rol=='ADMIN':
         items=[item('Inicio','dashboard'),
