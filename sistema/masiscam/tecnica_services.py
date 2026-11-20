@@ -514,20 +514,24 @@ def referencias_visibles(usuario,empresa):
     qs=ReferenciaTecnica.objects.filter(empresa=empresa)
     if rol.rol not in {'ADMIN', 'OFICINA'}:
         qs=qs.exclude(estado='BORRADOR')
+    # Cada condición multivaluada va en su propia subconsulta por id: un solo filtro con OR sobre varios JOIN
+    # (partes, piezas, citas, aplicabilidades) multiplicaba filas y tardaba ~18 s incluso con datos mínimos.
+    def _ids(**filtros):
+        return ReferenciaTecnica.objects.filter(empresa=empresa,**filtros).values('pk')
     if rol.rol in OPERADORES:
         equipos=AsignacionTecnica.objects.filter(tecnico=usuario,fin__isnull=True,expediente__empresa=empresa).values('expediente__registro__equipo_id')
         # Retired historical sources remain available only if cited in an
         # assigned maintenance, not simply because an old applicability exists.
-        qs=qs.filter(Q(estado='PUBLICADA',aplicabilidades__activa=True,aplicabilidades__equipo_id__in=equipos)|
-            Q(partes__piezarequerida__diagnostico__expediente__asignaciones_tecnicas__tecnico=usuario,
-              partes__piezarequerida__diagnostico__expediente__asignaciones_tecnicas__fin__isnull=True)|
-            Q(citas_tecnicas__diagnostico__expediente__asignaciones_tecnicas__tecnico=usuario,citas_tecnicas__diagnostico__expediente__asignaciones_tecnicas__fin__isnull=True)|
-            Q(citas_tecnicas__inspeccion__expediente__asignaciones_tecnicas__tecnico=usuario,citas_tecnicas__inspeccion__expediente__asignaciones_tecnicas__fin__isnull=True))
+        activa=dict(asignaciones_tecnicas__tecnico=usuario,asignaciones_tecnicas__fin__isnull=True)
+        qs=qs.filter(Q(pk__in=_ids(estado='PUBLICADA',aplicabilidades__activa=True,aplicabilidades__equipo_id__in=equipos))|
+            Q(pk__in=_ids(**{'partes__piezarequerida__diagnostico__expediente__'+k:v for k,v in activa.items()}))|
+            Q(pk__in=_ids(**{'citas_tecnicas__diagnostico__expediente__'+k:v for k,v in activa.items()}))|
+            Q(pk__in=_ids(**{'citas_tecnicas__inspeccion__expediente__'+k:v for k,v in activa.items()})))
     if rol.rol == 'TALLER':
         scope = expedientes_operativos(usuario, empresa)
-        qs = qs.filter(Q(estado='PUBLICADA', aplicabilidades__activa=True, aplicabilidades__equipo_id__in=scope.values('registro__equipo_id')) |
-            Q(partes__piezarequerida__diagnostico__expediente__in=scope) |
-            Q(citas_tecnicas__diagnostico__expediente__in=scope) | Q(citas_tecnicas__inspeccion__expediente__in=scope))
+        qs = qs.filter(Q(pk__in=_ids(estado='PUBLICADA', aplicabilidades__activa=True, aplicabilidades__equipo_id__in=scope.values('registro__equipo_id'))) |
+            Q(pk__in=_ids(partes__piezarequerida__diagnostico__expediente__in=scope)) |
+            Q(pk__in=_ids(citas_tecnicas__diagnostico__expediente__in=scope)) | Q(pk__in=_ids(citas_tecnicas__inspeccion__expediente__in=scope)))
     if rol.rol in {'TALLER', 'ADMIN'}:
         provisionales = ReferenciaTecnica.objects.filter(empresa=empresa, estado='BORRADOR',
             expediente_trabajo__in=expedientes_operativos(usuario, empresa))

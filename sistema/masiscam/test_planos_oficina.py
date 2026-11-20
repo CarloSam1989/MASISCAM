@@ -464,6 +464,9 @@ class RegistroReductorCatalogoTests(TestCase):
         equipo = Equipo.objects.get(numero_serie='A-1')
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo)
         self.assertEqual(len(res['candidatos']), 2)
+        from . import plano_services as ps
+        busq = lambda: ps.buscar_parte_catalogo(usuario=self.tecnico, empresa=self.empresa, equipo=equipo, posicion='1')
+        self.assertEqual(busq()['estado'], 'ambigua')  # no se elige una revisión por el usuario
         self.assertFalse(any(c.aprobada for c in res['candidatos']))
         self.assertFalse(equipo.aplicabilidades.exists() if hasattr(equipo, 'aplicabilidades') else
                          ReferenciaTecnica.objects.filter(aplicabilidades__equipo=equipo).exists())
@@ -477,6 +480,8 @@ class RegistroReductorCatalogoTests(TestCase):
         self.assertEqual(self.client.post(url, {'referencia': elegido}).status_code, 302)
         self.assertEqual(list(ReferenciaTecnica.objects.filter(aplicabilidades__equipo=equipo, aplicabilidades__activa=True).values_list('pk', flat=True)), [elegido])
         self.assertTrue(Auditoria.objects.filter(accion='BIBLIOTECA_APLICABILIDAD_SELECCIONADA', usuario=self.tecnico).exists())
+        r = busq()  # con la revisión elegida, el autocompletado usa solo esa
+        self.assertEqual((r['estado'], r['referencia']['codigo'], r['codigo']), ('encontrada', self.refs[''].codigo, 'QA-1'))
         self.assertEqual(self.client.post(url, {'referencia': elegido}).status_code, 302)  # sin duplicar
         self.assertEqual(ReferenciaTecnica.objects.filter(aplicabilidades__equipo=equipo).count(), 1)
 

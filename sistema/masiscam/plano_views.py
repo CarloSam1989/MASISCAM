@@ -374,3 +374,18 @@ def repuestos_importar(request, pk):
                     vista = None
     return render(request, 'masiscam/plano_repuestos_importar.html', dict(referencia=ref, vista=vista,
         materiales=materiales, clave=uuid.uuid4(), error=error), status=400 if error else 200)
+
+
+@require_GET
+@local
+@masiscam_access_required
+@errores_api
+def plano_catalogo_parte(request, pk):
+    """Consulta de solo lectura: datos de una posición en el catálogo activo vinculado al equipo del trabajo."""
+    raw = request.GET.get('diagnostico', '')
+    if not raw.isascii() or not raw.isdecimal() or len(raw) > 18:
+        raise Http404
+    diag = get_object_or_404(Diagnostico, pk=int(raw), expediente__empresa=request.empresa_activa)
+    exp = tecnica.expediente_autorizado(request.user, request.empresa_activa, diag.expediente_id, {'TALLER'}, False)  # solo lectura
+    return JsonResponse(svc.buscar_parte_catalogo(usuario=request.user, empresa=request.empresa_activa,
+                                                  equipo=exp.registro.equipo, posicion=request.GET.get('posicion', '')))

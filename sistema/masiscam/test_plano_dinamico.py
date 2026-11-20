@@ -52,6 +52,53 @@ class PlanoDinamicoTests(DinamicoFixture, TestCase):
         self.assertEqual(self.exp.diagnostico_set.count(),1)
         self.assertEqual(Documento.objects.count(),documentos)
 
+    def test_autocompleta_desde_catalogo_vinculado_sin_modificarlo(self):
+        from decimal import Decimal
+        from . import tecnica_services as tecnica
+        from .test_tecnica import pdf_plano
+        self.cargar()
+        base = dict(usuario=self.admin, empresa=self.empresa)
+        cat = tecnica.guardar_referencia(**base, clave=uuid.uuid4(), archivo=pdf_plano(), datos=dict(codigo='CAT-AUTO', tipo='PLANO',
+            titulo='Catálogo QA', marca='M', modelo='X', rotacion='#1', ratio='3:1', procedencia='QA', autorizacion_uso='QA',
+            proyecto_id=self.equipo.proyecto_id))
+        tecnica.guardar_parte(**base, referencia_id=cat.pk, clave=uuid.uuid4(), datos=dict(posicion='4', descripcion='Rodamiento de catálogo',
+            numero_parte='COD-4', unidad='u', cantidad_referencia='3'))
+        url = reverse('masiscam:plano_catalogo_parte', args=[self.ref.pk])
+        def consulta(pos):
+            # La consulta es de solo lectura: select_for_update fuera de una transacción daría 500 en producción.
+            from unittest.mock import patch
+            with patch('django.db.models.query.QuerySet.select_for_update', side_effect=AssertionError('bloqueo en consulta')):
+                return self.client.get(url, {'diagnostico': self.diag.pk, 'posicion': pos})
+        # Sin catálogo vinculado aún.
+        self.assertEqual(consulta('4').json()['estado'], 'sin_catalogo')
+        tecnica.estado_referencia(**base, referencia_id=cat.pk, estado='PUBLICADA', clave=uuid.uuid4())
+        tecnica.aplicar_referencia(**base, referencia_id=cat.pk, equipo_id=self.equipo.pk, fundamento='Vínculo QA', clave=uuid.uuid4())
+        self.client.force_login(self.taller)
+        r = consulta(' 4 ').json()
+        self.assertEqual((r['estado'], r['codigo'], r['descripcion'], r['unidad'], Decimal(r['cantidad_referencia']), r['referencia']),
+                         ('encontrada', 'COD-4', 'Rodamiento de catálogo', 'u', Decimal('3'), dict(codigo='CAT-AUTO', revision=1)))
+        self.assertEqual(consulta('99').json()['estado'], 'sin_posicion')  # coincidencia exacta de posición
+        self.assertEqual(consulta('').status_code, 400)
+        self.assertEqual(self.client.get(url, {'diagnostico': 'x', 'posicion': '4'}).status_code, 404)
+        self.client.force_login(self.oficina)
+        self.assertEqual(consulta('4').status_code, 403)
+        self.client.force_login(self.taller)
+        # Al guardar, el código y la cantidad referencial salen del catálogo; el maestro no cambia.
+        self.assertEqual(self.guardar(posicion='4', descripcion='Rodamiento de catálogo', unidad='').status_code, 200)
+        parte = self.ref.partes.get(posicion='4')
+        self.assertEqual((parte.numero_parte, parte.unidad, parte.cantidad_referencia, parte.referencia_id), ('COD-4', 'u', Decimal('3'), self.ref.pk))
+        maestro = cat.partes.get()
+        self.assertEqual((maestro.numero_parte, maestro.descripcion, cat.partes.count()), ('COD-4', 'Rodamiento de catálogo', 1))
+        self.assertEqual(self.diag.piezas.count(), 1)
+        # Repetir el número no duplica componente ni pieza.
+        self.assertEqual(self.guardar(posicion='4', descripcion='Rodamiento de catálogo', x='.2', y='.2').status_code, 200)
+        self.assertEqual((self.ref.partes.filter(posicion='4').count(), self.diag.piezas.count()), (1, 1))
+        # Una posición ausente se registra a mano, sin código ni cambios en el catálogo.
+        self.assertEqual(self.guardar(posicion='99', descripcion='Pieza manual', x='.5', y='.5').status_code, 200)
+        manual = self.ref.partes.get(posicion='99')
+        self.assertEqual((manual.numero_parte, manual.cantidad_referencia), ('', None))
+        self.assertEqual(cat.partes.count(), 1)
+
     def test_posicion_con_fotos_atomica_reintento_y_ux_sin_duplicados(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         self.cargar()

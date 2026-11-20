@@ -287,7 +287,54 @@ if (root) {
     const piece=state.data.piezas.find(item=>item.parte===part?.id);
     positionForm.elements.cantidad.value=quantity(piece?.cantidad||part?.cantidad_seleccion||part?.cantidad||'');
     positionForm.elements.condicion.value=piece?.condicion||'';
+    const code=$('#pl-position-code');if(code)code.value=part?.codigo||'';
   }
+  // --- Autocompletado desde el catálogo activo vinculado al equipo (solo lectura, no modifica el catálogo) ---
+  const touched={descripcion:false,unidad:false},auto={descripcion:'',unidad:''};let lookupSeq=0,lookupTimer=null;
+  function resetCatalogo(){touched.descripcion=touched.unidad=false;auto.descripcion=auto.unidad='';lookupSeq++;clearTimeout(lookupTimer);
+    for(const id of ['#pl-position-code','#pl-position-refqty']){const input=$(id);if(input)input.value='';}
+    const status=$('#pl-position-catalog');if(status){status.textContent='';status.classList.remove('text-danger');}}
+  // Rellena solo campos vacíos o que aún tienen el valor precargado antes; lo que TALLER escribió nunca se pisa.
+  function aplicarAuto(nuevo){
+    for(const nombre of ['descripcion','unidad']){const campo=positionForm.elements[nombre];
+      if(campo.readOnly)continue;
+      if(campo.value.trim()===''||(!touched[nombre]&&campo.value===auto[nombre])){campo.value=nuevo[nombre];auto[nombre]=nuevo[nombre];touched[nombre]=false;}}
+    if(nuevo.unidad)positionForm.querySelectorAll('details').forEach(section=>{section.open=true;});
+  }
+  async function consultarCatalogo(posicion,rellenar){
+    const url=root.dataset.catalogoParte,status=$('#pl-position-catalog'),number=String(posicion||'').trim();
+    if(!url||!status||!number)return;
+    const mine=++lookupSeq;status.classList.remove('text-danger');status.textContent='Buscando en el catálogo…';
+    try{
+      const response=await fetch(url+'&posicion='+encodeURIComponent(number),{credentials:'same-origin',headers:{'Accept':'application/json'}});
+      const data=await response.json().catch(()=>({error:'No se pudo completar la operación. Revise su acceso o recargue.'}));
+      if(mine!==lookupSeq||String(positionForm.elements.posicion.value).trim()!==number)return;  // llegó una respuesta vieja
+      if(!response.ok)throw new Error(data.error||'No se pudo consultar el catálogo.');
+      const code=$('#pl-position-code'),qty=$('#pl-position-refqty');
+      if(data.estado==='encontrada'){
+        code.value=data.codigo||'';qty.value=quantity(data.cantidad_referencia||'');
+        if(rellenar)aplicarAuto({descripcion:data.descripcion||'',unidad:data.unidad||''});
+        status.textContent=data.mensaje+' Complete la cantidad requerida, el daño o condición y las fotografías.';
+      }else{
+        code.value='';qty.value='';if(rellenar)aplicarAuto({descripcion:'',unidad:''});
+        status.textContent=(data.mensaje||'Sin datos de catálogo.')+(data.estado==='sin_posicion'||data.estado==='sin_catalogo'?' Puede registrarla como pieza nueva; el catálogo no se modifica.':'');
+      }
+    }catch(error){if(mine===lookupSeq){status.classList.add('text-danger');status.textContent='No se pudo consultar el catálogo: '+error.message+' Puede continuar con el registro manual.';}}
+  }
+  function posicionEscrita(){
+    const number=positionForm.elements.posicion.value.trim();
+    if(positionForm.elements.posicion.readOnly||!number)return;
+    // Si ya existe en este plano, se usa ese componente (evita duplicados); si no, se consulta el catálogo.
+    const existente=state.data.partes.find(item=>item.posicion===number);
+    if(existente&&String(existente.id)!==positionForm.elements.parte_id.value){positionForm.elements.parte_id.value=existente.id;fillPositionPart(existente);consultarCatalogo(number,false);return;}
+    if(!existente&&positionForm.elements.parte_id.value===''){consultarCatalogo(number,true);}
+  }
+  positionForm?.elements.posicion.addEventListener('input',()=>{clearTimeout(lookupTimer);lookupTimer=setTimeout(posicionEscrita,350);});
+  positionForm?.elements.posicion.addEventListener('change',()=>{clearTimeout(lookupTimer);posicionEscrita();});
+  positionForm?.elements.descripcion.addEventListener('input',()=>{touched.descripcion=true;});
+  positionForm?.elements.unidad.addEventListener('input',()=>{touched.unidad=true;});
+  positionForm?.elements.fotografias.addEventListener('change',event=>{
+    if(event.target.files.length>6){event.target.value='';const box=$('#pl-position-error');box.hidden=false;box.textContent='Máximo 6 fotografías por guardado.';}});
   function openPosition(coords, point=null) {
     if(!positionDialog || !state.data.marcable || state.saving) return;
     positionForm.reset();$('#pl-position-error').hidden=true;positionKey=crypto.randomUUID();
@@ -299,12 +346,15 @@ if (root) {
     positionForm.elements.punto_id.value=point?.id||'';
     const part=point?state.data.partes.find(item=>item.id===point.parte):null;
     positionForm.elements.parte_id.value=part?.id||'';fillPositionPart(part);
+    resetCatalogo();if(part)consultarCatalogo(part.posicion,false);
     $('#pl-position-title').textContent=point?'Editar posición provisional':'Registrar pieza en el plano';
     $('#pl-position-move').hidden=!point;
     $('#pl-position-move').onclick=()=>{pending.add(positionForm);movingPoint=point;movingValues={...Object.fromEntries(new FormData(positionForm)),photos:Array.from(positionForm.elements.fotografias.files)};positionDialog.close();message('Pulsa la nueva ubicación en el PDF.');};
     positionDialog.showModal();positionForm.elements[part?'cantidad':'posicion'].focus();
   }
-  positionForm?.elements.parte_id.addEventListener('change',event=>fillPositionPart(state.data.partes.find(p=>String(p.id)===event.target.value)));
+  positionForm?.elements.parte_id.addEventListener('change',event=>{
+    const part=state.data.partes.find(p=>String(p.id)===event.target.value);fillPositionPart(part);
+    $('#pl-position-refqty').value='';if(part)consultarCatalogo(part.posicion,false);else resetCatalogo();});
   $('#pl-position-cancel')?.addEventListener('click',()=>closeSheet(positionForm,positionDialog));
   positionDialog?.addEventListener('cancel',event=>{event.preventDefault();closeSheet(positionForm,positionDialog);});
   positionForm?.addEventListener('submit',async event=>{

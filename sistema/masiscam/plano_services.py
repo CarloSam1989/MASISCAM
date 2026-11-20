@@ -157,6 +157,41 @@ def cargar_plano_trabajo(*, usuario, empresa, expediente_id, clave, archivo):
     return ref
 
 
+def buscar_parte_catalogo(*, usuario, empresa, equipo, posicion):
+    """Busca una posición exacta en el catálogo activo vinculado (aplicabilidad vigente) al equipo, solo lectura."""
+    tecnica.autorizar_tecnica(usuario, empresa, {'TALLER'})
+    posicion = (posicion or '').strip()
+    if not posicion or len(posicion) > 80:
+        raise ValidationError('Indique el número en el dibujo (máximo 80 caracteres).')
+    if equipo.proyecto.empresa_id != empresa.pk:
+        raise PermissionDenied('Equipo de otra empresa.')
+    vigentes = []
+    for ref in ReferenciaTecnica.objects.filter(empresa=empresa, tipo='PLANO', estado='PUBLICADA', expediente_trabajo__isnull=True,
+            aplicabilidades__equipo=equipo, aplicabilidades__activa=True).distinct():
+        if not ReferenciaTecnica.objects.filter(empresa=empresa, codigo=ref.codigo, estado__in=['PUBLICADA', 'RETIRADA'],
+                revision__gt=ref.revision).exists():
+            vigentes.append(ref)
+    if not vigentes:
+        from . import tecnica_services as _t
+        compatibles = _t.catalogos_activos_compatibles(empresa, marca=equipo.marca or equipo.fabricante, modelo=equipo.modelo,
+            ratio=equipo.ratio, rotacion=equipo.rotacion, operacion=equipo.operacion).count()
+        if compatibles > 1:  # la elección de revisión es explícita (ficha del equipo → «Usar esta revisión»)
+            return dict(estado='ambigua', mensaje='Hay varias revisiones o catálogos compatibles con este equipo: '
+                        'seleccione cuál usar en la ficha del equipo («Usar esta revisión»).')
+        return dict(estado='sin_catalogo', mensaje='El equipo no tiene un catálogo activo vinculado en Planos y piezas.')
+    if len(vigentes) > 1:
+        return dict(estado='ambigua', mensaje='Hay varios catálogos activos vinculados al equipo; elija la revisión en la ficha del equipo.')
+    ref = vigentes[0]
+    referencia = dict(codigo=ref.codigo, revision=ref.revision)
+    parte = ref.partes.filter(posicion=posicion).first()
+    if not parte:
+        return dict(estado='sin_posicion', referencia=referencia,
+                    mensaje=f'La posición {posicion} no existe en el catálogo {ref.codigo} r{ref.revision}.')
+    return dict(estado='encontrada', referencia=referencia, codigo=parte.numero_parte, descripcion=parte.descripcion,
+                unidad=parte.unidad, cantidad_referencia='' if parte.cantidad_referencia is None else str(parte.cantidad_referencia),
+                mensaje=f'Datos del catálogo {ref.codigo} r{ref.revision}.')
+
+
 @transaction.atomic
 def registrar_componente_trabajo(*, usuario, empresa, referencia_id, diagnostico_id, clave, datos):
     from .models import ParteReferenciaTecnica
@@ -172,7 +207,7 @@ def registrar_componente_trabajo(*, usuario, empresa, referencia_id, diagnostico
     tecnica.seleccion_editable(diag)
     if not tecnica.plano_de_trabajo(ref, exp):
         raise PermissionDenied('Solo se registran componentes del plano borrador de este expediente.')
-    if set(datos) - {'posicion', 'numero_parte', 'descripcion', 'unidad', 'pagina'}:
+    if set(datos) - {'posicion', 'numero_parte', 'descripcion', 'unidad', 'pagina', 'cantidad_referencia'}:
         raise ValidationError('Campos de componente no permitidos.')
     if not datos.get('posicion', '').strip() or not datos.get('descripcion', '').strip():
         raise ValidationError('Indique el número y la descripción leídos en el plano.')
@@ -340,10 +375,18 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
             if parte and parte.descripcion != descripcion.strip():
                 raise ValidationError('Este número ya tiene otra descripción. Seleccione el componente existente.')
             if not parte:
+                # Si la posición existe en el catálogo vinculado, el código y la cantidad referencial salen de él
+                # (nunca del cliente); el catálogo maestro no se modifica: la pieza se crea en el plano de trabajo.
+                cat = buscar_parte_catalogo(usuario=usuario, empresa=empresa, equipo=exp.registro.equipo, posicion=posicion)
+                datos = dict(posicion=posicion.strip(), descripcion=descripcion.strip(), unidad=unidad.strip(), pagina=str(pagina))
+                if cat['estado'] == 'encontrada':
+                    datos['descripcion'] = datos['descripcion'] or cat['descripcion']
+                    datos['unidad'] = datos['unidad'] or cat['unidad']
+                    datos['numero_parte'] = cat['codigo']
+                    if cat['cantidad_referencia']:
+                        datos['cantidad_referencia'] = cat['cantidad_referencia']
                 parte = registrar_componente_trabajo(usuario=usuario, empresa=empresa, referencia_id=ref.pk,
-                    diagnostico_id=diag.pk, clave=uuid.uuid5(key,'componente'),
-                    datos=dict(posicion=posicion.strip(), descripcion=descripcion.strip(), unidad=unidad.strip(),
-                               pagina=str(pagina)))
+                    diagnostico_id=diag.pk, clave=uuid.uuid5(key,'componente'), datos=datos)
     if operacion != 'seleccionar':
         posiciones = [dict(parte=p.parte_id,pagina=p.pagina,x=str(p.x),y=str(p.y))
                       for p in mapa.posiciones.order_by('pk') if not punto or p.pk != punto.pk] if mapa else []
