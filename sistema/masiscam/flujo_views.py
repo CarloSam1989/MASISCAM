@@ -324,7 +324,8 @@ def detalle(request,pk):
         t.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN'}, exp)
         form=AplicarPlanoExistenteForm(request.POST, empresa=request.empresa_activa, usuario=request.user);nombre=op
     elif op=='plano_trabajo':
-        form=PlanoTrabajoForm(request.POST,request.FILES);nombre=op
+        # OFICINA administra los PDF y catálogos; TALLER solo consulta planos compatibles y selecciona piezas.
+        raise PermissionDenied('TALLER no sube ni administra planos: solicite a OFICINA el catálogo o la corrección del PDF.')
     elif op=='enviar_piezas' and diag:
         form=EnviarPiezasForm(request.POST);nombre=op
     elif op in {'guardar','solicitud','validar'} and diag and (not diag.enviado_en or 'fallas' in request.POST):

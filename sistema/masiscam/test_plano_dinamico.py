@@ -46,9 +46,8 @@ class PlanoDinamicoTests(DinamicoFixture, TestCase):
         for _ in range(2):
             response=self.client.post(self.url,dict(op='plano_trabajo',clave=key,
                 referencia_id=self.ref.pk,archivo=SimpleUploadedFile('plano-qa.pdf',contenido,content_type='application/pdf')))
-            nueva=self.exp.planos_trabajo.get(sustituye=self.ref)
-            self.assertRedirects(response,reverse('masiscam:plano',args=[nueva.pk])+f'?diagnostico={self.diag.pk}&flujo=1')
-        self.assertEqual(self.exp.planos_trabajo.count(),2)  # Fuente y corrección auditada.
+            self.assertEqual(response.status_code,403)  # TALLER no corrige ni sube PDF; lo hace OFICINA.
+        self.assertEqual(self.exp.planos_trabajo.count(),1)
         self.assertEqual(self.exp.diagnostico_set.count(),1)
         self.assertEqual(Documento.objects.count(),documentos)
 
@@ -177,9 +176,9 @@ class PlanoDinamicoTests(DinamicoFixture, TestCase):
         self.assertEqual(self.diag.piezas.count(),1)
         self.assertEqual(self.diag.piezas.get().fotografias.count(),1)
         response=self.client.get(self.url)
-        for text in ('Subir plano PDF','Seleccionar piezas','Enviar a OFICINA'):
+        for text in ('Seleccionar piezas','Enviar a OFICINA'):
             self.assertContains(response,text)
-        for text in ('Agregar pieza manualmente','ADMINISTRADOR debe','detalles-tecnicos'):
+        for text in ('Subir plano PDF','Agregar pieza manualmente','ADMINISTRADOR debe','detalles-tecnicos'):
             self.assertNotContains(response,text)
         self.assertNotContains(self.client.get(self.plano_url),'pl-config-toggle')
 
@@ -309,10 +308,10 @@ class PlanoDinamicoBrowserTests(DinamicoFixture, StaticLiveServerTestCase):
                 sheet.locator('[name=posicion]').fill('8')
                 sheet.locator('[name=descripcion]').fill('RADIAL BEARING CARRIER')
                 sheet.locator('[name=cantidad]').fill('1')
-                sheet.get_by_text('Unidad (opcional)',exact=True).click()
+                sheet.get_by_text('Observaciones técnicas',exact=True).click()
                 sheet.locator('[name=condicion]').fill('Daño observado QA')
                 sheet.locator('[name=unidad]').fill('unidad')
-                sheet.get_by_role('button',name='Guardar posición y seleccionar',exact=True).click()
+                sheet.get_by_role('button',name='Guardar pieza',exact=True).click()
                 expect(sheet).not_to_be_visible();expect(page.locator('#pl-count')).to_have_text('2')
                 page.reload();expect(page.locator('#pl-app')).to_have_attribute('data-ready','true')
                 expect(page.locator('#pl-count')).to_have_text('2')
@@ -360,10 +359,10 @@ class PlanoDinamicoBrowserTests(DinamicoFixture, StaticLiveServerTestCase):
                 modal.locator('[name=cantidad]').fill('2')
                 if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
                     page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/'registro-desde-pdf.png'),full_page=True)
-                modal.get_by_text('Unidad (opcional)',exact=True).click()
+                modal.get_by_text('Observaciones técnicas',exact=True).click()
                 modal.locator('[name=condicion]').fill('Daño observado QA')
                 modal.locator('[name=unidad]').fill('unidad')
-                modal.get_by_role('button',name='Guardar posición y seleccionar',exact=True).click()
+                modal.get_by_role('button',name='Guardar pieza',exact=True).click()
                 expect(modal).not_to_be_visible()
                 expect(page.locator('#pl-total')).to_have_text('1')
                 expect(page.locator('#pl-count')).to_have_text('1')
@@ -382,7 +381,7 @@ class PlanoDinamicoBrowserTests(DinamicoFixture, StaticLiveServerTestCase):
                 expect(modal).to_be_visible();modal.locator('[name=cantidad]').fill('3')
                 modal.get_by_role('button',name='Mover en el plano',exact=True).click()
                 click_pdf(.7,.4);expect(modal).to_be_visible()
-                modal.get_by_role('button',name='Guardar posición y seleccionar',exact=True).click()
+                modal.get_by_role('button',name='Guardar pieza',exact=True).click()
                 expect(modal).not_to_be_visible()
                 expect(page.locator('.pl-selected-card')).to_contain_text('3 unidad')
                 page.get_by_role('button',name='Eliminar posición provisional',exact=True).click()
@@ -422,7 +421,7 @@ class PlanoDinamicoBrowserTests(DinamicoFixture, StaticLiveServerTestCase):
                 form.locator('[name=posicion]').fill('7');form.locator('[name=descripcion]').fill('HEAT EXCHANGER')
                 form.locator('[name=cantidad]').fill('2')
                 scroll=page.locator('#pl-viewport').evaluate('(v)=>{v.scrollLeft=80;return [v.scrollLeft,v.scrollTop]}')
-                form.get_by_role('button',name='Guardar posición y seleccionar',exact=True).click()
+                form.get_by_role('button',name='Guardar pieza',exact=True).click()
                 expect(page.locator('#pl-total')).to_have_text('1')
                 expect(page.locator('#pl-app')).to_have_attribute('data-ready','true')
                 expect(page.locator('#pl-count')).to_have_text('1')

@@ -200,22 +200,37 @@ class PlanoTests(TestCase):
 
     def _preparar_r2(self):
         from types import SimpleNamespace
-        from .models import Auditoria, PosicionPlano, ReferenciaTecnica
+        from .models import Auditoria, Documento, PosicionPlano, ReferenciaTecnica
         self.mapa()
-        # PDF: marcador existente de la parte A sobre el plano publicado -> nace el borrador de trabajo r2.
+        docs = Documento.objects.count()
+        mapas = self.ref.mapas.count()
+        # PDF: marcador existente del plano publicado -> solo se selecciona la pieza: sin r2, sin PDF ni mapa nuevos.
         punto = self.ref.mapas.order_by('-version').first().posiciones.get()
-        r2 = self._posicion(self.ref, punto_id=punto.pk, parte_id=self.parte.pk, pagina=1, x='0.5', y='0.4')
-        self.assertEqual((r2.revision, r2.estado, r2.expediente_trabajo_id), (self.ref.revision+1, 'BORRADOR', self.exp.pk))
-        # Lista: nuevo componente B en r2 y reedición de A desde su marcador; no se duplican piezas ni marcadores.
-        self._posicion(r2, posicion='B', descripcion='Componente B QA', pagina=1, x='0.2', y='0.2')
-        parte_a = r2.partes.get(posicion='A'); punto_a = r2.mapas.order_by('-version').first().posiciones.get(parte=parte_a)
-        self._posicion(r2, punto_id=punto_a.pk, parte_id=parte_a.pk, pagina=1, x=str(punto_a.x), y=str(punto_a.y), cantidad='3')
+        igual = self._posicion(self.ref, punto_id=punto.pk, parte_id=self.parte.pk, pagina=1, x='0.5', y='0.4')
+        self.assertEqual(igual.pk, self.ref.pk)
+        self._posicion(self.ref, punto_id=punto.pk, parte_id=self.parte.pk, pagina=1, x='0.5', y='0.4', cantidad='3')  # reedición
+        self.assertEqual((Documento.objects.count(), self.ref.mapas.count(), ReferenciaTecnica.objects.filter(codigo=self.ref.codigo).count()), (docs, mapas, 1))
         self.diag.refresh_from_db()
-        self.assertEqual(self.diag.piezas.count(), 2)
-        self.assertEqual(self.diag.piezas.get(parte=parte_a).cantidad, Decimal('3'))
-        self.assertEqual(r2.mapas.order_by('-version').first().posiciones.count(), 2)
-        self.assertEqual(ReferenciaTecnica.objects.filter(empresa=self.empresa, codigo=self.ref.codigo).count(), 2)
-        self.assertEqual(Auditoria.objects.filter(expediente=self.exp, accion='PLANO_POSICION_TRABAJO').count(), 3)
+        self.assertEqual(self.diag.piezas.count(), 1); self.assertEqual(self.diag.piezas.get().cantidad, Decimal('3'))
+        # Un componente nuevo sin marcador sí exige el borrador de trabajo del expediente (una sola vez).
+        r2 = self._posicion(self.ref, posicion='B', descripcion='Componente B QA', pagina=1, x='0.2', y='0.2')
+        self.assertEqual((r2.revision, r2.estado, r2.expediente_trabajo_id, r2.documento_id), (self.ref.revision+1, 'BORRADOR', self.exp.pk, self.ref.documento_id))
+        self._posicion(r2, posicion='C', descripcion='Componente C QA', pagina=1, x='0.3', y='0.3')
+        self.assertEqual(ReferenciaTecnica.objects.filter(codigo=self.ref.codigo).count(), 2)  # C reutiliza r2
+        # La posición A ya elegida desde r1 no se duplica al marcarla desde r2.
+        parte_a2 = r2.partes.get(posicion='A'); punto_a2 = r2.mapas.order_by('-version').first().posiciones.get(parte=parte_a2)
+        with self.assertRaises(ValidationError):
+            self._posicion(r2, punto_id=punto_a2.pk, parte_id=parte_a2.pk, pagina=1, x=str(punto_a2.x), y=str(punto_a2.y))
+        self.diag.refresh_from_db()
+        self.assertEqual(self.diag.piezas.count(), 3)
+        # Mensaje claro y selección conservada: en r2 la pieza de r1 aparece vinculada a la parte A de r2.
+        from .plano_views import piezas_json
+        visibles = {p['parte'] for p in piezas_json(self.diag, r2)}
+        self.assertIn(parte_a2.pk, visibles)
+        try: self._posicion(r2, punto_id=punto_a2.pk, parte_id=parte_a2.pk, pagina=1, x=str(punto_a2.x), y=str(punto_a2.y))
+        except ValidationError as error: self.assertIn('ya está seleccionada desde el plano r', ' '.join(error.messages))
+        parte_a = self.parte
+        self.assertEqual(Auditoria.objects.filter(expediente=self.exp, accion='PLANO_POSICION_TRABAJO').count(), 4)
         return r2, parte_a
 
     def test_r2_provisional_pdf_y_lista_validan_y_se_rechazan_ajenas(self):
@@ -236,7 +251,77 @@ class PlanoTests(TestCase):
         enviado = self._enviar()
         self.assertTrue(enviado.enviado_en); self.assertEqual(enviado.version_edicion, antes+1)
         self.assertEqual(Auditoria.objects.filter(expediente=self.exp, accion='REVISION_ENVIADA', detalle__resultado=self.diag.pk).count(), 1)
-        self.assertEqual(enviado.piezas.count(), 2)
+        self.assertEqual(enviado.piezas.count(), 3)
+
+    def test_mismo_pdf_sirve_para_1_5_y_20_piezas_sin_revisiones_ni_mapas_nuevos(self):
+        from django.db import connection as con
+        from django.test.utils import CaptureQueriesContext
+        from .models import Auditoria, Documento
+        ref = tecnica.guardar_referencia(usuario=self.planta, empresa=self.empresa, clave=uuid.uuid4(), archivo=qa.pdf_plano(),
+            datos=dict(codigo='REF-20', tipo='PLANO', titulo='Plano 20 piezas', marca='DERAN', modelo='M20A', operacion='VERTICAL',
+                rotacion='#1', ratio='3:1', procedencia='Fuente QA sintética', autorizacion_uso='Uso QA',
+                proyecto_id=self.exp.registro.equipo.proyecto_id))
+        for n in range(1, 21):
+            tecnica.guardar_parte(usuario=self.planta, empresa=self.empresa, referencia_id=ref.pk, clave=uuid.uuid4(),
+                datos=dict(posicion=str(n), numero_parte=f'QA-{n}', descripcion=f'Componente {n}', unidad='unidad'))
+        tecnica.estado_referencia(usuario=self.planta, empresa=self.empresa, referencia_id=ref.pk, estado='PUBLICADA', clave=uuid.uuid4())
+        tecnica.aplicar_referencia(usuario=self.planta, empresa=self.empresa, referencia_id=ref.pk,
+            equipo_id=self.exp.registro.equipo_id, fundamento='Aplicabilidad QA', clave=uuid.uuid4())
+        partes = list(ref.partes.order_by('pk'))
+        svc.guardar_mapa(usuario=self.planta, empresa=self.empresa, referencia_id=ref.pk, base_version=0, clave=uuid.uuid4(),
+            posiciones=[dict(parte=p.pk, pagina=1, x=f'0.{i+1:02d}', y='0.5') for i, p in enumerate(partes)])
+        puntos = list(ref.mapas.get().posiciones.order_by('pk'))
+        base = (Documento.objects.count(), ref.mapas.count(), ReferenciaTecnica.objects.count())
+        auditorias = Auditoria.objects.filter(expediente=self.exp, accion='PLANO_POSICION_TRABAJO')
+        consultas = {}
+        for total, lote in ((1, puntos[:1]), (5, puntos[1:5]), (20, puntos[5:])):
+            for punto in lote:
+                self._posicion(ref, punto_id=punto.pk, parte_id=punto.parte_id, pagina=1, x=str(punto.x), y=str(punto.y))
+            self.diag.refresh_from_db()
+            self.assertEqual(self.diag.piezas.count(), total)
+            self.assertEqual((Documento.objects.count(), ref.mapas.count(), ReferenciaTecnica.objects.count()), base)
+            self.client.force_login(self.tecnico)
+            with CaptureQueriesContext(con) as medido:
+                self.assertEqual(self.client.get(reverse('masiscam:plano_datos', args=[ref.pk]) + f'?diagnostico={self.diag.pk}').status_code, 200)
+            consultas[total] = len(medido)
+        # Sin N+1: las consultas del visor no crecen con el número de piezas seleccionadas.
+        self.assertLessEqual(abs(consultas[1]-consultas[20]), 2, consultas)
+        for punto in puntos[:5]:  # reedición: actualiza, no duplica
+            self._posicion(ref, punto_id=punto.pk, parte_id=punto.parte_id, pagina=1, x=str(punto.x), y=str(punto.y), cantidad='4')
+        self.diag.refresh_from_db()
+        self.assertEqual(self.diag.piezas.count(), 20)
+        self.assertEqual(self.diag.piezas.filter(cantidad=Decimal('4')).count(), 5)
+        self.assertEqual(self.diag.piezas.exclude(posicion_plano=None).count(), 20)
+        self.assertEqual(auditorias.count(), 25)
+        # Rendimiento: consultas por selección acotadas (sin N+1 por pieza) y datos del visor con consultas constantes.
+        with CaptureQueriesContext(con) as una:
+            self._posicion(ref, punto_id=puntos[0].pk, parte_id=puntos[0].parte_id, pagina=1, x=str(puntos[0].x), y=str(puntos[0].y), cantidad='5')
+        self.client.force_login(self.tecnico)
+        url = reverse('masiscam:plano_datos', args=[ref.pk]) + f'?diagnostico={self.diag.pk}'
+        with CaptureQueriesContext(con) as datos:
+            self.assertEqual(self.client.get(url).status_code, 200)
+        print(f'MEDICION sql_seleccion={len(una)} sql_datos_visor_20_piezas={len(datos)}')
+        print('MEDICION consultas_visor_por_piezas', consultas)
+        import collections,re as _re
+        print('TOPSQL', collections.Counter(_re.sub(r'\d+','N',q['sql'])[:110] for q in una.captured_queries).most_common(6))
+        # Rechazos: otro equipo (el plano no aplica) y otra empresa.
+        otro_equipo = tecnica.guardar_referencia(usuario=self.planta, empresa=self.empresa, clave=uuid.uuid4(), archivo=qa.pdf_plano(),
+            datos=dict(codigo='REF-OTRO', tipo='PLANO', titulo='Otro', marca='X', modelo='Y', procedencia='QA', autorizacion_uso='QA',
+                proyecto_id=self.exp.registro.equipo.proyecto_id))
+        with self.assertRaises((PermissionDenied, ValidationError)):
+            self._posicion(otro_equipo, posicion='1', descripcion='ajena', pagina=1, x='0.1', y='0.1')
+        otra = Empresa.objects.create(nombre='Otra empresa 20')
+        ajeno = qa.usuario(otra, 'tecnico-otra-20', 'TECNICO')
+        with self.assertRaises((PermissionDenied, ValidationError, Exception)):
+            self._posicion(ref, usuario=ajeno, punto_id=puntos[0].pk, parte_id=puntos[0].parte_id, pagina=1, x=str(puntos[0].x), y=str(puntos[0].y))
+        self.diag.refresh_from_db(); self.assertEqual(self.diag.piezas.count(), 20)
+
+    def test_taller_no_sube_ni_administra_planos(self):
+        self.client.force_login(self.tecnico)
+        url = reverse('masiscam:flujo_detalle', args=[self.exp.pk])
+        self.assertEqual(self.client.post(url, dict(op='plano_trabajo', clave=uuid.uuid4(), archivo=qa.pdf_plano())).status_code, 403)
+        self.assertNotContains(self.client.get(url), 'Subir plano PDF')
+        self.assertEqual(self.client.post(reverse('masiscam:biblioteca_referencia_crear'), {}).status_code, 403)
 
     def test_compatibilidad_completa_y_aprobacion_explicita(self):
         equipo = self.exp.registro.equipo

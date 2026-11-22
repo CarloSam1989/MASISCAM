@@ -52,7 +52,8 @@ class TallerBrowserTests(StaticLiveServerTestCase):
                     page = context.new_page()
                     page.goto(self.live_server_url + reverse('masiscam:taller_equipo',args=[equipo.pk]))
                     expect(page.locator('ol.mf-steps > li')).to_have_count(5)
-                    expect(page.locator('.mf-main-action')).to_have_count(1)
+                    expect(page.locator('.mf-main-action')).to_have_count(0)  # recepción y inspección ya completas: la acción es abrir el plano
+                    expect(page.get_by_text('Subir plano PDF')).to_have_count(0)
                     self.assertTrue(page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'))
                     page.screenshot(path=str(output/f'taller-flujo-{width}.png'),full_page=True)
                     page.goto(self.live_server_url + reverse('masiscam:plano',args=[ref.pk])+'?diagnostico='+str(diag.pk))
@@ -60,12 +61,13 @@ class TallerBrowserTests(StaticLiveServerTestCase):
                     page.locator('#pl-plus').click()
                     expect(page.locator('#pl-zoom')).to_have_text('125%')
                     page.locator('.pl-point').first.click()
-                    page.get_by_role('button',name='Agregar al diagnóstico',exact=True).click()
-                    page.locator('#pl-quantity').fill('1')
-                    page.locator('#pl-condition').fill('Desgaste QA')
-                    page.locator('#pl-action').select_option('EVALUAR')
-                    page.locator('#pl-submit').click()
-                    expect(page.locator('#pl-piece-dialog')).not_to_be_visible(timeout=15000)
+                    if width == 1440:  # el marcador abre el formulario único; en los demás anchos la pieza ya está seleccionada
+                        expect(page.locator('#pl-position-dialog')).to_be_visible()
+                        page.locator('#pl-position-quantity').fill('1')
+                        page.locator('#pl-position-condition').fill('Desgaste QA')
+                        page.locator('#pl-position-action').select_option('EVALUAR')
+                        page.locator('#pl-position-save').click()
+                    expect(page.locator('#pl-position-dialog')).not_to_be_visible(timeout=15000)
                     if width < 992: page.get_by_role('tab',name=re.compile('Seleccionados')).click()
                     expect(page.locator('#pl-selected-list')).to_contain_text('Componente QA')
                     self.assertTrue(page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'))
@@ -107,22 +109,23 @@ class TallerBrowserTests(StaticLiveServerTestCase):
                             else:
                                 expect(toggle).not_to_be_visible()
                             expect(menu).to_be_visible()
-                            if codigo in {'TALLER', 'VACIO'}:
+                            if codigo in {'TALLER', 'TECNICO', 'VACIO'}:
                                 self.assertTrue(page.url.endswith('/app/taller/'))
-                                expect(menu.locator('a')).to_have_text(['Inicio',
-                                    'Registrar equipo', 'Mis expedientes',
-                                    'Estado del mantenimiento', 'Planos t\u00e9cnicos', 'Mi cuenta'])
-                                expect(menu.get_by_role('button', name='Salir')).to_be_visible()
+                                # TALLER no administra planos: sin «Planos y piezas» en el menú ni carga de PDF.
+                                expect(menu.locator('a')).to_have_text(['Inicio', 'Reductores', 'Equipos', 'Mis trabajos', 'Mi cuenta'])
+                                expect(menu.get_by_role('link', name=re.compile('Planos'))).to_have_count(0)
+                                expect(page.get_by_text('Subir plano PDF')).to_have_count(0)
+                                expect(page.locator('.mc-logout').get_by_role('button', name='Salir')).to_be_visible()
                                 action = page.get_by_role('button', name='Registrar nuevo equipo', exact=True)
                                 expect(action).to_have_count(1)
                                 if codigo == 'TALLER':
                                     expect(page.locator('main')).to_contain_text(exp.numero)
-                                    expect(page.locator('section[aria-labelledby=trabajos-titulo] .tw-job')).to_have_count(3)
+                                    expect(page.locator('section[aria-labelledby=trabajos-titulo] tbody tr')).to_have_count(3)  # las tarjetas pasan a filas de tabla
                                     expect(page.locator('[data-metrica="equipos"]')).to_have_text('3')
                                 else:
                                     expect(page.locator('.tw-empty')).to_be_visible()
                                     expect(page.locator('[data-metrica="equipos"]')).to_have_text('0')
-                                    expect(page.locator('table')).to_have_count(0)
+                                    expect(page.locator('section[aria-labelledby=trabajos-titulo] table')).to_have_count(0)
                                 if width < 992:
                                     toggle.click()
                                     expect(menu).not_to_be_visible()
@@ -145,13 +148,14 @@ class TallerBrowserTests(StaticLiveServerTestCase):
                                 expect(page.locator('#cliente-crear')).to_have_count(0)
                                 if evidence and codigo == 'TALLER':
                                     page.screenshot(path=str(output / f'taller-formulario-{width}.png'), full_page=True)
-                            elif codigo == 'CLIENTE':
-                                expect(menu.locator('a')).to_have_text(['Mis productos'])
-                            elif codigo == 'OFICINA':
-                                expect(menu.locator('a')).to_have_text(['Inicio de oficina','Clientes','Solicitudes de taller','Cotizaciones','Compras','Ventas','Guías de envío','Documentación comercial autorizada','Mi cuenta'])
+                            elif codigo in {'OFICINA', 'CLIENTE', 'CONSULTA'}:
+                                # CLIENTE y CONSULTA son alias del rol OFICINA: administra catálogo (Planos y piezas), no expedientes.
+                                labels = menu.locator('a').all_text_contents()
+                                self.assertEqual(labels, ['Inicio', 'Bombas', 'Reductores', 'Clientes', 'Solicitudes de taller', 'Cotizaciones', 'Planos y piezas'])
                             else:
                                 labels = menu.locator('a').all_text_contents()
-                                self.assertEqual(labels[:5], ['Panel', 'Reductores', 'Bombas', 'Clientes', 'Proyectos'])
+                                self.assertEqual(labels[:5], ['Inicio', 'Bombas', 'Reductores', 'Clientes', 'Proyectos'])
+                                self.assertIn('Planos y piezas', labels)
                                 self.assertNotIn('Mis expedientes', labels)
                             self.assertTrue(page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'))
                             context.close()

@@ -204,8 +204,10 @@ class TallerTests(TestCase):
 
     def test_menu_login_cuenta_y_busqueda_ruc_solo_empresa(self):
         response = self.client.get(reverse('masiscam:taller_inicio'))
-        for vista in ('taller_inicio', 'taller_estado', 'biblioteca', 'taller_cuenta'):
+        for vista in ('taller_inicio', 'taller_estado', 'taller_cuenta'):
             self.assertContains(response, 'href="' + reverse('masiscam:' + vista) + '"')
+        # TALLER no ve «Planos y piezas» en el menú (consulta planos compatibles desde su equipo).
+        self.assertNotContains(response, 'href="' + reverse('masiscam:biblioteca') + '"')
         for vista in ('usuarios', 'clientes', 'proyectos', 'cierre_dashboard'):
             self.assertNotContains(response, 'href="' + reverse('masiscam:' + vista) + '"')
             self.assertEqual(self.client.get(reverse('masiscam:' + vista)).status_code, 403)

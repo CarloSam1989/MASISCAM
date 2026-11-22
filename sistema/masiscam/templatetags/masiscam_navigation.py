@@ -18,7 +18,7 @@ def menu_compartido(context):
     def item(label,name,args=None):return dict(label=label,url=reverse('masiscam:'+name,args=args))
     if rol=='TALLER':
         items=[item('Inicio','taller_inicio'),dict(label='Equipos',url=reverse('masiscam:taller_inicio')+'#trabajos-titulo'),
-            item('Mis trabajos','taller_estado'),item('Planos y piezas','biblioteca'),item('Mi cuenta','taller_cuenta')]
+            item('Mis trabajos','taller_estado'),item('Mi cuenta','taller_cuenta')]
     elif rol=='OFICINA':
         from masiscam.oficina_views import SECCIONES
         items=[item('Inicio','oficina_inicio'),item('Clientes','clientes')]+[item(label,'oficina_seccion',[key]) for key,label in SECCIONES.items() if key in {'solicitudes','cotizaciones'}]

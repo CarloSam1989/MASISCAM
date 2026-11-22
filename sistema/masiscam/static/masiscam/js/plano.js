@@ -1,9 +1,3 @@
-document.querySelectorAll('form[data-plano-upload]').forEach(upload => {
-  const picker = upload.querySelector('[type=file]');
-  upload.querySelector('[data-pick-pdf]').addEventListener('click', () => picker.click());
-  picker.addEventListener('change', () => {if (picker.files.length) upload.requestSubmit();});
-});
-
 async function cargarPDF(node) {
   const pdfjs = await import(node.dataset.pdfModule);
   pdfjs.GlobalWorkerOptions.workerSrc = node.dataset.pdfWorker;
@@ -411,6 +405,13 @@ if (root) {
   });
   $('#pl-position-close')?.addEventListener('click',()=>closeSheet(positionForm,positionDialog));
   function update(data) {
+    // Pieza elegida desde otra revisión del mismo catálogo: se indica en esta (misma posición), sin duplicarla.
+    for (const piece of data.piezas) {
+      if (!state.data.partes.some(part => part.id === piece.parte)) {
+        const equal = state.data.partes.find(part => part.posicion === piece.snapshot?.posicion);
+        if (equal) piece.parte = equal.id;
+      }
+    }
     state.data.version = data.version; state.data.piezas = data.piezas; selected();
     saved(data.mensaje || 'Borrador guardado.');
   }

@@ -44,14 +44,16 @@ class TrabajoFixture:
         archivo = pdf_trabajo()
         self.pdf = archivo.read()
         archivo.seek(0)
-        response = self.client.post(self.url, dict(op='plano_trabajo', clave=uuid.uuid4(),
-            archivo=archivo))
-        self.assertEqual(response.status_code, 302, response.content)
+        # TALLER ya no sube planos desde la interfaz: el servidor lo rechaza. Estos datos representan un
+        # borrador de trabajo histórico creado por el servicio, que debe seguir funcionando.
+        self.assertEqual(self.client.post(self.url, dict(op='plano_trabajo', clave=uuid.uuid4(), archivo=archivo)).status_code, 403)
+        archivo.seek(0)
+        planos.cargar_plano_trabajo(usuario=self.taller, empresa=self.empresa, expediente_id=self.exp.pk,
+            archivo=archivo, clave=uuid.uuid4())
         self.ref = self.exp.planos_trabajo.get()
         self.diag = self.exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
         self.plano_url = reverse('masiscam:plano', args=[self.ref.pk]) + f'?diagnostico={self.diag.pk}&flujo=1'
-        self.assertEqual(response.url, self.plano_url)
-        return response
+        return self.client.get(self.plano_url)
 
     def componente(self):
         url = reverse('masiscam:plano_componente', args=[self.ref.pk]) + f'?diagnostico={self.diag.pk}&flujo=1'
@@ -244,7 +246,7 @@ class PlanoTrabajoTests(TrabajoFixture, TestCase):
         self.client.force_login(self.taller)
         docs = Documento.objects.count()
         invalid = SimpleUploadedFile('no.pdf', b'no es un PDF', content_type='application/pdf')
-        self.assertEqual(self.client.post(self.url, dict(op='plano_trabajo', clave=uuid.uuid4(), archivo=invalid)).status_code, 400)
+        self.assertEqual(self.client.post(self.url, dict(op='plano_trabajo', clave=uuid.uuid4(), archivo=invalid)).status_code, 403)  # TALLER no administra PDF
         self.assertEqual(Documento.objects.count(), docs)
         parte = self.componente()
         self.seleccionar(parte)
@@ -317,7 +319,7 @@ class PlanoTrabajoBrowserTests(TrabajoFixture, StaticLiveServerTestCase):
                 page.get_by_role('button',name='Editar posici\u00f3n',exact=True).click()
                 expect(page.locator('#pl-position-dialog')).to_be_visible()
                 page.locator('#pl-position-quantity').fill('2')
-                page.get_by_text('Unidad (opcional)', exact=True).click()
+                page.get_by_text('Observaciones técnicas', exact=True).click()
                 page.locator('#pl-position-condition').fill('Daño de prueba QA')
                 page.locator('#pl-position-save').click()
                 expect(page.locator('#pl-count')).to_have_text('1')
@@ -353,6 +355,9 @@ class PlanoTrabajoBrowserTests(TrabajoFixture, StaticLiveServerTestCase):
             writer.add_page(reader.pages[0]); writer.add_page(reader.pages[0])
             stream = BytesIO(); writer.write(stream); pdf = stream.getvalue()
             paginas = 2
+        borrador = planos.cargar_plano_trabajo(usuario=self.taller, empresa=self.empresa, expediente_id=self.exp.pk,
+            clave=uuid.uuid4(), archivo=SimpleUploadedFile('plano-qa.pdf', pdf, content_type='application/pdf'))
+        diag_pk = self.exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico_id
         with sync_playwright() as pw:
             browser = pw.chromium.launch(channel='msedge', headless=True)
             try:
@@ -360,9 +365,10 @@ class PlanoTrabajoBrowserTests(TrabajoFixture, StaticLiveServerTestCase):
                 context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,
                     value=client.cookies[settings.SESSION_COOKIE_NAME].value, url=self.live_server_url)])
                 page = context.new_page()
+                # TALLER ya no sube PDF: la interfaz no ofrece la carga y el plano de trabajo histórico lo crea el servicio.
                 page.goto(self.live_server_url + reverse('masiscam:flujo_detalle', args=[self.exp.pk]))
-                page.locator('#mf-plano input[type=file]').set_input_files(dict(
-                    name=Path(PDF_REAL).name if PDF_REAL else 'plano-qa.pdf', mimeType='application/pdf', buffer=pdf))
+                expect(page.get_by_text('Subir plano PDF')).to_have_count(0)
+                page.goto(self.live_server_url + reverse('masiscam:plano', args=[borrador.pk]) + f'?diagnostico={diag_pk}&flujo=1')
                 expect(page.locator('#pl-app')).to_have_attribute('data-ready', 'true', timeout=20000)
                 expect(page.get_by_text('Plano de trabajo.', exact=True)).to_be_visible()
                 expect(page.locator('#pl-canvas')).to_be_visible()
@@ -393,10 +399,10 @@ class PlanoTrabajoBrowserTests(TrabajoFixture, StaticLiveServerTestCase):
                     sheet.locator('[name=descripcion]').fill(description)
                     sheet.locator('[name=cantidad]').fill('2')
                     sheet.locator('[name=condicion]').fill('Daño observado QA '+number)
-                    sheet.get_by_text('Unidad (opcional)',exact=True).click()
+                    sheet.get_by_text('Observaciones técnicas',exact=True).click()
                     sheet.locator('[name=unidad]').fill('unidad')
                     sheet.locator('[name=fotografias]').set_input_files(dict(name='pieza.png',mimeType='image/png',buffer=foto_pieza().read()))
-                    sheet.get_by_role('button',name='Guardar posición y seleccionar',exact=True).click()
+                    sheet.get_by_role('button',name='Guardar pieza',exact=True).click()
                     expect(sheet).not_to_be_visible()
                     expect(page.locator('#pl-count')).to_have_text(str(index))
                     expect(page.locator('#pl-total')).to_have_text(str(index))
@@ -404,7 +410,7 @@ class PlanoTrabajoBrowserTests(TrabajoFixture, StaticLiveServerTestCase):
                     expect(page.locator('#pl-zoom')).to_have_text('125%')
                 card=page.locator('.pl-selected-card').first
                 card.get_by_role('button',name='Editar',exact=True).click()
-                sheet=page.locator('#pl-piece-form')
+                sheet=page.locator('#pl-position-form')
                 expect(sheet.locator('[name=cantidad]')).to_have_value('2')
                 sheet.locator('[name=cantidad]').fill('3')
                 sheet.locator('[name=condicion]').fill('Daño actualizado QA')
@@ -412,18 +418,20 @@ class PlanoTrabajoBrowserTests(TrabajoFixture, StaticLiveServerTestCase):
                 sheet.get_by_role('button',name='Guardar pieza',exact=True).click()
                 expect(sheet).not_to_be_visible();expect(card).to_contain_text('3 unidad')
                 page.reload();expect(page.locator('#pl-app')).to_have_attribute('data-ready','true')
-                expect(page.locator('#pl-count')).to_have_text('3');expect(page.locator('.pl-point')).to_have_count(3)
+                expect(page.locator('#pl-count')).to_have_text('3');page.locator('#pl-page').select_option(str(paginas));expect(page.locator('.pl-point')).to_have_count(3)
                 expect(page.locator('.pl-selected-card').first).to_contain_text('Daño actualizado QA')
                 page.locator('.pl-selected-card').first.get_by_role('button',name='Editar',exact=True).click()
-                expect(page.locator('#pl-existing-photos img')).to_have_count(1)
-                page.locator('#pl-close-dialog').click()
+                expect(page.locator('#pl-position-existing img')).to_have_count(1)
+                page.locator('#pl-position-close').click()
                 if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
                     page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/'tres-piezas-persistidas.png'),full_page=True)
-                page.locator('#pl-send-form').get_by_role('button',name='Enviar a OFICINA',exact=True).click()
-                page.get_by_role('button',name='Sí, continuar',exact=True).click()
-                expect(page.get_by_text('Solicitud v1 enviada',exact=False)).to_be_visible()
+                # Flujo vigente: el envío a OFICINA exige validar antes el diagnóstico (cubierto en test_experiencia_browser); aquí se envía por servicio.
             finally:
                 browser.close()
+        from . import flujo_services
+        diag = self.exp.etapas_tecnicas.get(codigo='DIAGNOSTICO').diagnostico
+        flujo_services.enviar_solicitud(usuario=self.taller, empresa=self.empresa, diagnostico_id=diag.pk,
+            version=diag.version_edicion, clave=uuid.uuid4(), preliminar=True)
         sol = SolicitudRepuestos.objects.get(expediente=self.exp)
         self.assertIsNone(sol.diagnostico.enviado_en)
         self.assertEqual(sol.diagnostico.piezas.count(),3)

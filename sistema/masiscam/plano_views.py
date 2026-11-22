@@ -79,16 +79,27 @@ def codigo_parte(parte):
     return parte.numero_parte or (componente.numero_parte or componente.codigo if componente else '')
 
 
-def piezas_json(obj):
+def piezas_json(obj, ref=None):
     if not obj:
         return []
-    return [dict(id=p.pk, parte=p.parte_id, posicion=p.posicion_plano_id,
+    # Una pieza elegida desde otra revisión del mismo catálogo se muestra como seleccionada en esta revisión
+    # (misma posición): así el marcador la indica y no se vuelve a elegir ni se pierde la selección.
+    equivalentes = {}
+    if ref is not None:
+        equivalentes = {p.posicion: p.pk for p in ref.partes.all()}
+    def parte_visible(p):
+        if not p.parte_id or ref is None or p.parte.referencia_id == ref.pk:
+            return p.parte_id
+        if p.parte.referencia.codigo == ref.codigo and p.parte.referencia.empresa_id == ref.empresa_id:
+            return equivalentes.get(p.parte.posicion, p.parte_id)
+        return p.parte_id
+    return [dict(id=p.pk, parte=parte_visible(p), posicion=p.posicion_plano_id,
         fuente_url=(reverse('masiscam:plano', args=[p.parte.referencia_id]) + '?diagnostico=' + str(obj.pk)) if p.parte_id else None,
         descripcion=p.descripcion, codigo=p.numero_parte or codigo_parte(p.parte), cantidad=str(p.cantidad), unidad=p.unidad,
         condicion=p.condicion, accion=p.accion, observaciones=p.observaciones, snapshot=p.snapshot,
         fotos=[dict(id=f.pk, url=reverse('masiscam:tecnica_documento', args=[obj.expediente_id, f.documento_id]),
             leyenda=f.leyenda) for f in p.fotografias.all()])
-        for p in obj.piezas.select_related('parte__componente').prefetch_related('fotografias').order_by('pk')]
+        for p in obj.piezas.select_related('parte__componente', 'parte__referencia').prefetch_related('fotografias').order_by('pk')]
 
 
 @require_GET
@@ -134,7 +145,7 @@ def plano_datos(request, pk):
         partes=[dict(id=p.pk, posicion=p.posicion, codigo=codigo_parte(p), descripcion=p.descripcion,
             unidad=p.unidad, cantidad=str(p.cantidad_referencia) if p.cantidad_referencia is not None else '',
             cantidad_seleccion=cantidades.get(p.pk) or '',
-            pagina=p.pagina) for p in ref.partes.select_related('componente').order_by('pk')], piezas=piezas_json(obj)))
+            pagina=p.pagina) for p in ref.partes.select_related('componente').order_by('pk')], piezas=piezas_json(obj, ref)))
 
 
 class PosicionTrabajoForm(BaseForm):

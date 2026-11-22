@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import time
 import uuid
 from io import BytesIO
 from pathlib import Path
@@ -222,8 +223,12 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                 context = browser.new_context(viewport={'width':1440,'height':1000})
                 context.add_cookies([{'name':settings.SESSION_COOKIE_NAME,'value':cookie,'url':self.live_server_url}])
                 page = context.new_page()
+                pdf_requests = []
+                page.on('request', lambda r: pdf_requests.append(r.url) if 'documento' in r.url and r.resource_type in ('fetch','xhr','other') else None)
+                inicio = time.perf_counter()
                 page.goto(self.live_server_url+reverse('masiscam:plano',args=[self.ref.pk])+'?diagnostico='+str(self.diag.pk))
                 expect(page.locator('#pl-app')).to_have_attribute('data-ready','true',timeout=60000)
+                print('MEDICION visor_listo_1440_ms', round((time.perf_counter()-inicio)*1000))
                 page.locator('.pl-point').first.click()          # desde el PDF
                 guardar(page, '2')
                 self.assertEqual(en_hilo(lambda: PiezaRequerida.objects.filter(diagnostico=self.diag).count()), 1)
@@ -236,6 +241,16 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                 self.assertEqual(en_hilo(lambda: PiezaRequerida.objects.filter(diagnostico=self.diag).count()), 1)
                 self.assertEqual(en_hilo(lambda: PiezaRequerida.objects.get(diagnostico=self.diag).cantidad), 3)
                 expect(page.locator('.pl-point')).to_have_count(1)
+                # El visor sigue abierto: el PDF se pidió una sola vez pese a guardar dos veces (PDF y lista).
+                self.assertEqual(len(pdf_requests), 1, pdf_requests)
+                self.assertTrue(page.evaluate("() => !document.querySelector('[data-ready=error]')"))
+                page.set_viewport_size({'width':390,'height':900})
+                self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+                page.get_by_role('tab',name=re.compile('Seleccionados')).click()
+                expect(page.locator('#pl-selected-list')).to_contain_text('3')
+                page.get_by_role('tab',name='Plano',exact=True).click()
+                expect(page.locator('.pl-point.is-selected')).to_have_count(1)   # el marcador indica la pieza elegida
+                self.assertEqual(len(pdf_requests), 1, pdf_requests)
                 context.close()
             finally:
                 browser.close()

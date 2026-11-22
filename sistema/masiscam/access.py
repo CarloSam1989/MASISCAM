@@ -159,17 +159,38 @@ VISTAS_CLIENTE = {
 }
 
 
+# Caché por objeto de usuario (vive solo durante la petición: cada petición carga un usuario nuevo). Se invalida
+# al guardar o borrar Perfil, RolMasiscam o Empresa, de modo que un cambio de rol o de estado nunca se ve retrasado.
+_VERSION_ACCESO = [0]
+
+
+def _invalidar_cache_acceso(**_):
+    _VERSION_ACCESO[0] += 1
+
+
+def _memoizar(usuario, clave, calcular):
+    cache = usuario.__dict__.setdefault("_masiscam_acceso", {})
+    actual = cache.get(clave)
+    if actual is not None and actual[0] == _VERSION_ACCESO[0]:
+        return actual[1]
+    valor = calcular()
+    cache[clave] = (_VERSION_ACCESO[0], valor)
+    return valor
+
+
 def perfil_masiscam_usuario(*, usuario, empresa):
     if not usuario.is_authenticated or not usuario.is_active or empresa is None:
         return None
-    return Perfil.objects.filter(user=usuario, empresa=empresa, activo=True).select_related("empresa").first()
+    return _memoizar(usuario, ("perfil", empresa.pk),
+        lambda: Perfil.objects.filter(user=usuario, empresa=empresa, activo=True).select_related("empresa").first())
 
 
 def rol_masiscam_usuario(*, usuario, empresa):
     perfil = perfil_masiscam_usuario(usuario=usuario, empresa=empresa)
     if perfil is None or not perfil.empresa.activa:
         return None
-    return RolMasiscam.objects.filter(perfil=perfil, activo=True, rol__in=PERMISOS_ROL).first()
+    return _memoizar(usuario, ("rol", empresa.pk),
+        lambda: RolMasiscam.objects.filter(perfil=perfil, activo=True, rol__in=PERMISOS_ROL).first())
 
 
 def tiene_permiso(request, permiso):
@@ -247,3 +268,14 @@ def permiso_masiscam_required(permiso):
             return view_func(request, *args, **kwargs)
         return wrapped
     return decorator
+
+
+def _conectar_invalidacion():
+    from django.db.models.signals import post_delete, post_save
+    from accounts.models import Empresa
+    for modelo in (Perfil, RolMasiscam, Empresa):
+        post_save.connect(_invalidar_cache_acceso, sender=modelo, weak=False, dispatch_uid=f"masiscam-acceso-s-{modelo.__name__}")
+        post_delete.connect(_invalidar_cache_acceso, sender=modelo, weak=False, dispatch_uid=f"masiscam-acceso-d-{modelo.__name__}")
+
+
+_conectar_invalidacion()

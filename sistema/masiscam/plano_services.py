@@ -294,6 +294,15 @@ def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, c
     return mapa
 
 
+def _mismo_punto(punto, pagina, x, y):
+    try:
+        q = Decimal('0.00000001')
+        return (int(pagina) == punto.pagina and Decimal(str(x)).quantize(q) == punto.x.quantize(q)
+                and Decimal(str(y)).quantize(q) == punto.y.quantize(q))
+    except (TypeError, ValueError, ArithmeticError):
+        return False
+
+
 @transaction.atomic
 def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id, clave,
                             version, mapa_version, operacion, punto_id=None, parte_id=None,
@@ -335,9 +344,12 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
     if operacion in {'seleccionar','retirar'} and not punto:
         raise ValidationError('Seleccione una posición registrada.')
     key = uuid.UUID(str(clave))
+    # Marcador ya existente y sin moverlo: es solo la selección de la pieza. Se reutiliza el plano y el mapa vigentes
+    # (sin borrador sucesor, sin PDF ni mapa nuevos); solo cambian la pieza, sus fotos y la auditoría.
+    sin_cambio_mapa = bool(operacion == 'guardar' and punto and _mismo_punto(punto, pagina, x, y))
     if operacion == 'retirar' and (not mapa.provisional or ref.estado != 'BORRADOR'):
         raise PermissionDenied('Solo se retiran posiciones provisionales.')
-    if operacion == 'guardar' and ref.estado == 'PUBLICADA':
+    if operacion == 'guardar' and ref.estado == 'PUBLICADA' and not sin_cambio_mapa:
         # No modificar el documento ni los componentes aprobados: continuar en
         # un borrador sucesor del expediente con el mismo PDF y fuentes.
         siguiente = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=ref.codigo).aggregate(n=Max('revision'))['n']
@@ -365,7 +377,7 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
     if operacion == 'seleccionar':
         parte = punto.parte
     elif operacion == 'guardar':
-        if not tecnica.plano_de_trabajo(ref, exp):
+        if not sin_cambio_mapa and not tecnica.plano_de_trabajo(ref, exp):
             raise PermissionDenied('El marcado exige un borrador de trabajo propio.')
         if parte_id or punto:
             parte = ref.partes.filter(pk=parte_id or punto.parte_id).first()
@@ -389,7 +401,7 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
                         datos['cantidad_referencia'] = cat['cantidad_referencia']
                 parte = registrar_componente_trabajo(usuario=usuario, empresa=empresa, referencia_id=ref.pk,
                     diagnostico_id=diag.pk, clave=uuid.uuid5(key,'componente'), datos=datos)
-    if operacion != 'seleccionar':
+    if operacion != 'seleccionar' and not sin_cambio_mapa:
         posiciones = [dict(parte=p.parte_id,pagina=p.pagina,x=str(p.x),y=str(p.y))
                       for p in mapa.posiciones.order_by('pk') if not punto or p.pk != punto.pk] if mapa else []
         if operacion == 'guardar':
@@ -399,6 +411,12 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
         if operacion == 'guardar': punto = mapa.posiciones.order_by('-pk').first()
     if operacion != 'retirar':
         pieza = diag.piezas.filter(parte=parte).order_by('pk').first()
+        if not pieza:
+            previa = diag.piezas.filter(parte__posicion=parte.posicion, parte__referencia__empresa=empresa,
+                parte__referencia__codigo=ref.codigo).exclude(parte__referencia=ref).select_related('parte__referencia').first()
+            if previa:  # misma posición ya elegida desde otra revisión del mismo catálogo: no se duplica
+                raise ValidationError(f'La posición {parte.posicion} ya está seleccionada desde el plano '
+                    f'r{previa.parte.referencia.revision}. Edite esa pieza en la lista de piezas seleccionadas.')
         if operacion != 'seleccionar' or not pieza:
             qty = cantidad if cantidad is not None else parte.cantidad_referencia
             if qty is None:

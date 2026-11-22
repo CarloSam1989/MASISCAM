@@ -361,7 +361,7 @@ class TresRolesBrowserTests(TresRolesFixture, StaticLiveServerTestCase):
                             page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR']) / f'{rol}-{width}.png'), full_page=True)
                         if rol == 'TALLER':
                             self.assertEqual(page.locator('#appMenu a').all_text_contents(),
-                                ['Inicio', 'Equipos', 'Mis trabajos', 'Planos y piezas', 'Mi cuenta'])
+                                ['Inicio', 'Reductores', 'Equipos', 'Mis trabajos', 'Mi cuenta'])
                             expect(page.locator('.mc-logout button')).to_have_text('Salir')
                         for link in page.locator('#appMenu a').all():
                             href = link.get_attribute('href')
