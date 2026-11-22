@@ -450,10 +450,16 @@ def enviar_revision(*,usuario,empresa,tipo,revision_id,version,clave):
             raise ValidationError('Complete y envíe los detalles técnicos de inspección antes de enviar el diagnóstico.')
         if obj.repuestos not in {'REQUERIDOS','SIN_REPUESTOS'} or (obj.repuestos=='REQUERIDOS') != obj.piezas.exists():
             errors['repuestos']='Registre piezas requeridas o declare que no se requieren; la lista debe coincidir.'
-        for p in obj.piezas.all():
-            _validar_pieza(p)
-            if p.parte_id and not _parte_aplicable(p.parte,exp):
-                raise ValidationError('La referencia de una pieza ya no está publicada o aplicable.')
+        for p in obj.piezas.select_related('parte__referencia__documento'):
+            etiqueta=f'Pieza «{p.numero_parte or p.descripcion[:40]}»'
+            try:
+                _validar_pieza(p)
+            except ValidationError as error:
+                raise ValidationError(f'{etiqueta}: {" ".join(error.messages)} Edítela en la lista de piezas seleccionadas.') from None
+            # Igual criterio que al seleccionarla: plano publicado y aplicable, o borrador de trabajo de este mismo expediente.
+            if p.parte_id and not (_parte_aplicable(p.parte,exp) or plano_de_trabajo(p.parte.referencia,exp)):
+                raise ValidationError(f'{etiqueta} proviene del plano {p.parte.referencia.codigo} r{p.parte.referencia.revision}, '
+                    'que ya no está publicado o aplicable a este equipo. Retire la pieza y selecciónela de nuevo desde el plano vigente.')
     if errors:
         raise ValidationError(errors)
     obj.enviado_en=timezone.now()

@@ -168,6 +168,76 @@ class PlanoTests(TestCase):
         self.assertEqual(nueva.piezas.get().fotografias.get().diagnostico_id, nueva.pk)
         self.assertNotEqual(nueva.piezas.get().pk, pk)
 
+    def _diagnostico_listo(self):
+        self.guardar(fotografias=[foto_pieza()])
+        self.diag.refresh_from_db()
+        tecnica.guardar_revision(usuario=self.tecnico, empresa=self.empresa, tipo='DIAGNOSTICO', revision_id=self.diag.pk,
+            version=self.diag.version_edicion, clave=uuid.uuid4(), datos=dict(fecha=timezone.localdate(),
+                fallas='QA', causas='QA', componentes_afectados='QA', recomendaciones='QA', conclusiones='QA', repuestos='REQUERIDOS'))
+        self.diag.refresh_from_db()
+
+    def _enviar(self):
+        return tecnica.enviar_revision(usuario=self.tecnico, empresa=self.empresa, tipo='DIAGNOSTICO', revision_id=self.diag.pk,
+            version=self.diag.version_edicion, clave=uuid.uuid4())
+
+    def test_validar_con_referencia_retirada_indica_pieza_y_como_corregir(self):
+        from .models import ReferenciaTecnica
+        self._diagnostico_listo()
+        ReferenciaTecnica.objects.filter(pk=self.ref.pk).update(estado='RETIRADA')
+        with self.assertRaises(ValidationError) as ctx: self._enviar()
+        mensaje=' '.join(ctx.exception.messages)
+        self.assertIn('Pieza «', mensaje); self.assertIn(self.ref.codigo, mensaje); self.assertIn('selecciónela de nuevo', mensaje)
+
+    def _posicion(self, ref, **kw):
+        from .models import Diagnostico
+        self.diag.refresh_from_db()
+        mapa = ref.mapas.order_by('-version').first()
+        datos = dict(usuario=self.tecnico, empresa=self.empresa, referencia_id=ref.pk, diagnostico_id=self.diag.pk,
+            clave=uuid.uuid4(), version=self.diag.version_edicion, mapa_version=mapa.version if mapa else 0,
+            operacion='guardar', cantidad='2', condicion='Desgaste QA', unidad='unidad', accion='EVALUAR')
+        datos.update(kw)
+        return svc.guardar_posicion_trabajo(**datos)
+
+    def _preparar_r2(self):
+        from types import SimpleNamespace
+        from .models import Auditoria, PosicionPlano, ReferenciaTecnica
+        self.mapa()
+        # PDF: marcador existente de la parte A sobre el plano publicado -> nace el borrador de trabajo r2.
+        punto = self.ref.mapas.order_by('-version').first().posiciones.get()
+        r2 = self._posicion(self.ref, punto_id=punto.pk, parte_id=self.parte.pk, pagina=1, x='0.5', y='0.4')
+        self.assertEqual((r2.revision, r2.estado, r2.expediente_trabajo_id), (self.ref.revision+1, 'BORRADOR', self.exp.pk))
+        # Lista: nuevo componente B en r2 y reedición de A desde su marcador; no se duplican piezas ni marcadores.
+        self._posicion(r2, posicion='B', descripcion='Componente B QA', pagina=1, x='0.2', y='0.2')
+        parte_a = r2.partes.get(posicion='A'); punto_a = r2.mapas.order_by('-version').first().posiciones.get(parte=parte_a)
+        self._posicion(r2, punto_id=punto_a.pk, parte_id=parte_a.pk, pagina=1, x=str(punto_a.x), y=str(punto_a.y), cantidad='3')
+        self.diag.refresh_from_db()
+        self.assertEqual(self.diag.piezas.count(), 2)
+        self.assertEqual(self.diag.piezas.get(parte=parte_a).cantidad, Decimal('3'))
+        self.assertEqual(r2.mapas.order_by('-version').first().posiciones.count(), 2)
+        self.assertEqual(ReferenciaTecnica.objects.filter(empresa=self.empresa, codigo=self.ref.codigo).count(), 2)
+        self.assertEqual(Auditoria.objects.filter(expediente=self.exp, accion='PLANO_POSICION_TRABAJO').count(), 3)
+        return r2, parte_a
+
+    def test_r2_provisional_pdf_y_lista_validan_y_se_rechazan_ajenas(self):
+        from types import SimpleNamespace
+        from .models import Auditoria
+        r2, parte_a = self._preparar_r2()
+        # Guardar y validar con enviar_revision.
+        tecnica.guardar_revision(usuario=self.tecnico, empresa=self.empresa, tipo='DIAGNOSTICO', revision_id=self.diag.pk,
+            version=self.diag.version_edicion, clave=uuid.uuid4(), datos=dict(fecha=timezone.localdate(),
+                fallas='QA', causas='QA', componentes_afectados='QA', recomendaciones='QA', conclusiones='QA', repuestos='REQUERIDOS', motivo_sin_evidencia='Sin evidencia general QA'))
+        self.diag.refresh_from_db(); antes = self.diag.version_edicion
+        # Piezas ajenas: otro expediente u otra empresa no son «plano de trabajo» de este expediente.
+        otro_exp = SimpleNamespace(pk=self.exp.pk+999, empresa_id=self.empresa.pk, registro=self.exp.registro)
+        otra_emp = SimpleNamespace(pk=self.exp.pk, empresa_id=self.empresa.pk+999, registro=self.exp.registro)
+        self.assertTrue(tecnica.plano_de_trabajo(r2, self.exp))
+        self.assertFalse(tecnica.plano_de_trabajo(r2, otro_exp)); self.assertFalse(tecnica.plano_de_trabajo(r2, otra_emp))
+        self.assertFalse(tecnica._parte_aplicable(parte_a, otra_emp))
+        enviado = self._enviar()
+        self.assertTrue(enviado.enviado_en); self.assertEqual(enviado.version_edicion, antes+1)
+        self.assertEqual(Auditoria.objects.filter(expediente=self.exp, accion='REVISION_ENVIADA', detalle__resultado=self.diag.pk).count(), 1)
+        self.assertEqual(enviado.piezas.count(), 2)
+
     def test_compatibilidad_completa_y_aprobacion_explicita(self):
         equipo = self.exp.registro.equipo
         equipo.marca, equipo.modelo = 'DERAN', 'M20A'
@@ -183,7 +253,7 @@ class PlanoTests(TestCase):
         equipo.rotacion = '#2'
         self.assertFalse(candidatos()['candidatos'])
         equipo.rotacion = ''
-        self.assertIn('rotacion', candidatos()['faltantes'])
+        self.assertIn('rotación', candidatos()['faltantes'])
         with self.assertRaises(PermissionDenied):
             tecnica.planos_compatibles_equipo(usuario=self.oficina, empresa=self.empresa, equipo=equipo)
 

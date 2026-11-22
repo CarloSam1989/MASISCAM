@@ -246,12 +246,16 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                 unico.locator('[name=fecha]').fill('2026-11-20')
                 unico.get_by_role('button',name='Guardar avance',exact=True).click()
                 expect(page.locator('#mf-diagnostico [name=fallas]')).to_have_value('Falla QA')
+                # Dos piezas seleccionadas (PDF y lista) sobre el plano provisional: validar no falla por la referencia.
+                page.get_by_role('button',name=re.compile('Validar diagnóstico')).click()
+                expect(page.get_by_text('No se confirmó el avance')).to_have_count(0)
+                expect(page.get_by_text('ya no está publicado o aplicable')).to_have_count(0)
                 context.close()
             finally:
                 browser.close()
         diagnostico=Diagnostico.objects.get(expediente=exp)
         self.assertEqual(diagnostico.fallas,'Falla QA')
-        self.assertFalse(diagnostico.enviado_en)
+        self.assertTrue(diagnostico.enviado_en)
         from . import flujo_services
         flujo_services.enviar_solicitud(usuario=self.usuarios['TALLER'],empresa=exp.empresa,diagnostico_id=diagnostico.pk,
             version=diagnostico.version_edicion,clave=uuid.uuid4(),preliminar=True)
@@ -265,5 +269,5 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
         self.assertContains(respuesta,'Componente QA')
         self.assertContains(respuesta,'Componente QA secundario')
         self.assertEqual(Inspeccion.objects.filter(expediente=exp).count(),1)
-        self.assertFalse(Inspeccion.objects.get(expediente=exp).enviado_en)
+        self.assertTrue(Inspeccion.objects.get(expediente=exp).enviado_en)
         self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())
