@@ -8,18 +8,22 @@
     return BigInt(whole + fraction.padEnd(digits,'0'));
   };
   function totals() {
-    let total=0n, complete=true;
-    form.querySelectorAll('[data-cantidad]').forEach(row => {
-      const price=scaled(row.querySelector('[data-precio]').value,2);
-      const qty=scaled(row.dataset.cantidad,6);
-      const output=row.querySelector('[data-total-pieza]');
-      if (price===null || qty===null) {output.textContent='—';complete=false;return;}
+    let total=0n, algunaLinea=false, complete=true;
+    form.querySelectorAll('[data-linea]').forEach(row => {
+      const desc=row.querySelector('[name$="_descripcion"]').value.trim();
+      const priceText=row.querySelector('[name$="_precio"]').value.trim();
+      const qtyText=row.querySelector('[name$="_cantidad"]').value.trim() || '1';
+      const output=row.querySelector('[data-total-linea]');
+      if (!desc && !priceText) {output.textContent='';return;}
+      const price=scaled(priceText,2), qty=scaled(qtyText,6);
+      if (!desc || price===null || qty===null) {output.textContent='—';complete=false;return;}
       const value=price*qty;
       let cents=value/1000000n;
       const remainder=value%1000000n;
       if (remainder>500000n || remainder===500000n && cents%2n) cents++;
-      output.textContent=money(cents);total+=cents;
+      output.textContent=money(cents);total+=cents;algunaLinea=true;
     });
+    complete=complete&&algunaLinea;
     document.querySelector('#oficina-total').textContent=complete?money(total):'—';
     form.querySelectorAll('[data-total-general]').forEach(output=>output.textContent=complete?money(total):'—');
   }

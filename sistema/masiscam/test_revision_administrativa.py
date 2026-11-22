@@ -31,7 +31,7 @@ class RevisionAdministrativaTests(qa.OficinaFixture,TestCase):
 
     def _verificar_post_cotizacion_oficina(self):
         payload = dict(op='cotizar', clave=uuid.uuid4(), referencia='COT-POST-QA',
-            **{f'precio_{self.pieza.pk}': '12.35'})
+            l0_descripcion='Servicio QA',l0_cantidad='2',l0_precio='12.35')
         response = self.client.post(self.url, payload, follow=True)
         self.assertEqual(response.redirect_chain, [(reverse('masiscam:oficina_inicio'), 302)])
         self.assertEqual(response.status_code, 200)

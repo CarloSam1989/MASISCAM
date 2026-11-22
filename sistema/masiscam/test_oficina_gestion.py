@@ -17,7 +17,7 @@ from .test_tres_roles import TresRolesFixture
 from . import test_flujo as qa_flujo
 from .test_operacion import presupuesto_qa, verificacion_qa
 from .test_tecnica import pdf_plano
-from .models import PropuestaComercial, EnvioRepuestos, RecepcionRepuesto, Auditoria
+from .models import PropuestaComercial, EnvioRepuestos, RecepcionRepuesto, Auditoria, AdquisicionRepuesto
 
 FLAGS=qa_flujo.FLAGS
 
@@ -33,7 +33,7 @@ class OficinaFixture(TresRolesFixture):
         self.client.force_login(self.oficina)
 
     def detalle(self,precio='12.35'):
-        return dict(moneda='USD',lineas=[dict(pieza=self.pieza.pk,precio_unitario=precio)],
+        return dict(moneda='USD',lineas=[dict(tipo='SERVICIO',descripcion='Reparación del reductor',cantidad='2',unidad='servicio',precio_unitario=precio)],
             factura=dict(numero='FACTURA-REFERENCIA-QA',fecha='2026-11-14'))
 
     def cotizar(self,**changes):
@@ -97,10 +97,37 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertEqual(propuesta.evidencias.count(),1)
 
     @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
+    def test_repuestos_son_informativos_y_no_entran_en_total_ni_inventario(self):
+        from io import BytesIO
+        from pypdf import PdfReader
+        from .flujo_models import AdquisicionRepuesto, EnvioRepuestos
+        from .models import Auditoria
+        self.preparar()
+        with self.assertRaises(ValidationError):   # no se acepta una línea por repuesto
+            self.cotizar(cotizacion=dict(self.detalle(),lineas=[dict(pieza=self.pieza.pk,precio_unitario='5.00')]))
+        detalle=dict(self.detalle('10.00'),lineas=[
+            dict(tipo='SERVICIO',descripcion='Reparación del reductor',cantidad='2',unidad='servicio',precio_unitario='10.00'),
+            dict(tipo='CONSUMIBLE',descripcion='Aceite ISO VG 220',cantidad='3.5',unidad='L',precio_unitario='4.00')])
+        propuesta=self.cotizar(archivo=None,cotizacion=detalle)
+        self.assertEqual(propuesta.snapshot['cotizacion']['total'],'34.00')   # 20.00 + 14.00; el repuesto no suma
+        self.assertTrue(all('pieza' not in r for r in propuesta.snapshot['cotizacion']['lineas']))
+        ev=s.generar_cotizacion_pdf(usuario=self.oficina,empresa=self.empresa,propuesta_id=propuesta.pk)
+        with ev.documento.archivo.open('rb') as f:text=chr(10).join(pg.extract_text() for pg in PdfReader(BytesIO(f.read())).pages)
+        for esperado in ('SERVICIOS COTIZADOS','Aceite ISO VG 220','34.00','REPUESTOS REQUERIDOS','no incluidos en el valor',self.pieza.descripcion):
+            self.assertIn(esperado,text)
+        self.assertLess(text.index('SERVICIOS COTIZADOS'),text.index('REPUESTOS REQUERIDOS'))
+        self.assertEqual(AdquisicionRepuesto.objects.count(),0)
+        self.assertEqual(EnvioRepuestos.objects.count(),0)
+        response=self.client.get(self.url)
+        self.assertContains(response,'Repuestos requeridos (no incluidos en el valor de la cotización)')
+        self.assertNotContains(response,'Precio unitario de ')
+        self.assertTrue(Auditoria.objects.filter(expediente=self.exp,accion='OFICINA_COTIZACION').exists())
+
+    @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
     def test_error_no_redirige_e_historial_conserva_versiones(self):
         self.preparar()
         response=self.client.post(self.url,dict(op='cotizar',clave=uuid.uuid4(),referencia='QA',
-            **{f'precio_{self.pieza.pk}':'invalido'}),follow=True)
+            l0_descripcion='Servicio QA',l0_cantidad='2',l0_precio='invalido'),follow=True)
         self.assertEqual(response.status_code,400)
         self.assertEqual(response.redirect_chain,[])
         self.assertEqual(PropuestaComercial.objects.count(),0)
@@ -150,29 +177,33 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertContains(response,'Pendiente de aprobación');self.assertNotContains(response,'Recepción y documentos')
         self.assertNotContains(response,'<footer class="mf-links">')
 
-    def test_autorizacion_disponibilidad_envio_y_recepcion(self):
+    def test_repuestos_del_cliente_sin_compra_ni_envio_y_reparacion_exige_recepcion(self):
         self.preparar();propuesta=self.cotizar()
-        with self.assertRaises(ValidationError):self.envio()
         self.aceptar(propuesta)
         self.assertFalse(self.client.get(self.url).context['oficina_envio'])
-        compra,envio=self.envio()
-        with self.assertRaises(ValidationError):self.cotizar(cotizacion=self.detalle('99.00'))
         self.assertEqual(s.autorizacion(self.sol).propuesta_id,propuesta.pk)
-        kwargs=dict(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,numero_guia=envio.numero_guia,
-            fecha=envio.fecha,lineas=[dict(adquisicion=compra.pk,cantidad='2')])
-        self.assertEqual(s.enviar_repuestos(**kwargs,clave=envio.clave).pk,envio.pk)
-        with self.assertRaises(ValidationError):s.enviar_repuestos(**kwargs,clave=uuid.uuid4())
-        self.assertEqual(EnvioRepuestos.objects.count(),1)
-        response=self.client.get(self.url);self.assertEqual(response.context['oficina_estado'],'Enviado a TALLER')
+        response=self.client.get(self.url)
+        for retirado in ('Registrar repuestos disponibles','Enviar repuestos a TALLER','oficina-enviar','oficina-disponibles'):
+            self.assertNotContains(response,retirado)
+        for op in ('adquirir','enviar'):   # acciones retiradas del flujo activo
+            self.assertEqual(self.client.post(self.url,dict(op=op,clave=uuid.uuid4())).status_code,400)
+        self.assertEqual(EnvioRepuestos.objects.count(),0)
+        accion=s.resumen(self.exp,self.oficina)['accion']
+        self.assertIn('/operacion/accion/repuesto/',accion['url'])
         self.client.force_login(self.taller)
-        self.assertContains(self.client.get(self.url),'data-notificacion-envio')
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(ValidationError):   # sin recepción/disponibilidad registrada no se repara
             o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
                 datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
-        self.recibir(envio)
+        o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
+            datos=dict(pieza_id=self.pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=self.pieza.numero_parte,
+                descripcion=self.pieza.descripcion,cantidad=str(self.pieza.cantidad),unidad=self.pieza.unidad,fecha=timezone.now(),guia='',discrepancia=''))
         self.assertEqual(RecepcionRepuesto.objects.count(),1)
+        self.assertEqual(EnvioRepuestos.objects.count(),0)
+        self.assertEqual(AdquisicionRepuesto.objects.count(),0)
+        o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
+            datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
 
-    test_reintentos_http=qa_flujo.FlujoTests.test_reintentos_http_no_duplican_solicitud_envio_ni_recepcion
+    test_reintentos_http=qa_flujo.FlujoTests.test_reintentos_http_no_duplican_solicitud_y_no_hay_compra_ni_envio
     test_sin_autorizacion=qa_flujo.FlujoTests.test_compras_y_reparaciones_no_se_crean_sin_autorizacion
     test_sin_repuestos=qa_flujo.FlujoTests.test_sin_repuestos_no_obliga_a_inventar_piezas_compras_o_envios
     test_recepcion_politica_retirada=qa_flujo.FlujoTests.test_recepcion_fisica_con_politica_retirada_no_autoriza_reparar
@@ -192,7 +223,7 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         with self.assertRaises(PermissionDenied):self.cotizar(usuario=ajena,empresa=otra)
         self.client.force_login(self.taller)
         self.assertEqual(self.client.post(self.url,dict(op='cotizar',clave=uuid.uuid4(),referencia='QA',moneda='USD',
-            **{f'precio_{self.pieza.pk}':'1'})).status_code,403)
+            l0_descripcion='Servicio QA',l0_cantidad='2',l0_precio='1')).status_code,403)
 
     def test_pdf_versionado_integridad_y_permisos(self):
         from io import BytesIO
@@ -262,8 +293,8 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         from .flujo_pdf import cotizacion_comercial
         contenido=cotizacion_comercial(dict(referencia='COTIZACION-EXTENSA-QA',version=1,fecha='14/11/2026',
             cliente=dict(cliente='Cliente ficticio de prueba',ruc='RUC-QA',equipo='DERAN',serie='SERIE-QA'),expediente='EXP-QA',
-            lineas=[dict(posicion=str(i),codigo=f'COD-QA-{i}',descripcion='Componente registrado por TALLER. '*5,
-                condicion='Desgaste registrado.',cantidad='2',precio_unitario='12.35',total='24.70') for i in range(1,36)],
+            lineas=[dict(tipo='SERVICIO',descripcion=f'Servicio QA {i} '*5,cantidad='2',unidad='servicio',precio_unitario='12.35',total='24.70') for i in range(1,36)],
+            repuestos=[dict(posicion=str(i),codigo=f'COD-QA-{i}',descripcion='Componente registrado por TALLER. '*3,cantidad='2',unidad='unidad',compatibilidad='Plano QA r2') for i in range(1,36)],
             total='864.50',observaciones='Observaciones de prueba. '*30,condiciones='Condiciones aportadas por OFICINA. '*20))
         pdf=PdfReader(BytesIO(contenido))
         self.assertGreater(len(pdf.pages),1)
@@ -294,7 +325,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 page=context.new_page();page.goto(self.live_server_url+self.url)
                 quote=page.locator('#oficina-cotizacion')
                 quote.locator('[name=referencia]').fill('COT-NAVEGADOR-QA')
-                quote.locator('[data-precio]').fill('12.35')
+                quote.locator('[name=l0_descripcion]').fill('Servicio QA');quote.locator('[name=l0_cantidad]').fill('2');quote.locator('[name=l0_precio]').fill('12.35')
                 quote.get_by_role('button',name='Guardar cotización y enviar a ADMINISTRADOR',exact=True).click()
                 page.get_by_role('button',name='Sí, continuar',exact=True).click()
                 expect(page).to_have_url(self.live_server_url+reverse('masiscam:oficina_inicio'))
@@ -396,9 +427,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 expect(page.get_by_role('button',name='Aprobar y enviar a TALLER',exact=True)).to_have_count(0)
                 quote=page.locator('#oficina-cotizacion')
                 expect(page.locator('[data-diagnostico-pendiente]')).to_be_visible()
-                expect(quote.locator('[data-cantidad-visible]')).to_have_text('2')
-                expect(quote.get_by_role('columnheader',name='Unidad registrada')).to_have_count(1)
-                quote.locator('[data-precio]').fill('12.35')
+                quote.locator('[name=l0_descripcion]').fill('Servicio QA');quote.locator('[name=l0_cantidad]').fill('2');quote.locator('[name=l0_precio]').fill('12.35')
                 expect(page.locator('#oficina-total')).to_have_text('24.70')
                 quote.locator('[name=referencia]').fill('COTIZACION-UI-QA')
                 expect(quote.locator('[name=moneda]')).to_have_count(0)
@@ -461,37 +490,14 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 page.get_by_role('button',name='Sí, continuar',exact=True).click()
                 expect(page.locator('#oficina-estado')).to_have_text('Autorizado')
                 expect(page.get_by_role('button',name='Aprobar y enviar a TALLER',exact=True)).to_have_count(0)
-                page.locator('#oficina-disponibles summary').click();buy=page.locator('#oficina-disponibles form')
-                buy.locator('[name=pieza_id]').select_option(str(self.pieza.pk))
-                for name,value in dict(cantidad='2',proveedor='Proveedor QA',referencia='FACTURA-UI-QA',fecha='2026-11-14T13:00').items():
-                    buy.locator(f'[name={name}]').fill(value)
-                buy.get_by_role('button',name='Guardar disponibilidad').click()
-                page.get_by_role('button',name='Sí, continuar',exact=True).click()
-                send=page.locator('#oficina-enviar');expect(send).to_be_visible()
+                for retirado in ('#oficina-disponibles','#oficina-enviar'):
+                    expect(page.locator(retirado)).to_have_count(0)
+                expect(page.get_by_text('Registrar repuestos disponibles')).to_have_count(0)
                 for width in (390,1440):
                     page.set_viewport_size(dict(width=width,height=1000))
-                    if os.environ.get('MASISCAM_UI_EVIDENCE_DIR'):
-                        from pathlib import Path
-                        page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/f'oficina-{width}.png'),full_page=True)
-                    overflow=page.evaluate('Array.from(document.querySelectorAll("body *")).filter(e=>e.getBoundingClientRect().right>innerWidth+1 && getComputedStyle(e).display!=="none" && !e.closest(".table-responsive")).map(e=>({tag:e.tagName,id:e.id,cls:e.className,right:e.getBoundingClientRect().right})).slice(0,12)')
-                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),overflow)
-                send.locator('[name=numero_guia]').fill('GUIA-UI-QA')
-                send.locator('[name=fecha]').fill('2026-11-14T14:00')
-                send.locator('[name^=cantidad_]').fill('2')
-                send.get_by_role('button',name='Enviar repuestos a TALLER',exact=True).click()
-                page.get_by_role('button',name='Sí, continuar',exact=True).click()
-                expect(page.locator('#oficina-estado')).to_have_text('Enviado a TALLER')
-                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=taller_cookie,url=self.live_server_url)])
-                page.goto(self.live_server_url+self.url)
-                expect(page.locator('[data-notificacion-envio]')).to_be_visible()
-                receive=page.locator('form').filter(has=page.locator('[name=op][value=recibir]'))
-                receive.locator('[name=fecha]').fill('2026-11-14T15:00')
-                receive.locator('[name^=cantidad_]').fill('2')
-                receive.get_by_role('button',name='Confirmar repuestos recibidos',exact=True).click()
-                page.get_by_role('button',name='Sí, continuar',exact=True).click()
-                expect(page.get_by_text('Recibida en taller',exact=False)).to_be_visible()
+                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
             finally:browser.close()
         propuesta=PropuestaComercial.objects.get(expediente=self.exp)
         self.assertEqual(propuesta.snapshot['cotizacion']['total'],'24.70')
-        self.assertEqual(EnvioRepuestos.objects.filter(expediente=self.exp).count(),1)
-        self.assertEqual(RecepcionRepuesto.objects.filter(expediente=self.exp).count(),1)
+        self.assertEqual(EnvioRepuestos.objects.filter(expediente=self.exp).count(),0)   # MASISCAM no envía repuestos
+        self.assertEqual(RecepcionRepuesto.objects.filter(expediente=self.exp).count(),0)   # aún no se registran repuestos del cliente

@@ -53,14 +53,14 @@ class OficinaTests(TestCase):
         panel=self.client.get(reverse('masiscam:oficina_inicio'))
         metrics={name:value for name,value,_ in panel.context['indicadores']}
         self.assertEqual(metrics['Solicitudes pendientes'],1)
-        self.assertEqual(metrics['Compras en proceso'],0)
+        self.assertNotIn('Compras en proceso',metrics)   # el flujo actual no compra ni envía repuestos
         self.comercial()
         compra,envio=self.envio()
         panel=self.client.get(reverse('masiscam:oficina_inicio'))
         metrics={name:value for name,value,_ in panel.context['indicadores']}
         self.assertEqual(metrics['Solicitudes pendientes'],0)
         self.assertEqual(metrics['Autorizaciones comerciales pendientes'],0)
-        self.assertEqual(metrics['Repuestos pendientes de envío'],0)
+        self.assertNotIn('Repuestos pendientes de envío',metrics)
         self.assertContains(self.client.get(reverse('masiscam:oficina_seccion',args=['ventas'])),self.exp.numero)
         self.assertContains(self.client.get(reverse('masiscam:oficina_seccion',args=['compras'])),compra.proveedor)
         self.assertContains(self.client.get(reverse('masiscam:oficina_seccion',args=['guias'])),envio.numero_guia)

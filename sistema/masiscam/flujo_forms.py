@@ -42,6 +42,8 @@ class CotizacionForm(BaseForm):
     observaciones=forms.CharField(required=False,widget=forms.Textarea(attrs={'rows':2}))
     condiciones=forms.CharField(required=False,max_length=20000,label='Condiciones comerciales',widget=forms.Textarea(attrs={'rows':3}))
 
+    LINEAS=8
+
     def __init__(self,*args,solicitud=None,propuesta=None,**kwargs):
         super().__init__(*args,**kwargs)
         self.filas=[]
@@ -50,17 +52,22 @@ class CotizacionForm(BaseForm):
         self.fields['factura_fecha']=forms.DateField(required=False,label='Fecha de factura',widget=forms.DateInput(attrs={'type':'date'}))
         actual=propuesta.snapshot.get('cotizacion',{}) if propuesta and propuesta.diagnostico_id==solicitud.diagnostico_id else {}
         if actual.get('moneda','USD')!='USD': actual={}
-        precios={r['pieza']:r for r in actual.get('lineas',[])}
+        previas=[r for r in actual.get('lineas',[]) if 'pieza' not in r]
         self.initial.update(condiciones=actual.get('condiciones',''),factura_numero=actual.get('factura',{}).get('numero',''),
             factura_fecha=actual.get('factura',{}).get('fecha',''),
             referencia=propuesta.snapshot.get('presupuesto_referencia','') if propuesta else '',
             observaciones=propuesta.observaciones if propuesta else '')
-        for pieza in solicitud.diagnostico.piezas.prefetch_related('fotografias__documento').order_by('pk'):
-            name=f'precio_{pieza.pk}'
-            self.fields[name]=DecimalFlexible(max_digits=14,decimal_places=2,min_value=0,
-                label=f'Precio unitario de {pieza.descripcion}',widget=forms.NumberInput(attrs={'class':'form-control','step':'.01','min':'0','data-precio':pieza.pk}))
-            self.initial[name]=precios.get(pieza.pk,{}).get('precio_unitario','')
-            self.filas.append(dict(pieza=pieza,posicion=(pieza.snapshot or {}).get('posicion',''),precio=self[name],total=precios.get(pieza.pk,{}).get('total','')))
+        for i in range(self.LINEAS):
+            previa=previas[i] if i<len(previas) else {}
+            campos=dict(tipo=forms.ChoiceField(choices=[('SERVICIO','Servicio'),('CONSUMIBLE','Consumible')],required=False,label='Tipo'),
+                descripcion=forms.CharField(max_length=500,required=False,label='Servicio o consumible'),
+                cantidad=DecimalFlexible(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'),required=False,label='Cantidad'),
+                unidad=forms.CharField(max_length=40,required=False,label='Unidad'),
+                precio=DecimalFlexible(max_digits=14,decimal_places=2,min_value=0,required=False,label='Precio unitario (USD)'))
+            for nombre,campo in campos.items():
+                self.fields[f'l{i}_{nombre}']=campo
+                self.initial[f'l{i}_{nombre}']=previa.get('precio_unitario' if nombre=='precio' else nombre,'')
+            self.filas.append({n:self[f'l{i}_{n}'] for n in campos}|dict(total=previa.get('total',''),indice=i))
         for field in self.fields.values(): field.widget.attrs.setdefault('class','form-control')
         self.fields['archivo'].widget.attrs['accept']='.pdf,application/pdf'
 
@@ -70,6 +77,16 @@ class CotizacionForm(BaseForm):
             raise forms.ValidationError('Las nuevas cotizaciones se registran exclusivamente en USD.')
         if bool(data.get('factura_numero'))!=bool(data.get('factura_fecha')):
             raise forms.ValidationError('Registre juntos el número y la fecha de la factura.')
+        self.lineas_validas=[]
+        for i in range(self.LINEAS if self.filas else 0):
+            d={n:data.get(f'l{i}_{n}') for n in ('tipo','descripcion','cantidad','unidad','precio')}
+            if not (d['descripcion'] or d['precio'] is not None or d['cantidad'] is not None): continue
+            if not d['descripcion'] or d['precio'] is None:
+                raise forms.ValidationError(f'La línea {i+1} requiere descripción y precio unitario.')
+            self.lineas_validas.append(dict(tipo=d['tipo'] or 'SERVICIO',descripcion=d['descripcion'],
+                cantidad=str(d['cantidad'] if d['cantidad'] is not None else 1),unidad=d['unidad'] or '',precio_unitario=str(d['precio'])))
+        if self.filas and not self.lineas_validas:
+            raise forms.ValidationError('Indique al menos un servicio o consumible cotizado. Los repuestos no se cotizan.')
         return data
 
     def clean_archivo(self):
@@ -84,7 +101,7 @@ class CotizacionForm(BaseForm):
         return dict(referencia=data['referencia'],observaciones=data['observaciones'],archivo=data['archivo'],
             cotizacion=dict(moneda='USD',condiciones=data['condiciones'],factura=dict(numero=data['factura_numero'],
                 fecha=data['factura_fecha'].isoformat() if data['factura_fecha'] else ''),
-                lineas=[dict(pieza=row['pieza'].pk,precio_unitario=str(data[row['precio'].name])) for row in self.filas]))
+                lineas=self.lineas_validas))
 
 
 class AdquisicionForm(BaseForm):

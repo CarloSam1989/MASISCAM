@@ -26,26 +26,40 @@ def cotizacion_comercial(s):
         [p('Equipo: '+str(c.get('equipo',''))),p('Serie: '+str(c.get('serie','')))],
         [p('Expediente: '+s['expediente']),p('Moneda: USD')]],colWidths=[300,215])
     info.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),5)]))
+    heading_s=ParagraphStyle('heading_s',parent=body,fontName='Helvetica-Bold',fontSize=10.5,leading=14)
     white=ParagraphStyle('white',parent=small,textColor=colors.white,fontName='Helvetica-Bold')
-    rows=[[p(label,white) for label in ('N.º en\nplano','Código','Descripción','Daño observado','Cantidad','Unidad','P. unitario\nUSD','Subtotal\nUSD')]]
-    for row in s['lineas']:
-        rows.append([p(row.get(key,''),small) for key in ('posicion','codigo','descripcion','condicion','cantidad','unidad','precio_unitario','total')])
-    if len(rows)==1:rows.append([p('Sin repuestos',small)]+[p('',small) for _ in range(7)])
-    table=LongTable(rows,colWidths=[40,52,115,80,43,43,65,77],repeatRows=1,splitInRow=1,hAlign='LEFT')
-    table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),navy),('TEXTCOLOR',(0,0),(-1,0),colors.white),
-        ('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5),
-        ('TOPPADDING',(0,0),(-1,-1),9),('BOTTOMPADDING',(0,0),(-1,-1),9),
-        ('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#f4f7fa')]),
-        ('LINEBELOW',(0,0),(-1,-1),.35,line)]))
-    totals=Table([[p('TOTAL GENERAL (USD)'),p(s['total'],heading)]],colWidths=[285,230])
+    def tabla(cabecera, filas, anchos, vacio):
+        rows = [[p(label, white) for label in cabecera]]
+        for fila in filas:
+            rows.append([p(value, small) for value in fila])
+        if len(rows) == 1:
+            rows.append([p(vacio, small)] + [p('', small) for _ in range(len(cabecera) - 1)])
+        table = LongTable(rows, colWidths=anchos, repeatRows=1, splitInRow=1, hAlign='LEFT')
+        table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),navy),('TEXTCOLOR',(0,0),(-1,0),colors.white),
+            ('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5),
+            ('TOPPADDING',(0,0),(-1,-1),9),('BOTTOMPADDING',(0,0),(-1,-1),9),
+            ('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#f4f7fa')]),
+            ('LINEBELOW',(0,0),(-1,-1),.35,line)]))
+        return table
+    servicios = tabla(('Tipo','Descripción','Cantidad','Unidad','P. unitario\nUSD','Subtotal\nUSD'),
+        [[r.get('tipo','').capitalize(), r.get('descripcion',''), r.get('cantidad',''), r.get('unidad',''),
+          r.get('precio_unitario',''), r.get('total','')] for r in s['lineas']],
+        [70,185,50,50,80,80], 'Sin servicios cotizados')
+    repuestos = tabla(('N.º en\nplano','Código','Descripción','Cantidad','Unidad','Compatibilidad'),
+        [[r.get('posicion',''), r.get('codigo',''), r.get('descripcion',''), r.get('cantidad',''), r.get('unidad',''),
+          r.get('compatibilidad','')] for r in s.get('repuestos', [])],
+        [45,70,150,45,45,160], 'Sin repuestos requeridos')
+    totals=Table([[p('TOTAL SERVICIOS (USD)'),p(s['total'],heading)]],colWidths=[285,230])
     totals.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#edf3f8')),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),12),('BOTTOMPADDING',(0,0),(-1,-1),12)]))
     acceptance=Table([[p('Nombre y cargo del cliente',small),p('Firma',small),p('Fecha',small)],['________________________','____________________','________________']],colWidths=[210,170,135])
     acceptance.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('TOPPADDING',(0,1),(-1,1),23)]))
-    story=[top,Spacer(1,18),info,Spacer(1,12),table,Spacer(1,12),totals,Spacer(1,18),
+    story=[top,Spacer(1,18),info,Spacer(1,12),p('SERVICIOS COTIZADOS',heading_s),servicios,Spacer(1,12),totals,Spacer(1,18),
+        p('REPUESTOS REQUERIDOS (no incluidos en el valor de la cotización)',heading_s),
+        p('Lista informativa de TALLER. MASISCAM no vende ni factura estos repuestos en esta cotización.',small),Spacer(1,4),repuestos,Spacer(1,18),
         p('OBSERVACIONES'),p(s['observaciones'] or 'Sin observaciones registradas.'),Spacer(1,8),
         p('CONDICIONES COMERCIALES'),p(s['condiciones'] or 'No registradas en esta versión.'),Spacer(1,14),
         KeepTogether([p('ACEPTACIÓN DEL CLIENTE'),acceptance,Spacer(1,10),
-            p('La aprobación de ADMINISTRADOR y la aceptación verificable del cliente son obligatorias antes de enviar repuestos a TALLER.',small)])]
+            p('La aprobación de ADMINISTRADOR y la aceptación verificable del cliente son obligatorias antes de ejecutar el servicio.',small)])]
     def footer(canvas,doc):
         canvas.saveState();canvas.setStrokeColor(line);canvas.line(40,36,555,36)
         canvas.setFont('Helvetica',7);canvas.setFillColor(navy)

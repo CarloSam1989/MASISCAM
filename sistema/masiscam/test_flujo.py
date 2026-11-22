@@ -228,7 +228,7 @@ class FlujoTests(TestCase):
         self.client.force_login(self.taller)
         self.assertEqual(self.client.get(url).status_code,200)
         self.assertTrue(consumir_respuesta(self.client.get(doc)).startswith(b'%PDF-'))
-        self.assertContains(self.client.get(reverse('masiscam:taller_inicio')),'Repuestos enviados')
+        self.assertContains(self.client.get(reverse('masiscam:taller_inicio')),'Envío histórico por confirmar')
         from django.test import Client
         csrf=Client(enforce_csrf_checks=True);csrf.force_login(self.taller)
         self.assertEqual(csrf.post(url,{'op':'solicitud','clave':str(uuid.uuid4())}).status_code,403)
@@ -267,9 +267,9 @@ class FlujoTests(TestCase):
         self.client.force_login(self.oficina)
         self.comercial()
         response=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk]))
-        self.assertEqual(response.context['accion']['op'],'adquirir')
+        self.assertIn('/operacion/accion/repuesto/',response.context['accion']['url'])
 
-    def test_reintentos_http_no_duplican_solicitud_envio_ni_recepcion(self):
+    def test_reintentos_http_no_duplican_solicitud_y_no_hay_compra_ni_envio(self):
         self.preparar_solicitud(enviar=False)
         url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
         datos={field:str(getattr(self.diag,field) or '') for field in t.DIA_FIELDS}
@@ -278,18 +278,12 @@ class FlujoTests(TestCase):
         self.sol=SolicitudRepuestos.objects.get(expediente=self.exp)
         self.assertEqual(self.client.post(url,dict(datos,fallas='Intento de cambiar contenido congelado')).status_code,400)
         self.assertEqual(SolicitudRepuestos.objects.count(),1)
-        self.comercial();compra,envio=self.envio()
+        self.comercial()
         self.client.force_login(self.oficina)
-        envio_data=dict(op='enviar',clave=str(envio.clave),fecha=envio.fecha.isoformat(),numero_guia=envio.numero_guia)
-        envio_data[f'cantidad_{compra.pk}']='2'
-        self.assertEqual(self.client.post(url,envio_data).status_code,302)
-        self.assertEqual(EnvioRepuestos.objects.count(),1)
-        confirmado=self.recibir(envio)
-        self.client.force_login(self.taller)
-        recibido=dict(op='recibir',clave=str(confirmado.clave),envio=str(envio.pk),fecha=confirmado.fecha.isoformat(),observaciones='')
-        recibido[f'cantidad_{envio.lineas.get().pk}']='2';recibido[f'diferencia_{envio.lineas.get().pk}']=''
-        self.assertEqual(self.client.post(url,recibido).status_code,302)
-        self.assertEqual(RecepcionRepuesto.objects.count(),1)
+        for op in ('adquirir','enviar'):   # compra y envío retirados del flujo activo
+            self.assertEqual(self.client.post(url,dict(op=op,clave=str(uuid.uuid4()))).status_code,400)
+        self.assertEqual(EnvioRepuestos.objects.count(),0)
+        self.assertEqual(RecepcionRepuesto.objects.count(),0)
 
     def test_recepcion_fisica_con_politica_retirada_no_autoriza_reparar(self):
         self.preparar_solicitud();self.comercial();_,envio=self.envio()

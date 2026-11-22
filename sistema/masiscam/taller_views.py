@@ -12,7 +12,7 @@ from django.shortcuts import redirect
 from django.db import transaction
 
 from .access import autorizar_creacion_equipo, equipos_taller, masiscam_access_required
-from .models import ActividadReparacion, Calibracion, CierreExpediente, Equipo, InformeFinal, EnvioRepuestos
+from .models import ActividadReparacion, Calibracion, CierreExpediente, DecisionComercial, Equipo, InformeFinal, EnvioRepuestos, RecepcionRepuesto
 from .recepcion_services import expedientes_autorizados
 
 
@@ -68,6 +68,9 @@ def estados_autorizados(request):
         cerrado=Exists(CierreExpediente.objects.filter(expediente_id=OuterRef('pk'))),
         tiene_reparacion=Exists(ActividadReparacion.objects.filter(expediente_id=OuterRef('pk'))),
         repuestos_enviados=Exists(EnvioRepuestos.objects.filter(expediente_id=OuterRef('pk'),confirmacion__isnull=True)),
+        # Flujo actual: servicios autorizados y aún sin reparación; el cliente aporta los repuestos.
+        repuestos_cliente=Exists(DecisionComercial.objects.filter(expediente_id=OuterRef('pk'),decision='APROBADO'))
+            & ~Exists(ActividadReparacion.objects.filter(expediente_id=OuterRef('pk'))),
     )
 
 

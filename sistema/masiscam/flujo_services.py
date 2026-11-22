@@ -177,29 +177,33 @@ def autorizacion(obj):
 
 
 def valorar_cotizacion(diag, detalle):
-    """Importes aportados por OFICINA; cantidades y totales proceden del servidor."""
+    """Servicios y consumibles aportados por OFICINA; cantidades y totales se recalculan en el servidor.
+    Los repuestos de TALLER son informativos: nunca forman parte de las líneas ni del total."""
     from datetime import date
     if not isinstance(detalle,dict) or detalle.get('moneda','USD')!='USD':
         raise ValidationError('Las nuevas cotizaciones se registran exclusivamente en USD.')
     filas=detalle.get('lineas')
-    if not isinstance(filas,list) or len(filas)>500:
-        raise ValidationError('Listado de precios inválido.')
-    piezas={p.pk:p for p in diag.piezas.all()}; vistos=set(); result=[]; total=Decimal('0')
+    if not isinstance(filas,list) or not filas or len(filas)>200:
+        raise ValidationError('Indique al menos un servicio o consumible cotizado.')
+    result=[]; total=Decimal('0')
     for fila in filas:
-        if not isinstance(fila,dict): raise ValidationError('Precio inválido.')
-        pk=fila.get('pieza')
-        if type(pk) is not int or pk not in piezas or pk in vistos: raise ValidationError('Pieza ajena o duplicada.')
-        try: precio=Decimal(str(fila.get('precio_unitario')))
-        except (InvalidOperation,ValueError): raise ValidationError('Precio inválido.') from None
+        if not isinstance(fila,dict) or 'pieza' in fila: raise ValidationError('Línea de cotización inválida: los repuestos no se cotizan.')
+        tipo=str(fila.get('tipo','SERVICIO')).strip().upper()
+        descripcion=str(fila.get('descripcion','')).strip(); unidad=str(fila.get('unidad','')).strip()
+        if tipo not in {'SERVICIO','CONSUMIBLE'} or not descripcion or len(descripcion)>500 or len(unidad)>40:
+            raise ValidationError('Cada línea requiere tipo (servicio o consumible) y descripción.')
+        try:
+            precio=Decimal(str(fila.get('precio_unitario'))); cantidad=Decimal(str(fila.get('cantidad','1')))
+        except (InvalidOperation,ValueError): raise ValidationError('Precio o cantidad inválidos.') from None
         if not precio.is_finite() or precio<0 or precio>=Decimal('1000000000000') or precio.as_tuple().exponent < -2:
             raise ValidationError('Precio no negativo, con un máximo de dos decimales y doce enteros.')
-        p=piezas[pk]
+        if not cantidad.is_finite() or cantidad<=0 or cantidad>=Decimal('100000000000000') or cantidad.as_tuple().exponent < -6:
+            raise ValidationError('Cantidad positiva con un máximo de seis decimales.')
         with localcontext() as context:
             context.prec=50
-            subtotal=(p.cantidad*precio).quantize(Decimal('.01')); total+=subtotal
-        result.append(dict(pieza=pk,cantidad=str(p.cantidad),precio_unitario=format(precio,'.2f'),total=format(subtotal,'.2f')))
-        vistos.add(pk)
-    if vistos!=set(piezas): raise ValidationError('Indique el precio de todas las piezas solicitadas.')
+            subtotal=(cantidad*precio).quantize(Decimal('.01')); total+=subtotal
+        result.append(dict(tipo=tipo,descripcion=descripcion,cantidad=format(cantidad.normalize(),'f'),unidad=unidad,
+            precio_unitario=format(precio,'.2f'),total=format(subtotal,'.2f')))
     factura=detalle.get('factura') or {}
     if not isinstance(factura,dict): raise ValidationError('Referencia de factura inválida.')
     numero=str(factura.get('numero','')).strip(); fecha=str(factura.get('fecha','')).strip()
@@ -209,7 +213,7 @@ def valorar_cotizacion(diag, detalle):
         except ValueError: raise ValidationError('Fecha de factura inválida.') from None
     condiciones=str(detalle.get('condiciones','')).strip()
     if len(condiciones)>20000: raise ValidationError('Condiciones comerciales demasiado extensas.')
-    return dict(moneda='USD',lineas=sorted(result,key=lambda row:row['pieza']),condiciones=condiciones,
+    return dict(moneda='USD',lineas=result,condiciones=condiciones,
         total=format(total,'.2f'),factura=dict(numero=numero,fecha=fecha))
 
 
@@ -230,18 +234,23 @@ def generar_cotizacion_pdf(*,usuario,empresa,propuesta_id):
         raise ValidationError('Guarde una cotización valorada en USD antes de generar su PDF.')
     sol=SolicitudRepuestos.objects.get(diagnostico=propuesta.diagnostico)
     if t._digest(sol.snapshot)!=sol.huella: raise ValidationError('Solicitud sin integridad documental.')
-    fuentes={r['pieza']:r for r in sol.snapshot['piezas']}
     lineas=[]
-    for precio in precios['lineas']:
-        fuente=fuentes[precio['pieza']]
+    for fila in precios['lineas']:
+        if 'pieza' in fila:   # cotizaciones históricas valoradas por pieza: se conservan tal como se registraron
+            fuente=next((r for r in sol.snapshot['piezas'] if r['pieza']==fila['pieza']),{})
+            fila=dict(tipo='REPUESTO (histórico)',descripcion=fuente.get('descripcion',''),cantidad=fila['cantidad'],
+                unidad=fuente.get('unidad',''),precio_unitario=fila['precio_unitario'],total=fila['total'])
+        lineas.append(fila)
+    repuestos=[]
+    for fuente in sol.snapshot['piezas']:
         origen=fuente.get('origen') or {}
-        lineas.append(dict(precio,posicion=origen.get('posicion',''),codigo=fuente['codigo'],
-            descripcion=fuente['descripcion'],condicion=fuente['condicion'],
-            cantidad=format(Decimal(precio['cantidad']).normalize(),'f'),unidad=fuente['unidad']))
+        compat=(f"Plano {origen['referencia']} r{origen.get('revision','')}"+(' (provisional)' if origen.get('provisional') else '')) if origen.get('referencia') else 'Sin plano de referencia'
+        repuestos.append(dict(posicion=origen.get('posicion',''),codigo=fuente['codigo'],descripcion=fuente['descripcion'],
+            cantidad=format(Decimal(fuente['cantidad']).normalize(),'f'),unidad=fuente['unidad'],compatibilidad=compat))
     from .flujo_pdf import cotizacion_comercial
     contenido=cotizacion_comercial(dict(referencia=propuesta.snapshot['presupuesto_referencia'],
         version=propuesta.version,fecha=timezone.localtime(propuesta.creado_en).strftime('%d/%m/%Y'),
-        cliente=propuesta.snapshot['cliente'],expediente=propuesta.snapshot['numero'],lineas=lineas,
+        cliente=propuesta.snapshot['cliente'],expediente=propuesta.snapshot['numero'],lineas=lineas,repuestos=repuestos,
         total=precios['total'],observaciones=propuesta.observaciones,condiciones=precios.get('condiciones','')))
     archivo=ContentFile(contenido,name=f'cotizacion-v{propuesta.version}.pdf')
     archivo.content_type='application/pdf'
@@ -273,8 +282,6 @@ def cotizar(*, usuario, empresa, solicitud_id, clave, referencia, observaciones=
             and (not hasattr(anterior,'decision') or anterior.decision.decision=='APROBADO')):
         t._event(exp,usuario,clave,'OFICINA_COTIZACION',payload,anterior.pk)
         return anterior
-    if cotizacion is not None and obj.adquisiciones.exists():
-        raise ValidationError('La cotización tiene repuestos registrados. Conserve su autorización y tramite una revisión de alcance antes de cambiar los importes.')
     if not t.vigente(obj.diagnostico):
         raise ValidationError('El diagnóstico fue sustituido; utilice la solicitud vigente.')
     if t._aprobado(obj.diagnostico):
@@ -287,9 +294,10 @@ def cotizar(*, usuario, empresa, solicitud_id, clave, referencia, observaciones=
     datos=dict(alcance=alcance,observaciones=observaciones,presupuesto_referencia=referencia)
     if cotizacion is not None:
         datos['cotizacion']=cotizacion
-        alcance+='\n'+cotizacion['moneda']+' · '+ '; '.join(
-            f"Pieza {r['pieza']}: unitario {r['precio_unitario']}, total {r['total']}" for r in cotizacion['lineas'])
-        datos['alcance']=alcance+'\nTotal: '+cotizacion['total']+'\nCondiciones comerciales: '+cotizacion['condiciones']
+        servicios='\n'.join(f"{r['tipo'].capitalize()}: {r['cantidad']} {r['unidad']} {r['descripcion']} · unitario {r['precio_unitario']} · total {r['total']}" for r in cotizacion['lineas'])
+        datos['alcance']=('Servicios cotizados ('+cotizacion['moneda']+'):\n'+servicios+'\nTotal: '+cotizacion['total']
+            +'\nRepuestos requeridos (informativos, no incluidos en el valor):\n'+alcance
+            +'\nCondiciones comerciales: '+cotizacion['condiciones'])
     result=o.proponer(usuario=usuario,empresa=empresa,expediente_id=exp.pk,diagnostico_id=obj.diagnostico_id,
         clave=uuid.uuid5(uuid.UUID(str(clave)),'propuesta') if payload else clave, datos=datos,archivo=archivo)
     if payload:
@@ -527,13 +535,12 @@ def resumen(exp, usuario):
             else:
                 pendientes=sol.envios.filter(confirmacion__isnull=True).order_by('pk')
                 faltan=any((o.RecepcionRepuesto.objects.filter(expediente=exp,pieza=p,numero_parte=p.numero_parte,unidad=p.unidad).aggregate(n=Sum('cantidad'))['n'] or 0)<p.cantidad for p in diag.piezas.all())
-                hay_disponibles=any(disponible(a)>0 for a in sol.adquisiciones.all())
                 if pendientes.exists():
-                    mensaje='Repuestos enviados. TALLER debe confirmar las cantidades realmente recibidas.'
+                    mensaje='Existe un envío histórico sin confirmar. TALLER debe confirmar las cantidades realmente recibidas.'
                     if role=='TALLER': accion=action('Confirmar repuestos recibidos',op='recibir')
                 elif faltan:
-                    mensaje='OFICINA debe completar la adquisición y el envío de los repuestos pendientes.'
-                    if role=='OFICINA': accion=action('Preparar guía y marcar enviados' if hay_disponibles else 'Registrar adquisición',op='enviar' if hay_disponibles else 'adquirir')
+                    mensaje='Servicios autorizados. El cliente aporta los repuestos: registre su recepción o disponibilidad antes de iniciar la reparación.'
+                    if role in {'TALLER','OFICINA'}: accion=action('Registrar repuestos del cliente',url=reverse('masiscam:operacion_operar',args=[exp.pk,'repuesto'])+'?flujo=1')
                 else:
                     paso=4; pasos[2]['estado']='Listo'
                     estado=o.estado(exp)

@@ -12,9 +12,11 @@ from .models import (SolicitudRepuestos, PropuestaComercial, DecisionComercial,
 
 SECCIONES = {
     'solicitudes':'Solicitudes de taller', 'cotizaciones':'Cotizaciones',
-    'compras':'Compras', 'ventas':'Ventas', 'guias':'Guías de envío',
+    'ventas':'Autorizaciones de servicio',
     'documentos':'Documentación comercial autorizada', 'cuenta':'Mi cuenta',
 }
+# Solo lectura de registros históricos: MASISCAM ya no compra ni envía repuestos.
+HISTORICAS = {'compras':'Compras históricas de repuestos', 'guias':'Guías de envío históricas'}
 
 
 def datos(empresa):
@@ -34,7 +36,7 @@ def datos(empresa):
 def inicio(request, seccion='inicio'):
     if not request.rol_masiscam or request.rol_masiscam.rol!='OFICINA':
         raise PermissionDenied('Espacio exclusivo de OFICINA.')
-    if seccion!='inicio' and seccion not in SECCIONES:
+    if seccion!='inicio' and seccion not in SECCIONES and seccion not in HISTORICAS:
         from django.http import Http404
         raise Http404
     solicitudes,propuestas,compras,decisiones,envios=datos(request.empresa_activa)
@@ -43,8 +45,6 @@ def inicio(request, seccion='inicio'):
     indicadores=[
         ('Solicitudes pendientes',pendientes.count(),'solicitudes'),
         ('Cotizaciones pendientes',por_aceptar.count(),'cotizaciones'),
-        ('Compras en proceso',compras.values('solicitud_id').distinct().count(),'compras'),
-        ('Repuestos pendientes de envío',compras.count(),'guias'),
         ('Autorizaciones comerciales pendientes',por_aceptar.count(),'ventas')]
     fuentes={'inicio':solicitudes,'solicitudes':solicitudes,'cotizaciones':propuestas,'compras':AdquisicionRepuesto.objects.filter(
         expediente__in=ExpedienteMantenimiento.objects.filter(empresa=request.empresa_activa)).exclude(expediente__registro__equipo__estado='INACTIVO'),
@@ -63,5 +63,5 @@ def inicio(request, seccion='inicio'):
             f'Guía {row.numero_guia}' if seccion=='guias' else
             'Aceptación del cliente registrada; su vigencia se verifica antes de operar.' if seccion=='ventas' else
             f'Cotización v{row.version}' if seccion=='cotizaciones' else 'Solicitud recibida de TALLER')
-    return render(request,'masiscam/oficina.html',dict(seccion=seccion,titulo=SECCIONES.get(seccion,'Inicio de oficina'),
+    return render(request,'masiscam/oficina.html',dict(seccion=seccion,titulo=SECCIONES.get(seccion) or HISTORICAS.get(seccion,'Inicio de oficina'),
         indicadores=indicadores,pagina=pagina,buscar=buscar))

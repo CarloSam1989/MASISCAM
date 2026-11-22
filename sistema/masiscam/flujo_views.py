@@ -11,7 +11,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET,require_http_methods
 from .access import masiscam_access_required
 from . import flujo_services as s, tecnica_services as t, operacion_services as o
-from .flujo_forms import CotizacionForm,AdquisicionForm,EnvioForm,ConfirmarEnvioForm,PiezaManualForm
+from .flujo_forms import CotizacionForm,ConfirmarEnvioForm,PiezaManualForm
 from .flujo_forms import PlanoTrabajoForm, EnviarPiezasForm, AplicarPlanoExistenteForm
 from .tecnica_forms import BaseForm,RevisionForm,EvidenciaForm
 from .tecnica_views import _error,_archivo
@@ -54,7 +54,7 @@ def contexto(request,exp,errores=None):
     if context['rol']=='OFICINA':
         comercial=context['propuesta'] if context['solicitud'] and context['propuesta'] and context['propuesta'].diagnostico_id==context['solicitud'].diagnostico_id else None
         context['pasos']=[dict(nombre=n,estado='Pendiente') for n in
-            ('Solicitud de taller','Cotización','Aceptación del cliente','Adquisición y envío','Entrega a taller')]
+            ('Solicitud de taller','Cotización','Aceptación del cliente','Repuestos del cliente','Servicio autorizado')]
         context['paso']=1
         if context['solicitud']: context['pasos'][0]['estado']='Listo';context['paso']=2
         if comercial: context['pasos'][1]['estado']='Listo';context['paso']=3
@@ -102,9 +102,7 @@ def contexto(request,exp,errores=None):
         except ValidationError:
             pass
         else:
-            if sol.snapshot['piezas']:
-                forms['adquirir']=AdquisicionForm(solicitud=sol)
-                forms['enviar']=EnvioForm(solicitud=sol)
+            pass   # Los repuestos los aporta el cliente: no hay compra ni envío desde MASISCAM.
         if prop and prop.diagnostico_id==sol.diagnostico_id and not hasattr(prop,'decision') and o._propuesta_vigente(prop):
             forms['aceptacion']=OperacionForm(op='decision',exp=exp,politica=o.politica())
             forms['aceptacion'].fields['propuesta_id'].queryset=o.PropuestaComercial.objects.filter(pk=prop.pk)
@@ -161,11 +159,8 @@ def contexto(request,exp,errores=None):
             oficina_bloqueo='; '.join(error.messages)
         else:
             oficina_estado='Autorizado'
-            if sol.envios.filter(lineas__adquisicion__autorizacion=auth).exists(): oficina_estado='Enviado a TALLER'
-            oficina_envio=any(s.disponible(a)>0 for a in sol.adquisiciones.filter(autorizacion=auth))
-            if not oficina_envio:
-                oficina_bloqueo=('Registre repuestos disponibles para preparar un envío; las salidas existentes se conservan.'
-                    if sol.snapshot['piezas'] else 'Solicitud sin repuestos: no requiere adquisiciones ni envíos; se mantienen los requisitos técnicos antes de reparar.')
+            oficina_bloqueo=('TALLER registra los repuestos aportados por el cliente antes de iniciar la reparación; MASISCAM no compra ni envía repuestos.'
+                if sol.snapshot['piezas'] else 'Solicitud sin repuestos: se mantienen los requisitos técnicos antes de reparar.')
     documentos_comerciales=[]
     if context['rol'] in {'OFICINA', 'ADMIN'}:
         for version in o.PropuestaComercial.objects.filter(expediente=exp).prefetch_related('evidencias__documento').order_by('-version'):
@@ -211,11 +206,11 @@ def contexto(request,exp,errores=None):
             cotizacion_pdf=next((ev for ev in pdfs if ev.clave==uuid.uuid5(prop.clave,'cotizacion-pdf-v1')),pdfs[0] if pdfs else None),
             diagnostico_datos=[(diag._meta.get_field(name).verbose_name,getattr(diag,name)) for name in t.DIA_FIELDS if getattr(diag,name)] if diag else [],
             evidencias_diagnostico=[ev for ev in t._evidencias(diag) if not ev.pieza_id] if diag else [])
-    cotizacion_bloqueo=('La cotización con repuestos registrados conserva sus importes y autorización; los cambios requieren una revisión de alcance.'
-        if sol and sol.adquisiciones.exists() else '')
+    cotizacion_bloqueo=''
     context.update(expediente=exp,equipo=exp.registro.equipo,inspeccion=ins,forms=forms,envio=envio,
-        oficina_estado=oficina_estado,oficina_bloqueo=oficina_bloqueo,oficina_envio=oficina_envio,
+        oficina_estado=oficina_estado,oficina_bloqueo=oficina_bloqueo,oficina_envio=False,
         diagnostico_pendiente=bool(diag and not diag.enviado_en),
+        repuestos_informativos=[dict(pieza=pz,posicion=(pz.snapshot or {}).get('posicion',''),compatibilidad=((f"Plano {pz.snapshot['referencia']} r{pz.snapshot.get('revision','')}") if (pz.snapshot or {}).get('referencia') else 'Sin plano de referencia')) for pz in sol.diagnostico.piezas.order_by('pk')] if sol else [],
         cotizacion_habilitada=not bool(cotizacion_bloqueo),cotizacion_bloqueo=cotizacion_bloqueo,
         documentos_comerciales=documentos_comerciales,
         revision_administrativa=revision_administrativa,revision_vigente=revision_vigente,
@@ -333,8 +328,6 @@ def detalle(request,pk):
     elif op=='manual' and diag:
         form=PiezaManualForm(request.POST,request.FILES);nombre='manual'
     elif op=='cotizar' and sol: form=CotizacionForm(request.POST,request.FILES,solicitud=sol,propuesta=ctx['propuesta']);nombre=op
-    elif op=='adquirir' and sol: form=AdquisicionForm(request.POST,request.FILES,solicitud=sol);nombre=op
-    elif op=='enviar' and sol: form=EnvioForm(request.POST,solicitud=sol);nombre=op
     elif op=='recibir' and sol:
         raw=request.POST.get('envio','')
         if not raw.isascii() or not raw.isdecimal() or len(raw)>18: raise Http404
@@ -402,11 +395,6 @@ def detalle(request,pk):
                 propuesta=data.pop('propuesta_id')
                 if propuesta.expediente_id!=exp.pk or propuesta.diagnostico_id!=sol.diagnostico_id: raise PermissionDenied('Propuesta ajena.')
                 o.respaldo_propuesta(**common,propuesta_id=propuesta.pk,clave=key,**data)
-            elif op=='adquirir' and sol:
-                data['pieza_id']=data['pieza_id'].pk
-                s.adquirir(**common,solicitud_id=sol.pk,clave=key,**data)
-            elif op=='enviar' and sol:
-                s.enviar_repuestos(**common,solicitud_id=sol.pk,clave=key,numero_guia=data['numero_guia'],fecha=data['fecha'],lineas=form.filas())
             elif op=='recibir' and sol:
                 s.confirmar_envio(**common,envio_id=envio.pk,clave=key,fecha=data['fecha'],lineas=form.filas(),observaciones=data['observaciones'])
             elif op=='final':

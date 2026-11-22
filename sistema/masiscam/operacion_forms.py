@@ -8,7 +8,7 @@ from .models import (Diagnostico,PropuestaComercial,RecepcionRepuesto,PiezaReque
 AREAS={'propuesta':{'OFICINA'},'decision':{'OFICINA'},'repuesto':{'OFICINA', 'ADMIN', 'TALLER'},
     'actividad':{'TALLER'},'uso':{'TALLER'},'foto':{'TALLER'},'resultado':{'TALLER'},
     'revision':{'ADMIN'},'documento':{'OFICINA', 'ADMIN'},'respaldo':{'OFICINA'},'foto_repuesto':{'OFICINA', 'ADMIN', 'TALLER'}}
-LABELS={'propuesta':'Propuesta comercial','decision':'Decisión del cliente','repuesto':'Recepción de repuesto',
+LABELS={'propuesta':'Propuesta comercial','decision':'Decisión del cliente','repuesto':'Registrar repuestos del cliente',
     'actividad':'Iniciar actividad','uso':'Repuesto utilizado','foto':'Fotografía de actividad',
     'resultado':'Resultado de actividad','revision':'Revisión de ADMINISTRADOR','documento':'Emitir documento interno',
     'respaldo':'Adjuntar respaldo comercial','foto_repuesto':'Fotografía de repuesto recibido'}
