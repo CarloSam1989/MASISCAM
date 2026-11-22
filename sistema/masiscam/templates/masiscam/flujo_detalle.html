@@ -1,4 +1,4 @@
-{% extends 'masiscam/base.html' %}{% load static %}
+{% extends 'masiscam/base.html' %}{% load static masiscam_assets %}
 {% block title %}{{ expediente.numero }} · Trabajo en curso{% endblock %}
 {% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/flujo.css' %}?v=20261125-unificado3">{% endblock %}
 {% block content %}<div class="container mf-app">
@@ -53,4 +53,4 @@
 {% if historial_disponible and rol != 'OFICINA' %}<div class="d-flex"><a class="btn btn-outline-primary" href="{% url 'masiscam:cierre_historial' equipo.pk %}">Historial autorizado</a></div>{% endif %}
 </div>{% endblock %}
 
-{% block javascript %}<script type="module" src="{% static 'masiscam/js/plano.js' %}?v=20261125-unificado3"></script><script src="{% static 'masiscam/js/flujo.js' %}?v=20261114-cotizacion-pdf" defer></script>{% endblock %}
+{% block javascript %}<script type="module" src="{% static_v 'masiscam/js/plano.js' %}"></script><script src="{% static 'masiscam/js/flujo.js' %}?v=20261114-cotizacion-pdf" defer></script>{% endblock %}

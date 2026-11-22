@@ -254,3 +254,35 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                 context.close()
             finally:
                 browser.close()
+
+    def test_regresion_visor_carga_sin_errores_js_y_con_huella_de_cache(self):
+        """El visor debe iniciar sin excepciones de JavaScript para cada rol y el script debe versionarse por contenido."""
+        from playwright.sync_api import sync_playwright, expect
+        cookies = {}
+        for nombre, usuario in (('TALLER', self.tecnico), ('ADMIN', self.planta), ('OFICINA', self.oficina)):
+            cliente = Client(); cliente.force_login(usuario)
+            cookies[nombre] = cliente.cookies[settings.SESSION_COOKIE_NAME].value
+        js = Path(__file__).parent/'static/masiscam/js/plano.js'
+        huella = hashlib.sha256(js.read_bytes()).hexdigest()[:12]
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(channel='msedge', headless=True)
+            try:
+                for ancho in (1440, 390):
+                    for nombre, galleta in cookies.items():
+                        context = browser.new_context(viewport={'width':ancho,'height':900})
+                        context.add_cookies([{'name':settings.SESSION_COOKIE_NAME,'value':galleta,'url':self.live_server_url}])
+                        page = context.new_page()
+                        errores = []
+                        page.on('pageerror', lambda error: errores.append(str(error)))
+                        consulta = '?diagnostico='+str(self.diag.pk) if nombre == 'TALLER' else ''
+                        page.goto(self.live_server_url+reverse('masiscam:plano',args=[self.ref.pk])+consulta)
+                        expect(page.locator('#pl-app')).to_have_attribute('data-ready','true',timeout=60000)
+                        self.assertEqual(errores, [], f'{nombre} {ancho}: {errores}')
+                        self.assertTrue(page.locator('#pl-canvas').evaluate('(c)=>c.width>0 && c.height>0'))
+                        expect(page.locator('.pl-part')).to_have_count(1)
+                        expect(page.locator('.pl-point')).to_have_count(1)
+                        src = page.locator('script[type=module][src*="plano.js"]').get_attribute('src')
+                        self.assertIn('?v='+huella, src)
+                        context.close()
+            finally:
+                browser.close()

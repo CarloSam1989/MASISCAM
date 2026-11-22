@@ -1,4 +1,4 @@
-{% extends 'masiscam/base.html' %}{% load static %}
+{% extends 'masiscam/base.html' %}{% load static masiscam_assets %}
 {% block title %}Plano interactivo · {{ referencia.codigo }}{% endblock %}
 {% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/plano.css' %}">{% endblock %}
 {% block content %}
@@ -45,4 +45,4 @@
   <noscript><p>Activa JavaScript para el visor. Puedes consultar el <a href="{% url 'masiscam:biblioteca_documento' referencia.pk %}">PDF original autorizado</a>.</p></noscript>
 </div>
 {% endblock %}
-{% block javascript %}<script type="module" src="{% static 'masiscam/js/plano.js' %}?v=20261124-catalogo"></script>{% endblock %}
+{% block javascript %}<script type="module" src="{% static_v 'masiscam/js/plano.js' %}"></script>{% endblock %}

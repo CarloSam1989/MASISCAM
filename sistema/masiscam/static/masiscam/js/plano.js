@@ -37,7 +37,9 @@ if (root) {
     sheet.addEventListener('input', () => pending.add(sheet));
     sheet.addEventListener('change', () => pending.add(sheet));
   }
-  const csrf = positionForm.querySelector('[name=csrfmiddlewaretoken]').value;
+  // El token se busca en cualquier formulario de la página (o en la cookie): un cambio del HTML no debe romper el visor.
+  const csrf = (positionForm?.querySelector('[name=csrfmiddlewaretoken]') || document.querySelector('[name=csrfmiddlewaretoken]'))?.value
+    || (document.cookie.split('; ').find(item => item.startsWith('masiscam_csrftoken=')) || '').split('=')[1] || '';
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;

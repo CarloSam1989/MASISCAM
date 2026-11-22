@@ -1,4 +1,4 @@
-{% extends 'masiscam/base.html' %}{% load static l10n %}
+{% extends 'masiscam/base.html' %}{% load static l10n masiscam_assets %}
 {% block title %}{{ expediente.numero }} · Revisión de expediente{% endblock %}
 {% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/flujo.css' %}?v=20261115-revision">{% endblock %}
 {% block content %}<div class="container mf-app" id="revision-expediente">
@@ -19,4 +19,4 @@
   </section>
   <details class="mf-card"><summary>Administración avanzada e historial</summary><p><a href="{% url 'masiscam:tecnica_expediente' expediente.pk %}?avanzado=1">Asignaciones y revisiones técnicas</a></p><p><a href="{% url 'masiscam:cierre_historial' equipo.pk %}">Historial del equipo</a></p></details>
 </div>{% endblock %}
-{% block javascript %}<script type="module" src="{% static 'masiscam/js/plano.js' %}?v=20261114-multiples"></script>{% endblock %}
+{% block javascript %}<script type="module" src="{% static_v 'masiscam/js/plano.js' %}"></script>{% endblock %}
