@@ -157,6 +157,13 @@ if (root) {
     if (!items.length) $('#pl-components').append(el('p', state.data.partes.length ? 'No hay componentes con estos criterios.' : 'Aún no hay componentes registrados. Pulsa un número del PDF para registrarlo manualmente; no se usa OCR.'));
     $('#pl-total').textContent = state.data.partes.length;
   }
+  // Desplaza el visor hasta el marcador resaltado (si la pieza aún no tiene coordenadas no se inventa ninguna).
+  function centrarMarcador() {
+    const marker = $('#pl-points .pl-point.is-active');
+    if (!marker || !viewport) return;
+    const m = marker.getBoundingClientRect(), v = viewport.getBoundingClientRect();
+    viewport.scrollBy({left: m.left + m.width / 2 - (v.left + v.width / 2), top: m.top + m.height / 2 - (v.top + v.height / 2)});
+  }
   function select(id, pointId = null) {
     state.active = id;
     const part = state.data.partes.find(item => item.id === id);
@@ -165,9 +172,9 @@ if (root) {
     state.point = point?.id || null;
     if (point && state.page !== Number(point.pagina)) {
       state.page = Number(point.pagina); $('#pl-page').value = state.page;
-      render().catch(error => message(error.message, true));
+      render().then(centrarMarcador).catch(error => message(error.message, true));
     }
-    list(); markers();
+    list(); markers(); centrarMarcador();
     const detail = $('#pl-detail'); detail.replaceChildren();
     detail.append(el('h3', `Posición ${part.posicion} · ${part.codigo || 'Código pendiente'}`), el('p', part.descripcion),
       el('p', `Fuente: ${quantity(part.cantidad) || 'cantidad no indicada'} ${part.unidad || '· unidad pendiente'}. La cantidad requerida debe indicarse expresamente.`));
@@ -315,16 +322,25 @@ if (root) {
       }
     }catch(error){if(mine===lookupSeq){status.classList.add('text-danger');status.textContent='No se pudo consultar el catálogo: '+error.message+' Puede continuar con el registro manual.';}}
   }
-  function posicionEscrita(){
+  // «confirmar»: Enter, salir del campo o elegir el componente. Mientras se escribe solo se consulta el catálogo
+  // (con debounce) y NUNCA se reemplaza lo escrito ni se bloquea el campo: «3» y «34» son posiciones distintas.
+  function posicionEscrita(confirmar=false){
     const number=positionForm.elements.posicion.value.trim();
     if(positionForm.elements.posicion.readOnly||!number)return;
-    // Si ya existe en este plano, se usa ese componente (evita duplicados); si no, se consulta el catálogo.
-    const existente=state.data.partes.find(item=>item.posicion===number);
-    if(existente&&String(existente.id)!==positionForm.elements.parte_id.value){positionForm.elements.parte_id.value=existente.id;fillPositionPart(existente);consultarCatalogo(number,false);return;}
+    const existente=state.data.partes.find(item=>item.posicion===number);   // coincidencia exacta, nunca por prefijo
+    if(confirmar&&existente){
+      // Si ya existe en este plano se usa ese componente (evita duplicados); el número escrito ya coincide exactamente.
+      if(String(existente.id)!==positionForm.elements.parte_id.value){positionForm.elements.parte_id.value=existente.id;fillPositionPart(existente);}
+      consultarCatalogo(number,false);return;
+    }
     if(!existente&&positionForm.elements.parte_id.value===''){consultarCatalogo(number,true);}
   }
-  positionForm?.elements.posicion.addEventListener('input',()=>{clearTimeout(lookupTimer);lookupTimer=setTimeout(posicionEscrita,350);});
-  positionForm?.elements.posicion.addEventListener('change',()=>{clearTimeout(lookupTimer);posicionEscrita();});
+  positionForm?.elements.posicion.addEventListener('input',()=>{clearTimeout(lookupTimer);lookupTimer=setTimeout(()=>posicionEscrita(false),700);});
+  positionForm?.elements.posicion.addEventListener('change',()=>{clearTimeout(lookupTimer);posicionEscrita(true);});
+  positionForm?.elements.posicion.addEventListener('keydown',event=>{
+    if(event.key!=='Enter')return;
+    event.preventDefault();clearTimeout(lookupTimer);posicionEscrita(true);   // Enter confirma el número; no guarda el formulario
+  });
   positionForm?.elements.descripcion.addEventListener('input',()=>{touched.descripcion=true;});
   positionForm?.elements.unidad.addEventListener('input',()=>{touched.unidad=true;});
   positionForm?.elements.fotografias.addEventListener('change',event=>{

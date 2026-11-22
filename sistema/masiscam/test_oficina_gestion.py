@@ -427,9 +427,10 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 expect(page.get_by_role('button',name='Aprobar expediente',exact=True)).to_be_enabled()
                 context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=taller_cookie,url=self.live_server_url)])
                 page.goto(self.live_server_url+self.url)
-                page.locator('#informacion-tecnica summary').click()
+                expect(page.locator('#informacion-tecnica')).to_be_visible()  # el formulario unificado ya no es un desplegable
                 page.get_by_role('button',name='Validar diagnóstico con ADMINISTRADOR',exact=True).click()
-                page.get_by_role('button',name='Sí, continuar',exact=True).click()
+                confirm=page.get_by_role('button',name='Sí, continuar',exact=True)
+                if confirm.count():confirm.click()
                 expect(page.locator('#mf-diagnostico')).to_have_count(0)
                 context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=admin_cookie,url=self.live_server_url)])
                 page.goto(self.live_server_url+reverse('masiscam:tecnica_expediente',args=[self.exp.pk]))

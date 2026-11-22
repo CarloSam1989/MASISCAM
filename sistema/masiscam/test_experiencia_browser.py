@@ -237,7 +237,9 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                 expect(page).to_have_url(flujo_url)
                 # Flujo vigente: el envío a OFICINA exige validar antes el diagnóstico, y un plano provisional no se valida:
                 # el botón sigue deshabilitado y el error real se muestra (no se oculta).
-                expect(page.get_by_role('button',name='Enviar a OFICINA',exact=True)).to_be_disabled()
+                # En la selección ya no hay envío: se continúa al diagnóstico y el envío aparece tras validarlo.
+                expect(page.get_by_role('button',name='Enviar a OFICINA',exact=True)).to_have_count(0)
+                expect(page.get_by_role('link',name='Continuar al diagnóstico')).to_be_visible()
                 unico=page.locator('#mf-diagnostico')
                 for nombre,valor in (('ins-estado_fisico','Estado QA'),('ins-condiciones_generales','Condiciones QA'),('ins-hallazgos','Hallazgos QA'),
                         ('fallas','Falla QA'),('causas','Causa QA'),('componentes_afectados','Componentes QA'),('recomendaciones','Recomendación QA'),('conclusiones','Conclusión QA')):

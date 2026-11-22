@@ -176,8 +176,9 @@ class PlanoDinamicoTests(DinamicoFixture, TestCase):
         self.assertEqual(self.diag.piezas.count(),1)
         self.assertEqual(self.diag.piezas.get().fotografias.count(),1)
         response=self.client.get(self.url)
-        for text in ('Seleccionar piezas','Enviar a OFICINA'):
+        for text in ('Seleccionar piezas','Continuar al diagnóstico'):
             self.assertContains(response,text)
+        self.assertNotContains(response,'Enviar a OFICINA')  # solo aparece tras validar el diagnóstico
         for text in ('Subir plano PDF','Agregar pieza manualmente','ADMINISTRADOR debe','detalles-tecnicos'):
             self.assertNotContains(response,text)
         self.assertNotContains(self.client.get(self.plano_url),'pl-config-toggle')

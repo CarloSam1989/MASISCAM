@@ -324,3 +324,105 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                 browser.close()
         refs = en_hilo(lambda: list(ReferenciaTecnica.objects.filter(codigo=codigo).values_list('revision','estado')))
         self.assertEqual(len(refs), base[0] + 1, refs)  # una sola revisión de trabajo
+
+    def _galleta(self, usuario):
+        cliente = Client(); cliente.force_login(usuario)
+        return cliente.cookies[settings.SESSION_COOKIE_NAME].value
+
+    def _abrir(self, pw, galleta, ancho, alto, ref_pk):
+        from playwright.sync_api import expect
+        browser = pw.chromium.launch(channel='msedge', headless=True)
+        context = browser.new_context(viewport={'width':ancho,'height':alto})
+        context.add_cookies([{'name':settings.SESSION_COOKIE_NAME,'value':galleta,'url':self.live_server_url}])
+        page = context.new_page()
+        page.goto(self.live_server_url+reverse('masiscam:plano',args=[ref_pk])+'?diagnostico='+str(self.diag.pk))
+        expect(page.locator('#pl-app')).to_have_attribute('data-ready','true',timeout=60000)
+        return browser, page
+
+    def test_numero_34_no_se_trunca_a_3_y_continuar_al_diagnostico(self):
+        from playwright.sync_api import sync_playwright, expect
+        from .tecnica_models import PiezaRequerida
+        galleta = self._galleta(self.tecnico)
+        with sync_playwright() as pw:
+            browser, page = self._abrir(pw, galleta, 1440, 1000, self.sin_mapa_id)
+            try:
+                def pieza(x, y, numero, pausa_ms):
+                    page.locator('#pl-canvas').click(position={'x':x,'y':y})
+                    expect(page.locator('#pl-position-dialog')).to_be_visible()
+                    campo = page.locator('#pl-position-number')
+                    for digito in numero:  # pausa mayor que el debounce: la consulta del primer dígito no debe pisar el siguiente
+                        campo.press_sequentially(digito); page.wait_for_timeout(pausa_ms)
+                    expect(campo).to_have_value(numero)
+                    self.assertFalse(campo.evaluate('c=>c.readOnly'))
+                    page.locator('#pl-position-description').fill(f'Pieza {numero}')
+                    page.locator('#pl-position-quantity').fill('1')
+                    page.locator('#pl-position-condition').fill('Daño QA')
+                    page.locator('#pl-position-save').click()
+                    expect(page.locator('#pl-position-dialog')).not_to_be_visible(timeout=15000)
+                pieza(200, 250, '3', 900)
+                pieza(300, 350, '34', 1000)      # «3» ya existe en el plano: no se adopta mientras se escribe «34»
+                pieza(380, 420, '345', 100)
+                expect(page.locator('#pl-count')).to_have_text('3')
+                self.assertEqual(len(page.locator('.pl-selected-card').all()), 3)
+                page.locator('#pl-canvas').click(position={'x':120,'y':140})
+                page.locator('#pl-position-number').press_sequentially('3')
+                page.locator('#pl-position-number').press('Enter')   # Enter confirma «3»: reutiliza el componente, no guarda
+                expect(page.locator('#pl-position-dialog')).to_be_visible()
+                expect(page.locator('#pl-position-number')).to_have_value('3')
+                page.locator('#pl-position-cancel').click()
+                page.locator('.swal2-confirm').click()   # descartar el borrador del formulario
+                expect(page.locator('#pl-position-dialog')).not_to_be_visible()
+                # Continuar al diagnóstico: mismo expediente, piezas conservadas, sin botón de envío en la etapa de selección.
+                expect(page.get_by_role('button',name='Enviar a OFICINA')).to_have_count(0)
+                page.get_by_role('link',name='Continuar al diagnóstico').click()
+                expect(page.locator('#mf-diagnostico')).to_be_visible()
+                expect(page.locator('#mf-piezas')).to_contain_text('Pieza 34')
+                page.locator('#mf-diagnostico').get_by_role('button',name='Guardar avance',exact=True).click()
+                expect(page.locator('#mf-piezas')).to_contain_text('Pieza 345')
+                expect(page.locator('#mf-diagnostico').get_by_role('button',name='Validar diagnóstico con ADMINISTRADOR')).to_be_visible()
+            finally:
+                browser.close()
+        piezas = en_hilo(lambda: sorted(PiezaRequerida.objects.filter(diagnostico=self.diag).values_list('parte__posicion', flat=True)))
+        self.assertEqual(piezas, ['3', '34', '345'])
+        codigo = ReferenciaTecnica.objects.get(pk=self.sin_mapa_id).codigo
+        self.assertEqual(en_hilo(lambda: ReferenciaTecnica.objects.filter(codigo=codigo).count()), 2)   # catálogo + un borrador
+
+    def test_lista_resalta_y_centra_marcador_y_scroll_del_formulario(self):
+        from playwright.sync_api import sync_playwright, expect
+        galleta = self._galleta(self.tecnico)
+        with sync_playwright() as pw:
+            for ancho, alto in ((1440, 900), (390, 640)):
+                browser, page = self._abrir(pw, galleta, ancho, alto, self.ref.pk)
+                try:
+                    if ancho < 992:
+                        page.get_by_role('tab',name='Plano',exact=True).click()
+                    for _ in range(3):
+                        page.locator('#pl-plus').click()
+                    page.locator('#pl-viewport').evaluate('v=>{v.scrollLeft=0;v.scrollTop=0}')
+                    if ancho < 992:
+                        page.get_by_role('tab',name='Componentes',exact=True).click()
+                    page.locator('.pl-part').click()
+                    if ancho < 992:
+                        page.get_by_role('tab',name='Plano',exact=True).click()
+                    expect(page.locator('.pl-point.is-active')).to_have_count(1)
+                    page.wait_for_timeout(300)
+                    dentro = page.evaluate("""()=>{const m=document.querySelector('.pl-point.is-active').getBoundingClientRect(),v=document.querySelector('#pl-viewport').getBoundingClientRect();
+                        return m.left>=v.left-1&&m.right<=v.right+1&&m.top>=v.top-1&&m.bottom<=v.bottom+1}""")
+                    self.assertTrue(dentro, f'marcador fuera del visor a {ancho}px')
+                    # Formulario: se desplaza por dentro, las acciones siguen visibles y la página se restaura al cerrar.
+                    page.locator('.pl-point.is-active').click()
+                    expect(page.locator('#pl-position-dialog')).to_be_visible()
+                    page.locator('#pl-position-form details').first.evaluate('d=>d.open=true')
+                    overflow = page.locator('#pl-position-dialog').evaluate('d=>getComputedStyle(d).overflowY')
+                    self.assertIn(overflow, ('auto','scroll'))
+                    page.locator('#pl-position-dialog').hover(); page.mouse.wheel(0, 600)
+                    page.wait_for_timeout(200)
+                    guardar = page.locator('#pl-position-save').bounding_box()
+                    self.assertTrue(0 <= guardar['y'] and guardar['y']+guardar['height'] <= alto+1, f'acciones fuera de pantalla a {ancho}px: {guardar}')
+                    page.locator('#pl-position-cancel').click()
+                    expect(page.locator('#pl-position-dialog')).not_to_be_visible()
+                    self.assertNotEqual(page.evaluate('getComputedStyle(document.body).overflow'), 'hidden')
+                    page.evaluate('window.scrollTo(0,0)'); page.mouse.move(5, alto-5); page.mouse.wheel(0, 300); page.wait_for_timeout(200)
+                    self.assertGreater(page.evaluate('window.scrollY'), 0)
+                finally:
+                    browser.close()
