@@ -316,6 +316,27 @@ class PlanoTests(TestCase):
             self._posicion(ref, usuario=ajeno, punto_id=puntos[0].pk, parte_id=puntos[0].parte_id, pagina=1, x=str(puntos[0].x), y=str(puntos[0].y))
         self.diag.refresh_from_db(); self.assertEqual(self.diag.piezas.count(), 20)
 
+    def test_plano_abierto_de_nuevo_o_de_otro_expediente_continua_sin_error_de_version(self):
+        from .models import Auditoria
+        self.mapa()
+        r1 = self.ref
+        # Primera pieza nueva: bifurca el borrador r2 del expediente (una sola vez).
+        r2 = self._posicion(r1, posicion='B', descripcion='Componente B QA', pagina=1, x='0.2', y='0.2')
+        self.assertEqual(r2.revision, r1.revision + 1)
+        # El visor sigue en r1 (pestaña vieja o enlace del catálogo): otra pieza nueva continúa sobre r2, sin error ni r3.
+        r_igual = self._posicion(r1, posicion='C', descripcion='Componente C QA', pagina=1, x='0.3', y='0.3',
+            mapa_version=r1.mapas.order_by('-version').first().version)
+        self.assertEqual(r_igual.pk, r2.pk)
+        self.assertEqual(ReferenciaTecnica.objects.filter(codigo=r1.codigo, empresa=self.empresa).count(), 2)
+        self.diag.refresh_from_db()
+        self.assertEqual(sorted(self.diag.piezas.values_list('descripcion', flat=True)), ['Componente B QA', 'Componente C QA'])
+        # Conflicto real: si el mapa del plano abierto cambió, se detecta y se pide recargar.
+        with self.assertRaises(ValidationError) as ctx:
+            self._posicion(r1, posicion='D', descripcion='D', pagina=1, x='0.4', y='0.4', mapa_version=99)
+        self.assertIn('El mapa cambió', ' '.join(ctx.exception.messages))
+        # Auditoría: cada guardado queda registrado.
+        self.assertTrue(Auditoria.objects.filter(expediente=self.exp, accion='PLANO_POSICION_TRABAJO').count() >= 2)
+
     def test_taller_no_sube_ni_administra_planos(self):
         self.client.force_login(self.tecnico)
         url = reverse('masiscam:flujo_detalle', args=[self.exp.pk])

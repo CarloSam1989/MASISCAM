@@ -286,3 +286,41 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                         context.close()
             finally:
                 browser.close()
+
+    def test_piezas_nuevas_consecutivas_sin_marcador_crean_una_sola_revision_y_la_reutilizan(self):
+        from playwright.sync_api import sync_playwright, expect
+        from .tecnica_models import PiezaRequerida
+        cliente = Client(); cliente.force_login(self.tecnico)
+        galleta = cliente.cookies[settings.SESSION_COOKIE_NAME].value
+        codigo = ReferenciaTecnica.objects.get(pk=self.sin_mapa_id).codigo
+        base = en_hilo(lambda: (ReferenciaTecnica.objects.filter(codigo=codigo).count(),))
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(channel='msedge', headless=True)
+            try:
+                for ancho in (1440, 390):
+                    context = browser.new_context(viewport={'width':ancho,'height':1000})
+                    context.add_cookies([{'name':settings.SESSION_COOKIE_NAME,'value':galleta,'url':self.live_server_url}])
+                    page = context.new_page()
+                    errores = []; pdfs = []
+                    page.on('pageerror', lambda e: errores.append(str(e)))
+                    page.on('request', lambda r: pdfs.append(r.url) if 'documento' in r.url and r.resource_type in ('fetch','xhr','other') else None)
+                    page.goto(self.live_server_url+reverse('masiscam:plano',args=[self.sin_mapa_id])+'?diagnostico='+str(self.diag.pk))
+                    expect(page.locator('#pl-app')).to_have_attribute('data-ready','true',timeout=60000)
+                    for numero, (x, y) in enumerate(((200, 250), (260, 320), (330, 380)), 1):
+                        if page.locator('.pl-selected-card').count() >= 3 and ancho == 390:
+                            break
+                        page.locator('#pl-canvas').click(position={'x':x+numero*(1 if ancho == 1440 else 0),'y':y})
+                        expect(page.locator('#pl-position-dialog')).to_be_visible()
+                        page.locator('#pl-position-number').fill(f'{ancho}-{numero}')
+                        page.locator('#pl-position-description').fill(f'Pieza nueva {ancho}-{numero}')
+                        page.locator('#pl-position-quantity').fill('1')
+                        page.locator('#pl-position-condition').fill('Daño QA')
+                        page.locator('#pl-position-save').click()
+                        expect(page.locator('#pl-position-dialog')).not_to_be_visible(timeout=15000)
+                        self.assertEqual(errores, [])
+                        self.assertNotIn('versión posterior', page.locator('#pl-message').inner_text())
+                    context.close()
+            finally:
+                browser.close()
+        refs = en_hilo(lambda: list(ReferenciaTecnica.objects.filter(codigo=codigo).values_list('revision','estado')))
+        self.assertEqual(len(refs), base[0] + 1, refs)  # una sola revisión de trabajo

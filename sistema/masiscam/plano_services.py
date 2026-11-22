@@ -336,6 +336,25 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
     mapa = ref.mapas.order_by('-version').first()
     if int(mapa_version) != (mapa.version if mapa else 0):
         raise ValidationError('El mapa cambió. Recargue antes de modificarlo.')
+    # La versión del mapa del cliente ya se validó. Si este expediente ya tiene su borrador de trabajo sobre este
+    # plano (abierto otra vez desde el catálogo o desde otra pestaña), se continúa sobre él en lugar de bifurcar de nuevo.
+    if operacion == 'guardar' and ref.estado == 'PUBLICADA':
+        borrador = ReferenciaTecnica.objects.select_for_update().filter(empresa=empresa, expediente_trabajo=exp,
+            estado='BORRADOR', sustituye=ref).order_by('-revision').first()
+        if borrador:
+            origen = mapa.posiciones.select_related('parte').filter(pk=punto_id).first() if mapa and punto_id else None
+            clave_parte = parte_id or (origen.parte_id if origen else None)
+            posicion_origen = ref.partes.filter(pk=clave_parte).values_list('posicion', flat=True).first() if clave_parte else None
+            ref = borrador
+            mapa = ref.mapas.order_by('-version').first()
+            mapa_version = mapa.version if mapa else 0
+            parte_id = punto_id = None
+            if posicion_origen is not None:
+                equivalente = ref.partes.filter(posicion=posicion_origen).first()
+                if not equivalente:
+                    raise ValidationError('La posición no existe en el plano de trabajo del expediente. Recargue el visor.')
+                parte_id = equivalente.pk
+                punto_id = mapa.posiciones.filter(parte=equivalente).values_list('pk', flat=True).first() if mapa else None
     punto = mapa.posiciones.filter(pk=punto_id).first() if mapa and punto_id else None
     if punto_id and not punto:
         raise ValidationError('La posición no pertenece a la versión vigente del mapa.')
@@ -352,9 +371,12 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
     if operacion == 'guardar' and ref.estado == 'PUBLICADA' and not sin_cambio_mapa:
         # No modificar el documento ni los componentes aprobados: continuar en
         # un borrador sucesor del expediente con el mismo PDF y fuentes.
+        # Solo una revisión posterior del catálogo invalida este plano; los borradores de trabajo de otros
+        # expedientes no lo hacen, pero sí ocupan números de revisión.
+        if ReferenciaTecnica.objects.filter(empresa=empresa, codigo=ref.codigo, expediente_trabajo__isnull=True,
+                revision__gt=ref.revision).exists():
+            raise ValidationError('El catálogo tiene una versión posterior de este plano. Abra el plano vigente desde el equipo.')
         siguiente = ReferenciaTecnica.objects.filter(empresa=empresa, codigo=ref.codigo).aggregate(n=Max('revision'))['n']
-        if siguiente != ref.revision:
-            raise ValidationError('Existe una versión posterior. Abra ese plano desde el expediente.')
         source = ref
         ref = tecnica._save(ReferenciaTecnica(empresa=empresa, documento=source.documento,
             expediente_trabajo=exp, autor=usuario, revision=siguiente+1, sustituye=source,
