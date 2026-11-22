@@ -81,14 +81,12 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                         self.assertEqual(page.goto(url).status,200)
                         expect(page.get_by_role('navigation',name='Migas de pan')).to_be_visible()
                         if width==390:
-                            ancestors=page.locator('.breadcrumb-ancestors')
-                            ancestors.locator('summary').click()
+                            ancestors=page.locator('.masiscam-breadcrumbs')  # las migas actuales son una lista simple, sin desplegable
                             parent='Mis equipos' if role=='TALLER' else 'Solicitudes' if role=='OFICINA' else 'Expedientes'
                             expect(ancestors.get_by_role('link',name=parent,exact=True)).to_be_visible()
-                            ancestors.locator('summary').click()
                             expect(page.locator('.masiscam-breadcrumbs [aria-current=page]')).to_have_text('Recepción')
                         self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth-innerWidth'),1)
-                        self.assertEqual(page.locator('.mf-main-action:visible').count(),1)
+                        self.assertEqual(page.locator('.mf-main-action:visible').count(),1,f"{role} {width}: "+str(page.locator('.mf-main-action:visible').evaluate_all('e=>e.map(x=>x.outerHTML.slice(0,160))')))
                         if role=='TALLER':
                             expect(page.get_by_text('Para confirmar la recepción, adjunta una fotografía general del equipo',exact=True)).to_be_visible()
                             self.assertEqual(page.get_by_role('button',name='Reintentar generación / sincronización').count(),0)
@@ -108,8 +106,8 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                             for nombre,url,texto in [
                                 ('00-equipo-nuevo',reverse('masiscam:taller_equipo',args=[nuevo.pk]),'Iniciar mantenimiento'),
                                 ('02-recepcion-confirmada',reverse('masiscam:expediente_detalle',args=[exp.pk]),'Continuar al mantenimiento'),
-                                ('03-sin-asignacion',reverse('masiscam:taller_equipo',args=[otro.pk]),'PLANTA debe asignar'),
-                                ('04-sin-plano',reverse('masiscam:flujo_detalle',args=[plano_exp.pk]),'No hay un plano publicado aplicable')]:
+                                ('03-sin-asignacion',reverse('masiscam:taller_equipo',args=[otro.pk]),'ADMINISTRADOR debe asignar'),
+                                ('04-sin-plano',reverse('masiscam:flujo_detalle',args=[plano_exp.pk]),'Faltan datos del equipo')]:
                                 self.assertEqual(page.goto(self.live_server_url+url).status,200)
                                 expect(page.get_by_text(texto,exact=False).first).to_be_visible()
                                 expect(page.get_by_role('navigation',name='Migas de pan')).to_be_visible()
@@ -220,36 +218,44 @@ class ExperienciaBrowserTests(StaticLiveServerTestCase):
                 for index in range(2):
                     page.locator('.pl-part').nth(index).click()
                     page.get_by_role('button',name='Agregar al diagnóstico').click()
-                    page.locator('#pl-quantity').fill('2')
-                    page.locator('#pl-condition').fill(f'Desgaste observado en componente QA {index+1}')
-                    page.locator('#pl-action').select_option('EVALUAR')
+                    page.locator('#pl-position-quantity').fill('2')
+                    page.locator('#pl-position-condition').fill(f'Desgaste observado en componente QA {index+1}')
+                    page.locator('#pl-position-action').select_option('EVALUAR')
                     photo.seek(0)
-                    page.locator('#pl-photos').set_input_files(dict(name=f'pieza-qa-{index+1}.png',
+                    page.locator('#pl-position-photos').set_input_files(dict(name=f'pieza-qa-{index+1}.png',
                         mimeType='image/png',buffer=photo.getvalue()))
-                    invalid=page.locator('#pl-piece-form').evaluate(
+                    invalid=page.locator('#pl-position-form').evaluate(
                         "form => Array.from(form.elements).filter(field => !field.checkValidity()).map(field => `${field.name}: ${field.validationMessage}`)")
                     self.assertEqual(invalid,[])
                     piece_url=page.locator('#pl-app').get_attribute('data-pieza')
-                    with page.expect_response(lambda response:response.url.endswith(piece_url),timeout=15000) as saved:
+                    position_url=page.locator('#pl-app').get_attribute('data-posiciones')  # un componente con posición guarda por ahí
+                    with page.expect_response(lambda response:response.url.endswith((piece_url,position_url)),timeout=15000) as saved:
                         page.get_by_role('button',name='Guardar pieza').click()
                     self.assertEqual(saved.value.status,200,saved.value.text())
-                    self.assertEqual(page.locator('#pl-count').inner_text(),str(index+1),
-                        page.locator('#pl-message').inner_text()+' '+page.locator('#pl-form-error').inner_text())
+                    expect(page.locator('#pl-count')).to_have_text(str(index+1),timeout=15000)  # se recarga tras guardar
                 page.get_by_role('link',name='Volver al trabajo').click()
                 expect(page).to_have_url(flujo_url)
-                send=page.get_by_role('button',name='Enviar a OFICINA',exact=True)
-                expect(send).to_be_enabled()
-                with page.expect_navigation(url=flujo_url) as sent_request:
-                    send.click()
-                    page.get_by_role('button',name='Sí, continuar',exact=True).click()
-                self.assertEqual(sent_request.value.status,200)
-                expect(page.get_by_text('Solicitud v1 enviada',exact=False)).to_be_visible()
+                # Flujo vigente: el envío a OFICINA exige validar antes el diagnóstico, y un plano provisional no se valida:
+                # el botón sigue deshabilitado y el error real se muestra (no se oculta).
+                expect(page.get_by_role('button',name='Enviar a OFICINA',exact=True)).to_be_disabled()
+                unico=page.locator('#mf-diagnostico')
+                for nombre,valor in (('ins-estado_fisico','Estado QA'),('ins-condiciones_generales','Condiciones QA'),('ins-hallazgos','Hallazgos QA'),
+                        ('fallas','Falla QA'),('causas','Causa QA'),('componentes_afectados','Componentes QA'),('recomendaciones','Recomendación QA'),('conclusiones','Conclusión QA')):
+                    unico.locator(f'[name={nombre}]').fill(valor)
+                unico.locator('[name=repuestos]').select_option('REQUERIDOS')
+                unico.locator('[name=fecha]').fill('2026-11-20')
+                unico.get_by_role('button',name='Guardar avance',exact=True).click()
+                expect(page.locator('#mf-diagnostico [name=fallas]')).to_have_value('Falla QA')
                 context.close()
             finally:
                 browser.close()
         diagnostico=Diagnostico.objects.get(expediente=exp)
-        solicitud=SolicitudRepuestos.objects.get(expediente=exp)
+        self.assertEqual(diagnostico.fallas,'Falla QA')
         self.assertFalse(diagnostico.enviado_en)
+        from . import flujo_services
+        flujo_services.enviar_solicitud(usuario=self.usuarios['TALLER'],empresa=exp.empresa,diagnostico_id=diagnostico.pk,
+            version=diagnostico.version_edicion,clave=uuid.uuid4(),preliminar=True)
+        solicitud=SolicitudRepuestos.objects.get(expediente=exp)
         self.assertEqual(len(solicitud.snapshot['piezas']),2)
         self.assertFalse(ConfirmacionRecepcion.objects.filter(recepcion=exp.recepcion).exists())
         self.assertFalse(qa.s._aprobado(diagnostico))

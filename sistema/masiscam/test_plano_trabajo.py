@@ -144,7 +144,7 @@ class PlanoTrabajoTests(TrabajoFixture, TestCase):
         self.assertEqual(self.ref.estado, 'BORRADOR')
         self.assertFalse(AplicabilidadReferenciaEquipo.objects.filter(referencia=self.ref).exists())
         self.assertFalse(self.ref.partes.exists())
-        self.assertContains(self.client.get(self.plano_url), 'plano no aprobado')
+        self.assertContains(self.client.get(self.plano_url), 'Plano de trabajo')  # sin textos de aprobación para TALLER/OFICINA
         docs = Documento.objects.count()
         planos.cargar_plano_trabajo(usuario=self.taller, empresa=self.empresa, expediente_id=self.exp.pk,
             clave=uuid.uuid4(), archivo=SimpleUploadedFile('plano-qa.pdf', self.pdf, content_type='application/pdf'))
@@ -188,7 +188,7 @@ class PlanoTrabajoTests(TrabajoFixture, TestCase):
                 clave=uuid.uuid4(), version=self.diag.version_edicion, pieza_id=pieza.pk, operacion='retirar')
         self.client.force_login(self.oficina)
         self.assertContains(self.client.get(self.url), DESCRIPCION_COMPONENTE)
-        self.assertContains(self.client.get(self.plano_url), 'plano no aprobado')
+        self.assertContains(self.client.get(self.plano_url), 'Plano de trabajo')  # sin textos de aprobación para TALLER/OFICINA
         self.assertFalse(self.client.get(reverse('masiscam:plano_datos', args=[self.ref.pk]),
             {'diagnostico': self.diag.pk}).json()['editable'])
         from .test_utils import consumir_respuesta
@@ -364,7 +364,7 @@ class PlanoTrabajoBrowserTests(TrabajoFixture, StaticLiveServerTestCase):
                 page.locator('#mf-plano input[type=file]').set_input_files(dict(
                     name=Path(PDF_REAL).name if PDF_REAL else 'plano-qa.pdf', mimeType='application/pdf', buffer=pdf))
                 expect(page.locator('#pl-app')).to_have_attribute('data-ready', 'true', timeout=20000)
-                expect(page.get_by_text('Borrador de trabajo — plano no aprobado.', exact=True)).to_be_visible()
+                expect(page.get_by_text('Plano de trabajo.', exact=True)).to_be_visible()
                 expect(page.locator('#pl-canvas')).to_be_visible()
                 for width in (1440, 390):
                     page.set_viewport_size(dict(width=width, height=1000))

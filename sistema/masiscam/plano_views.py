@@ -152,6 +152,8 @@ class PosicionTrabajoForm(BaseForm):
     cantidad = DecimalFlexible(max_digits=20, decimal_places=6, min_value=Decimal('0.000001'), required=False)
     condicion = forms.CharField(max_length=20000, required=False)
     unidad = forms.CharField(max_length=80, required=False)
+    accion = forms.ChoiceField(choices=[('', '')] + [(a, a) for a in ('REEMPLAZAR', 'REPARAR', 'REUTILIZAR', 'EVALUAR')], required=False)
+    observaciones = forms.CharField(max_length=20000, required=False)
 
     def clean(self):
         data = super().clean()
@@ -244,7 +246,7 @@ def plano_mapa(request, pk):
     mapa = svc.guardar_mapa(usuario=request.user, empresa=request.empresa_activa, referencia_id=pk,
         base_version=version, posiciones=posiciones, clave=key)
     return JsonResponse({'version': mapa.version, 'provisional': mapa.provisional,
-        'mensaje': 'Posiciones provisionales guardadas; pendientes de revisión de ADMINISTRADOR.' if mapa.provisional else 'Posiciones revisadas y publicadas en una nueva versión.'})
+        'mensaje': 'Posiciones guardadas.' if mapa.provisional else 'Posiciones revisadas y publicadas en una nueva versión.'})
 
 
 class SeleccionForm(BaseForm):
@@ -284,7 +286,7 @@ def plano_pieza(request, pk):
         version=version, clave=key, datos=data if op == 'guardar' else None, pieza_id=pieza_id,
         operacion=op, evidencia_id=evidencia_id, fotografias=request.FILES.getlist('fotografias'))
     obj.refresh_from_db()
-    return JsonResponse(dict(version=obj.version_edicion, piezas=piezas_json(obj), mensaje='Borrador guardado. No se han autorizado compras ni reparaciones.'))
+    return JsonResponse(dict(version=obj.version_edicion, piezas=piezas_json(obj), mensaje='Pieza guardada en el diagnóstico.'))
 
 
 class CatalogoForm(BaseForm):

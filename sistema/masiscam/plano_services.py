@@ -298,7 +298,7 @@ def guardar_mapa(*, usuario, empresa, referencia_id, base_version, posiciones, c
 def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id, clave,
                             version, mapa_version, operacion, punto_id=None, parte_id=None,
                             pagina=None, x=None, y=None, posicion='', descripcion='',
-                            cantidad=None, condicion='', unidad='', fotografias=()):
+                            cantidad=None, condicion='', unidad='', fotografias=(), accion='', observaciones=''):
     """Un gesto manual guarda componente, mapa versionado y selección en conjunto."""
     from accounts.models import Empresa
     tecnica.autorizar_tecnica(usuario, empresa, {'TALLER'})
@@ -313,6 +313,8 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
     payload = dict(referencia=ref.pk, diagnostico=diag.pk, version=version, mapa=mapa_version,
         operacion=operacion, punto=punto_id, parte=parte_id, pagina=pagina, x=x, y=y,
         posicion=posicion, descripcion=descripcion, cantidad=cantidad, condicion=condicion, unidad=unidad)
+    if accion or observaciones:
+        payload.update(accion=accion, observaciones=observaciones)
     if fotografias:
         if operacion != 'guardar':
             raise ValidationError('Las fotografías se adjuntan al guardar una pieza.')
@@ -414,7 +416,8 @@ def guardar_posicion_trabajo(*, usuario, empresa, referencia_id, diagnostico_id,
                     cantidad=qty, unidad=parte.unidad or unidad or (pieza.unidad if pieza else ''),
                     motivo_unidad_pendiente='Unidad pendiente de identificación' if not (parte.unidad or unidad) else '',
                     condicion=condicion.strip() or (pieza.condicion if pieza else 'Pendiente de inspección'),
-                    accion=pieza.accion if pieza else 'EVALUAR', observaciones=pieza.observaciones if pieza else ''))
+                    accion=accion or (pieza.accion if pieza else 'EVALUAR'),
+                    observaciones=observaciones.strip() or (pieza.observaciones if pieza else '')))
     tecnica.evento(exp, usuario, 'PLANO_POSICION_TRABAJO', clave=str(clave), huella=tecnica._digest(payload),
         resultado=ref.pk, diagnostico=diag.pk, operacion=operacion,
         parte=parte.pk if operacion!='retirar' else punto.parte_id,

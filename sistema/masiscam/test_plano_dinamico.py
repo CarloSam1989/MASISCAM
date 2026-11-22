@@ -99,6 +99,69 @@ class PlanoDinamicoTests(DinamicoFixture, TestCase):
         self.assertEqual((manual.numero_parte, manual.cantidad_referencia), ('', None))
         self.assertEqual(cat.partes.count(), 1)
 
+    def test_taller_formulario_unico_guardar_validar_y_sin_textos_de_aprobacion(self):
+        from .models import Diagnostico, Inspeccion
+        self.cargar()
+        r = self.client.get(self.url)
+        html = r.content.decode()
+        for ausente in ('Evidencias de inspección', 'Etapas de TALLER', 'Guardar detalles técnicos', 'Validar y enviar inspección'):
+            self.assertNotIn(ausente, html)
+        for texto in ('pendiente de aprobación', 'debe aprobar', 'requiere aprobación', 'plano no aprobado', 'se mantienen los requisitos de aprobación'):
+            self.assertNotIn(texto, html.lower(), texto)
+        self.assertContains(r, 'Diagnóstico e información técnica')
+        self.assertEqual(html.count('id="mf-diagnostico"'), 1)
+        fila = html[html.index('mf-acciones-form'):]
+        fila = fila[:fila.index('</div>')]
+        self.assertIn('Guardar avance', fila)
+        self.assertIn('Validar diagnóstico con ADMINISTRADOR', fila)
+        forms = r.context['forms']
+        self.assertIn('diagnostico', forms)
+
+        def datos(**cambios):
+            valores = {}
+            for nombre in ('diagnostico', 'inspeccion'):
+                if nombre in forms:
+                    valores.update({bf.html_name: ('' if bf.value() is None else bf.value()) for bf in forms[nombre]})
+            valores.update(cambios)
+            return valores
+
+        base = dict(op='guardar', fallas='Daño QA', causas='Desgaste QA', componentes_afectados='Eje QA', recomendaciones='Cambiar QA',
+                    conclusiones='Conclusión QA', repuestos='SIN_REPUESTOS', fecha='2026-11-20')
+        if 'inspeccion' in forms:
+            base.update({'ins-estado_fisico': 'Estado QA', 'ins-condiciones_generales': 'Condiciones QA', 'ins-hallazgos': 'Hallazgos QA'})
+        r = self.client.post(self.url, datos(**base))
+        self.assertEqual(r.status_code, 302, __import__('re').findall(r'(?:alert-danger|mf-error|text-danger)[^<]*<[^>]*>[^<]{0,160}|<li>[^<]{5,160}', r.content.decode()) if r.status_code != 302 else '')
+        diag = Diagnostico.objects.get(pk=self.diag.pk)
+        self.assertEqual((diag.fallas, diag.causas, diag.enviado_en), ('Daño QA', 'Desgaste QA', None))
+        if 'inspeccion' in forms:
+            ins = Inspeccion.objects.get(pk=diag.inspeccion_id)
+            self.assertEqual((ins.estado_fisico, ins.hallazgos), ('Estado QA', 'Hallazgos QA'))
+            self.assertTrue(ins.fecha)  # la fecha del diagnóstico se aplica a la inspección
+        # Un error real de validación no se oculta ni se envía nada: sin fallas la validación no pasa.
+        self.client.get(self.url)
+        forms = self.client.get(self.url).context['forms']
+        r = self.client.post(self.url, datos(**dict(base, op='validar', fallas='')))
+        self.assertEqual(r.status_code, 400)
+        self.assertContains(r, 'Campo obligatorio', status_code=400)
+        self.assertIsNone(Diagnostico.objects.get(pk=self.diag.pk).enviado_en)
+        # Validar: envía inspección y diagnóstico sin exigir evidencias de inspección.
+        self.client.get(self.url)
+        r = self.client.get(self.url)
+        forms = r.context['forms']
+        r = self.client.post(self.url, datos(**dict(base, op='validar')))
+        self.assertEqual(r.status_code, 302, __import__('re').findall(r'(?:alert-danger|mf-error|text-danger)[^<]*<[^>]*>[^<]{0,160}|<li>[^<]{5,160}', r.content.decode()) if r.status_code != 302 else '')
+        diag.refresh_from_db()
+        self.assertIsNotNone(diag.enviado_en)
+        ins = Inspeccion.objects.get(pk=diag.inspeccion_id)
+        self.assertIsNotNone(ins.enviado_en)
+        # El motivo automático queda guardado y auditado; no se crean evidencias ficticias.
+        from .flujo_views import MOTIVO_INSPECCION_SIN_EVIDENCIA
+        from .models import Auditoria
+        self.assertEqual((diag.motivo_sin_evidencia, ins.motivo_sin_evidencia), (MOTIVO_INSPECCION_SIN_EVIDENCIA,) * 2)
+        self.assertEqual((diag.evidencias.count(), ins.evidencias.count()), (0, 0))
+        self.assertTrue(Auditoria.objects.filter(expediente=self.exp, accion='REVISION_GUARDADA', usuario=self.taller).count() >= 3)
+        self.assertEqual(Auditoria.objects.filter(expediente=self.exp, accion='REVISION_ENVIADA', usuario=self.taller).count(), 2)
+
     def test_posicion_con_fotos_atomica_reintento_y_ux_sin_duplicados(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         self.cargar()
@@ -363,7 +426,7 @@ class PlanoDinamicoBrowserTests(DinamicoFixture, StaticLiveServerTestCase):
                 expect(page.locator('#pl-total')).to_have_text('1')
                 expect(page.locator('#pl-app')).to_have_attribute('data-ready','true')
                 expect(page.locator('#pl-count')).to_have_text('1')
-                expect(page.get_by_text('Borrador de trabajo — plano no aprobado.',exact=True)).to_be_visible()
+                expect(page.get_by_text('Plano de trabajo.',exact=True)).to_be_visible()
                 expect(page.locator('#pl-zoom')).to_have_text('125%')
                 self.assertEqual(page.evaluate('window.viewerToken'),'same-viewer')
                 self.assertEqual(page.locator('#pl-viewport').evaluate('(v)=>[v.scrollLeft,v.scrollTop]'),scroll)

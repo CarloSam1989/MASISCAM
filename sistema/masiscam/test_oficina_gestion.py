@@ -428,7 +428,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=taller_cookie,url=self.live_server_url)])
                 page.goto(self.live_server_url+self.url)
                 page.locator('#informacion-tecnica summary').click()
-                page.get_by_role('button',name='Validar diagnóstico para ADMINISTRADOR',exact=True).click()
+                page.get_by_role('button',name='Validar diagnóstico con ADMINISTRADOR',exact=True).click()
                 page.get_by_role('button',name='Sí, continuar',exact=True).click()
                 expect(page.locator('#mf-diagnostico')).to_have_count(0)
                 context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=admin_cookie,url=self.live_server_url)])

@@ -559,7 +559,7 @@ def planos_compatibles_equipo(*, usuario, empresa, equipo):
     values = {'marca': equipo.marca or equipo.fabricante, 'modelo': equipo.modelo, 'operacion': equipo.operacion,
               'rotacion': equipo.rotacion, 'ratio': equipo.ratio}
     labels = {'marca': 'fabricante', 'modelo': 'modelo', 'operacion': 'operacion',
-              'rotacion': 'rotacion', 'ratio': 'relacion de transmision'}
+              'rotacion': 'rotación', 'ratio': 'relación de transmisión'}
     # La operación solo distingue configuraciones cuando el catálogo la define: puede quedar vacía.
     missing = [labels[key] for key, value in values.items() if key != 'operacion' and not (value or '').strip()]
     if missing:

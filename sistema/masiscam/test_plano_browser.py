@@ -14,7 +14,17 @@ from django.test import Client, override_settings
 from django.urls import reverse
 
 from . import test_plano as qa, tecnica_services as tecnica, plano_services as svc
-from .models import ParteReferenciaTecnica
+from .models import ParteReferenciaTecnica, ReferenciaTecnica
+
+
+def en_hilo(funcion):
+    """El ORM no puede usarse dentro del bucle async de Playwright; se consulta en un hilo propio."""
+    from concurrent.futures import ThreadPoolExecutor
+    from django.db import connection as conexion
+    def ejecutar():
+        try: return funcion()
+        finally: conexion.close()
+    with ThreadPoolExecutor(1) as pool: return pool.submit(ejecutar).result()
 
 
 def dibujo_sintetico():
@@ -87,7 +97,9 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                     context = browser.new_context(viewport={'width':width,'height':1000})
                     context.add_cookies([{'name':settings.SESSION_COOKIE_NAME,'value':cookies['tecnico'],'url':self.live_server_url}])
                     page = context.new_page()
-                    url = self.live_server_url+reverse('masiscam:plano',args=[self.ref.pk])+'?diagnostico='+str(self.diag.pk)
+                    # Al primer guardado desde el PDF se crea el borrador de trabajo (r2); los demás anchos lo reutilizan.
+                    vigente = en_hilo(lambda: ReferenciaTecnica.objects.filter(empresa=self.empresa, codigo=self.ref.codigo).order_by('-revision').first())
+                    url = self.live_server_url+reverse('masiscam:plano',args=[vigente.pk])+'?diagnostico='+str(self.diag.pk)
                     page.goto(url)
                     expect(page.locator('#pl-app')).to_have_attribute('data-ready','true',timeout=60000)
                     self.assertTrue(page.locator('#pl-canvas').evaluate('(c)=>c.width>0 && c.height>0'))
@@ -101,28 +113,41 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                     self.assertAlmostEqual(point.evaluate('(p)=>(p.getBoundingClientRect().x+p.getBoundingClientRect().width/2-p.parentElement.getBoundingClientRect().x)/p.parentElement.getBoundingClientRect().width'),.5,places=2)
                     point.click()
                     expect(page.locator('#pl-detail')).to_contain_text('QA-PARTE')
+                    if width==1440:  # sin pieza previa, el PDF abre el formulario único
+                        expect(page.locator('#pl-position-dialog')).to_be_visible()
+                        page.locator('#pl-position-cancel').click()
+                    expect(page.locator('#pl-position-dialog')).not_to_be_visible()
+                    if width<992:
+                        page.get_by_role('tab',name='Componentes',exact=True).click()
                     page.locator('#pl-search').fill('QA-PARTE')
                     expect(page.locator('.pl-part')).to_have_count(1)
                     page.locator('#pl-search').fill('NO EXISTE QA')
                     expect(page.locator('.pl-part')).to_have_count(0)
                     page.locator('#pl-search').fill('')
-                    page.get_by_role('button',name='Agregar al diagnóstico',exact=True).click()
-                    expect(page.locator('#pl-action')).to_have_value('')
-                    page.locator('#pl-quantity').fill('2.5')
-                    page.locator('#pl-condition').fill('Condición sintética QA')
-                    page.locator('#pl-action').select_option('EVALUAR')
-                    page.locator('#pl-notes').fill('Observaciones de prueba')
                     if width==1440:
-                        page.locator('#pl-photos').set_input_files({'name':'pieza.png','mimeType':'image/png','buffer':photo})
-                    page.locator('#pl-submit').click()
-                    expect(page.locator('#pl-piece-dialog')).not_to_be_visible(timeout=15000)
+                        page.get_by_role('button',name='Agregar al diagnóstico',exact=True).click()
+                    else:  # la pieza ya existe en el borrador de trabajo: se edita, no se duplica
+                        if width<992:
+                            page.get_by_role('tab',name=re.compile('Seleccionados')).click()
+                        page.locator('#pl-selected-list').get_by_role('button',name='Editar',exact=True).last.click()
+                    expect(page.locator('#pl-position-action')).to_have_value('EVALUAR')
+                    page.locator('#pl-position-quantity').fill('2.5')
+                    page.locator('#pl-position-condition').fill('Condición sintética QA')
+                    page.locator('#pl-position-action').select_option('EVALUAR')
+                    page.locator('#pl-position-form summary').click()
+                    page.locator('#pl-position-notes').fill('Observaciones de prueba')
+                    if width==1440:
+                        page.locator('#pl-position-photos').set_input_files({'name':'pieza.png','mimeType':'image/png','buffer':photo})
+                    page.locator('#pl-position-save').click()
+                    expect(page.locator('#pl-position-dialog')).not_to_be_visible(timeout=15000)
                     if width<992:
                         page.get_by_role('tab',name=re.compile('Seleccionados')).click()
-                    expect(page.locator('#pl-selected-list')).to_contain_text('2.500000')
+                    expect(page.locator('#pl-selected-list')).to_contain_text('2.5 unidad QA')
+                    self.assertEqual(en_hilo(lambda: self.diag.piezas.count()),1)
                     page.locator('#pl-selected-list').get_by_role('button',name='Editar',exact=True).last.click()
-                    page.locator('#pl-quantity').fill('3')
-                    page.locator('#pl-submit').click()
-                    expect(page.locator('#pl-piece-dialog')).not_to_be_visible()
+                    page.locator('#pl-position-quantity').fill('3')
+                    page.locator('#pl-position-save').click()
+                    expect(page.locator('#pl-position-dialog')).not_to_be_visible()
                     if width<992:
                         page.get_by_role('tab',name='Plano',exact=True).click()
                     page.locator('#pl-fit').click()
@@ -142,11 +167,11 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                 page.locator('.pl-part').click()
                 page.get_by_role('button',name='Agregar al diagnóstico',exact=True).click()
                 expect(page.locator('[name=posicion_plano_id]')).to_have_value('')
-                page.locator('#pl-quantity').fill('1')
-                page.locator('#pl-condition').fill('Selección por listado QA')
-                page.locator('#pl-action').select_option('EVALUAR')
-                page.locator('#pl-submit').click()
-                expect(page.locator('#pl-piece-dialog')).not_to_be_visible()
+                page.locator('#pl-position-quantity').fill('1')
+                page.locator('#pl-position-condition').fill('Selección por listado QA')
+                page.locator('#pl-position-action').select_option('EVALUAR')
+                page.locator('#pl-position-save').click()
+                expect(page.locator('#pl-position-dialog')).not_to_be_visible()
                 page.screenshot(path=str(output/'plano-listado-sin-posiciones-1440.png'),full_page=True)
                 context.close()
                 context = browser.new_context(viewport={'width':1440,'height':1000})
@@ -176,3 +201,41 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                 browser.close()
         if source:
             self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(),original_hash)
+
+    def test_pdf_y_lista_abren_solo_pl_position_dialog_sin_duplicar(self):
+        from playwright.sync_api import sync_playwright, expect
+        from .tecnica_models import PiezaRequerida
+        client = Client(); client.force_login(self.tecnico)
+        cookie = client.cookies[settings.SESSION_COOKIE_NAME].value
+        def guardar(page, cantidad):
+            expect(page.locator('dialog[open]')).to_have_count(1)
+            expect(page.locator('#pl-position-dialog[open]')).to_have_count(1)
+            expect(page.locator('#pl-piece-dialog')).to_have_count(0)
+            page.locator('#pl-position-quantity').fill(cantidad)
+            page.locator('#pl-position-condition').fill('Condición QA')
+            page.locator('#pl-position-action').select_option('EVALUAR')
+            page.locator('#pl-position-save').click()
+            expect(page.locator('dialog[open]')).to_have_count(0, timeout=15000)
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(channel='msedge', headless=True)
+            try:
+                context = browser.new_context(viewport={'width':1440,'height':1000})
+                context.add_cookies([{'name':settings.SESSION_COOKIE_NAME,'value':cookie,'url':self.live_server_url}])
+                page = context.new_page()
+                page.goto(self.live_server_url+reverse('masiscam:plano',args=[self.ref.pk])+'?diagnostico='+str(self.diag.pk))
+                expect(page.locator('#pl-app')).to_have_attribute('data-ready','true',timeout=60000)
+                page.locator('.pl-point').first.click()          # desde el PDF
+                guardar(page, '2')
+                self.assertEqual(en_hilo(lambda: PiezaRequerida.objects.filter(diagnostico=self.diag).count()), 1)
+                page.locator('.pl-part').click()                 # desde la lista: resalta el marcador existente
+                expect(page.locator('.pl-point')).to_have_count(1)
+                expect(page.locator('.pl-point.is-active')).to_have_count(1)
+                page.get_by_role('button',name='Agregar al diagnóstico',exact=True).click()
+                expect(page.locator('#pl-position-quantity')).to_have_value('2')   # misma pieza, en edición
+                guardar(page, '3')
+                self.assertEqual(en_hilo(lambda: PiezaRequerida.objects.filter(diagnostico=self.diag).count()), 1)
+                self.assertEqual(en_hilo(lambda: PiezaRequerida.objects.get(diagnostico=self.diag).cantidad), 3)
+                expect(page.locator('.pl-point')).to_have_count(1)
+                context.close()
+            finally:
+                browser.close()

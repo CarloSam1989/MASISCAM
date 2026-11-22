@@ -417,7 +417,7 @@ class RegistroReductorCatalogoTests(TestCase):
         r = self.registrar(marca='QAMARCA', modelo='QM-1', numero='NUEVO-4', serie='SERIE-4', sin_catalogo='on')
         res = svc.planos_compatibles_equipo(usuario=self.tecnico, empresa=self.empresa,
                                             equipo=Equipo.objects.get(numero_serie='SERIE-4'))
-        self.assertEqual((res['candidatos'], res['faltantes']), ([], ['rotacion', 'relacion de transmision']))
+        self.assertEqual((res['candidatos'], res['faltantes']), ([], ['rotación', 'relación de transmisión']))
 
     def test_validacion_servidor_vista_previa_inactivos_y_edicion_conserva_configuracion(self):
         from .forms import FichaEquipoForm

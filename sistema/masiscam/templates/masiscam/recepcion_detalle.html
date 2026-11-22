@@ -8,7 +8,7 @@
 {% if confirmacion %}<p>La recepción y su guía están guardadas. Continúa con las actividades asignadas; las aprobaciones técnicas y comerciales conservan sus responsables independientes.</p>{% else %}<p>Adjunta o selecciona las fotografías y confirma los datos de ingreso.</p>{% endif %}
 {% for requisito in pendientes %}<p role="status">{{ requisito }}</p>{% endfor %}
 {% if not confirmacion and puede_recepcion and cierre_local %}<a class="btn btn-outline-primary" href="#confirmar-recepcion">Completar recepción</a>{% endif %}
-{% if continuar %}<a class="btn btn-primary mf-main-action" href="{% url 'masiscam:flujo_detalle' expediente.pk %}">Continuar al mantenimiento</a>{% elif confirmacion and guia_principal %}<a class="btn btn-primary mf-main-action" href="{% url 'masiscam:recepcion_documento' expediente.pk guia_principal.documento_id %}">Descargar guía</a>{% endif %}
+{% if continuar %}<a class="btn {% if puede_recepcion and not confirmacion and cierre_local %}btn-outline-primary{% else %}btn-primary mf-main-action{% endif %}" href="{% url 'masiscam:flujo_detalle' expediente.pk %}">Continuar al mantenimiento</a>{% elif confirmacion and guia_principal %}<a class="btn btn-primary mf-main-action" href="{% url 'masiscam:recepcion_documento' expediente.pk guia_principal.documento_id %}">Descargar guía</a>{% endif %}
 </section>
 {% if puede_recepcion and not confirmacion and cierre_local %}
 <section id="confirmar-recepcion" class="mf-card"><h2>Fotografías y confirmación</h2><p>Selecciona las miniaturas existentes para GENERAL y PLACA; el archivo original se conserva y no se duplica. Si no existe placa, indica SIN_PLACA y justifica su ausencia.</p>

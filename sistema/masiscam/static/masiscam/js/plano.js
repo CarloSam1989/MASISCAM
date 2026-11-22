@@ -35,16 +35,15 @@ if (root) {
   const state = {data: null, pdf: null, image: null, page: 1, zoom: 1, active: null,
     point: null, configuring: false, dirty: false, rendering: null, generation: 0, saving: false};
   const stage = $('#pl-stage'), canvas = $('#pl-canvas'), viewport = $('#pl-viewport');
-  const form = $('#pl-piece-form'), dialog = $('#pl-piece-dialog');
   const positionDialog = $('#pl-position-dialog'), positionForm = $('#pl-position-form');
   let movingPoint = null, movingValues = null, positionKey = null;
   const pending = new Set();
   const quantity = value => String(value ?? '').replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
-  for (const sheet of [form, positionForm].filter(Boolean)) {
+  for (const sheet of [positionForm].filter(Boolean)) {
     sheet.addEventListener('input', () => pending.add(sheet));
     sheet.addEventListener('change', () => pending.add(sheet));
   }
-  const csrf = form.querySelector('[name=csrfmiddlewaretoken]').value;
+  const csrf = positionForm.querySelector('[name=csrfmiddlewaretoken]').value;
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -208,7 +207,6 @@ if (root) {
         el('p', `${quantity(piece.cantidad)} ${piece.unidad} · ${piece.accion}`), el('p', piece.condicion));
       if (piece.observaciones) card.append(el('p', piece.observaciones));
       const source = piece.snapshot;
-      if (source.provisional) card.append(el('small', 'Origen: plano provisional de TALLER; sujeto a revisión de ADMINISTRADOR.'));
       if (source.referencia) card.append(el('small', `${source.referencia} r${source.revision} · posición ${source.posicion}${source.plano ? ` · mapa v${source.plano.version}, página ${source.plano.pagina}` : ' · selección por listado'}`));
       if (piece.fuente_url) {
         const sourceLink = el('a', 'Abrir plano fuente'); sourceLink.href = piece.fuente_url; card.append(sourceLink);
@@ -279,12 +277,12 @@ if (root) {
     try {await positionRequest({operacion:'seleccionar',punto_id:point.id});focusSelected(point.parte);}
     catch(error){message(error.message,true);}
   }
-  function fillPositionPart(part) {
+  function fillPositionPart(part, pieceOverride = null) {
     for(const [name,value] of Object.entries({posicion:part?.posicion||'',descripcion:part?.descripcion||'',unidad:part?.unidad||''})){
       positionForm.elements[name].value=value;
       if(name!=='unidad') positionForm.elements[name].readOnly=Boolean(part);
     }
-    const piece=state.data.piezas.find(item=>item.parte===part?.id);
+    const piece=pieceOverride||state.data.piezas.find(item=>item.parte===part?.id);
     positionForm.elements.cantidad.value=quantity(piece?.cantidad||part?.cantidad_seleccion||part?.cantidad||'');
     positionForm.elements.condicion.value=piece?.condicion||'';
     const code=$('#pl-position-code');if(code)code.value=part?.codigo||'';
@@ -335,20 +333,45 @@ if (root) {
   positionForm?.elements.unidad.addEventListener('input',()=>{touched.unidad=true;});
   positionForm?.elements.fotografias.addEventListener('change',event=>{
     if(event.target.files.length>6){event.target.value='';const box=$('#pl-position-error');box.hidden=false;box.textContent='Máximo 6 fotografías por guardado.';}});
-  function openPosition(coords, point=null) {
-    if(!positionDialog || !state.data.marcable || state.saving) return;
+  // Un único formulario para elegir una pieza, desde el plano (con ubicación) o desde el listado de componentes.
+  function openPiece(part, piece = null) {
+    piece ||= state.data.piezas.find(item=>item.parte===part.id) || null;
+    const point = state.data.marcable ? (state.data.puntos.find(item=>item.parte===part.id) || null) : null;
+    openPosition(point, point, part, piece);
+  }
+  function openPosition(coords, point=null, forcedPart=null, forcedPiece=null) {
+    if(!positionDialog || state.saving) return;
+    const ubicada = Boolean(coords) && Boolean(state.data.marcable);
+    if(!ubicada && !(state.data.seleccionable && forcedPart)) return;
     positionForm.reset();$('#pl-position-error').hidden=true;positionKey=crypto.randomUUID();
+    positionForm.dataset.modo = ubicada ? 'plano' : 'listado';
     positionForm.querySelectorAll('details').forEach(section=>{section.open=false;});
-    positionForm.elements.parte_id.replaceChildren(new Option('Nuevo componente del plano',''));
-    positionForm.elements.parte_id.options[0].disabled=Boolean(point);
-    for(const part of state.data.partes)positionForm.elements.parte_id.add(new Option(`${part.posicion} · ${part.descripcion}`,part.id));
-    for(const name of ['pagina','x','y'])positionForm.elements[name].value=coords[name]??state.page;
-    positionForm.elements.punto_id.value=point?.id||'';
-    const part=point?state.data.partes.find(item=>item.id===point.parte):null;
-    positionForm.elements.parte_id.value=part?.id||'';fillPositionPart(part);
+    const select = positionForm.elements.parte_id;
+    select.replaceChildren(...(ubicada ? [new Option('Nuevo componente del plano','')] : []));
+    if(ubicada) select.options[0].disabled = Boolean(point);
+    for(const item of state.data.partes) select.add(new Option(`${item.posicion} · ${item.descripcion}`,item.id));
+    for(const name of ['pagina','x','y']) positionForm.elements[name].value = ubicada ? (coords[name] ?? state.page) : '';
+    positionForm.elements.punto_id.value = point?.id || '';
+    const part = forcedPart || (point ? state.data.partes.find(item=>item.id===point.parte) : null);
+    const piece = forcedPiece || (part ? state.data.piezas.find(item=>item.parte===part.id) : null) || null;
+    select.value = part?.id || '';select.disabled = !ubicada;
+    fillPositionPart(part, piece);
+    positionForm.elements.accion.value = piece?.accion || 'EVALUAR';
+    positionForm.elements.observaciones.value = piece?.observaciones || '';
+    positionForm.elements.pieza_id.value = piece?.id || '';
+    positionForm.elements.posicion_plano_id.value = point?.id || piece?.posicion || '';
+    positionForm.elements.unidad.required = !ubicada;positionForm.elements.condicion.required = !ubicada;
+    positionForm.dataset.parte = part?.id || '';
+    const existing = $('#pl-position-existing');existing.replaceChildren();
+    for (const photo of piece?.fotos || []) {
+      const box = el('div'), image = el('img'); image.src = photo.url + '?ver=1'; image.alt = photo.leyenda;
+      const remove = el('button', 'Retirar foto', 'btn btn-outline-danger'); remove.type = 'button';
+      remove.addEventListener('click', async () => {if (await mutate('retirar_foto', piece.id, photo.id)) {positionDialog.close();}});
+      box.append(image, remove); existing.append(box);
+    }
     resetCatalogo();if(part)consultarCatalogo(part.posicion,false);
-    $('#pl-position-title').textContent=point?'Editar posición provisional':'Registrar pieza en el plano';
-    $('#pl-position-move').hidden=!point;
+    $('#pl-position-title').textContent = piece ? 'Editar pieza' : (ubicada ? 'Registrar pieza en el plano' : 'Seleccionar pieza');
+    $('#pl-position-move').hidden = !(point && ubicada && state.data.mapa_provisional);
     $('#pl-position-move').onclick=()=>{pending.add(positionForm);movingPoint=point;movingValues={...Object.fromEntries(new FormData(positionForm)),photos:Array.from(positionForm.elements.fotografias.files)};positionDialog.close();message('Pulsa la nueva ubicación en el PDF.');};
     positionDialog.showModal();positionForm.elements[part?'cantidad':'posicion'].focus();
   }
@@ -361,9 +384,24 @@ if (root) {
     event.preventDefault();if(state.saving||!positionForm.reportValidity())return;
     $('#pl-position-save').disabled=true;$('#pl-position-error').hidden=true;
     const fields = new FormData(positionForm);
-    const data=Object.fromEntries(Array.from(fields).filter(([name])=>name!=='fotografias'));
     const photos=fields.getAll('fotografias').filter(photo=>photo.size);
     try {
+      if(photos.length>6) throw new Error('Máximo 6 fotografías por guardado.');
+      if(positionForm.dataset.modo==='listado'){
+        // Componente del listado sin ubicación en el plano: misma pieza, mismo formulario.
+        const body=new FormData();
+        body.set('parte_id',positionForm.dataset.parte);body.set('posicion_plano_id',positionForm.elements.posicion_plano_id.value);
+        body.set('pieza_id',positionForm.elements.pieza_id.value);body.set('version',state.data.version);body.set('clave',positionKey);
+        for(const name of ['cantidad','unidad','condicion','accion','observaciones'])body.set(name,fields.get(name)||'');
+        photos.forEach(photo=>body.append('fotografias',photo));
+        state.saving=true;
+        const parteId=Number(positionForm.dataset.parte);
+        try{update(await request(root.dataset.pieza,{method:'POST',body}));}finally{state.saving=false;}
+        pending.delete(positionForm);positionDialog.close();positionForm.reset();positionKey=null;
+        if(state.data.marcable&&!state.data.puntos.some(point=>point.parte===parteId))message('Pieza guardada. Para marcarla en el PDF, pulsa su número en el dibujo y elige este componente.');
+        return;
+      }
+      const data=Object.fromEntries(Array.from(fields).filter(([name])=>name!=='fotografias'));
       await positionRequest({operacion:'guardar',...data},positionKey,photos);
       pending.delete(positionForm);positionDialog.close();const part=state.data.partes.find(p=>p.posicion===data.posicion);
       if(part)select(part.id);
@@ -371,28 +409,7 @@ if (root) {
     }catch(error){$('#pl-position-error').hidden=false;$('#pl-position-error').textContent=error.message;message(error.message,true);}
     finally{$('#pl-position-save').disabled=false;}
   });
-  function openPiece(part, piece = null) {
-    piece ||= state.data.piezas.find(item=>item.parte===part.id) || null;
-    form.reset(); $('#pl-form-error').hidden = true;
-    form.elements.parte_id.value = part.id;
-    form.elements.posicion_plano_id.value = piece ? (piece.posicion || '') : (state.point || '');
-    form.elements.pieza_id.value = piece?.id || '';
-    form.elements.version.value = state.data.version;
-    form.elements.clave.value = crypto.randomUUID();
-    for (const name of ['cantidad', 'unidad', 'condicion', 'accion', 'observaciones']) form.elements[name].value = piece?.[name] || (name === 'unidad' ? part.unidad : '');
-    form.elements.cantidad.value = quantity(form.elements.cantidad.value);
-    form.elements.unidad.readOnly = Boolean(part.unidad);
-    $('#pl-piece-title').textContent = `${piece ? 'Editar' : 'Seleccionar'} posición ${part.posicion}`;
-    $('#pl-piece-description').textContent = `${part.codigo || 'Código pendiente'} · ${part.descripcion}`;
-    $('#pl-existing-photos').replaceChildren();
-    for (const photo of piece?.fotos || []) {
-      const box = el('div'), image = el('img'); image.src = photo.url + '?ver=1'; image.alt = photo.leyenda;
-      const remove = el('button', 'Retirar foto', 'btn btn-outline-danger'); remove.type = 'button';
-      remove.addEventListener('click', async () => {if (await mutate('retirar_foto', piece.id, photo.id)) {dialog.close();}});
-      box.append(image, remove); $('#pl-existing-photos').append(box);
-    }
-    dialog.showModal(); form.elements.cantidad.focus();
-  }
+  $('#pl-position-close')?.addEventListener('click',()=>closeSheet(positionForm,positionDialog));
   function update(data) {
     state.data.version = data.version; state.data.piezas = data.piezas; selected();
     saved(data.mensaje || 'Borrador guardado.');
@@ -407,18 +424,6 @@ if (root) {
     catch (error) {message(error.message, true); return false;}
     finally {state.saving = false;}
   }
-  form.addEventListener('submit', async event => {
-    event.preventDefault(); if (state.saving || !form.reportValidity()) return;
-    state.saving = true; $('#pl-submit').disabled = true; $('#pl-submit').textContent = 'Guardando…';
-    $('#pl-form-error').hidden = true;
-    try {
-      update(await request(root.dataset.pieza, {method: 'POST', body: new FormData(form)}));
-      pending.delete(form);dialog.close();form.reset();
-    } catch (error) {$('#pl-form-error').hidden = false; $('#pl-form-error').textContent = error.message;message(error.message,true);}
-    finally {state.saving = false; $('#pl-submit').disabled = false; $('#pl-submit').textContent = 'Guardar pieza';}
-  });
-  $('#pl-close-dialog').addEventListener('click', () => closeSheet(form,dialog));
-  dialog.addEventListener('cancel', event => {event.preventDefault();closeSheet(form,dialog);});
   $('#pl-search').addEventListener('input', list);
   for (const [selector, delta] of [['#pl-plus', .25], ['#pl-minus', -.25]]) $(selector).addEventListener('click', () => {
     state.zoom = Math.max(.5, Math.min(4, state.zoom + delta)); render().catch(error => message(error.message, true));
@@ -488,7 +493,7 @@ if (root) {
     state.data = await request(root.dataset.datos);
     list(); selected();
     $('#pl-map-label').textContent = state.data.mapa_version
-      ? `Mapa v${state.data.mapa_version} · ${state.data.mapa_provisional ? 'provisional, pendiente de ADMINISTRADOR' : 'publicado'} · coordenadas normalizadas`
+      ? `Mapa v${state.data.mapa_version} · ${state.data.mapa_provisional ? 'provisional' : 'publicado'} · coordenadas normalizadas`
       : 'Mapa sin configurar: puedes continuar por el listado y marcar posiciones si tienes permiso.';
   }
   async function start() {

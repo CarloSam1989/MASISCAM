@@ -1,5 +1,6 @@
 from .access import paginar_listado
 import uuid
+from django.utils import timezone
 from django.contrib import messages
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.db import IntegrityError
@@ -78,6 +79,8 @@ def contexto(request,exp,errores=None):
             historica=True
             context.update(solicitud=seleccion,diagnostico=seleccion.diagnostico,accion=None,
                 mensaje='Solicitud histórica congelada. Consulta de piezas y entregas; no admite modificaciones.')
+    if context['rol']=='TALLER':
+        context['mensaje']=MENSAJES_TALLER.get(context.get('mensaje'),context.get('mensaje'))
     diag=context['diagnostico'];sol=context['solicitud'];prop=context['propuesta']
     forms={}
     if context['rol']=='ADMIN':
@@ -90,9 +93,8 @@ def contexto(request,exp,errores=None):
         forms['plano_trabajo']=PlanoTrabajoForm()
     ins=context['inspeccion']
     if not historica and context['rol']=='TALLER' and ins and not ins.enviado_en and t.vigente(ins):
-        forms['inspeccion']=RevisionForm(tipo='INSPECCION',revision=ins)
-        forms['evidencia_inspeccion']=EvidenciaForm(expediente=exp,revision=ins,
-            usuario=request.user,empresa=request.empresa_activa)
+        # Con diagnóstico en curso, ambos se editan en un solo formulario (campos de inspección con prefijo «ins»).
+        forms['inspeccion']=RevisionForm(tipo='INSPECCION',revision=ins,prefix='ins' if 'diagnostico' in forms else None)
     if not historica and sol and context['rol']=='OFICINA':
         forms['cotizar']=CotizacionForm(solicitud=sol,propuesta=prop)
         try:
@@ -244,6 +246,70 @@ def plano_aplicable_url(request,exp,diagnostico):
     return reverse('masiscam:plano',args=[plano.pk])+f'?diagnostico={diagnostico.pk}&flujo=1'
 
 
+# Textos del flujo redactados para otros roles, reescritos solo para TALLER (coincidencia exacta).
+MENSAJES_TALLER = {
+    'OFICINA puede preparar la cotización y enviarla a ADMINISTRADOR. Las operaciones posteriores permanecen deshabilitadas y conservan sus aprobaciones obligatorias.':
+        'Tu diagnóstico y las piezas ya fueron enviados. El siguiente paso se habilita cuando corresponda.',
+    'Repuestos enviados. Confirma las cantidades físicas; la reparación seguirá exigiendo autorización comercial vigente.':
+        'Repuestos enviados. Confirma las cantidades recibidas físicamente.',
+    'ADMINISTRADOR debe revisar conjuntamente el diagnóstico y la cotización PDF antes de la aceptación comercial.':
+        'Tu diagnóstico está en revisión. Continúa cuando se habilite el siguiente paso.',
+    'ADMINISTRADOR debe revisar las actividades terminadas.': 'Hay actividades terminadas pendientes de revisión.',
+    'El responsable del sistema debe habilitar la calibración. Se mantiene la exigencia de un protocolo aprobado y revisión independiente.':
+        'La calibración se habilitará cuando corresponda.',
+    'La reparación está aprobada. Inicia la calibración con un protocolo exacto autorizado; no se presume una exención.':
+        'Inicia la calibración con el protocolo indicado para este equipo.',
+    'Completa las mediciones y envía la calibración a la revisión independiente de ADMINISTRADOR.':
+        'Completa las mediciones y envía la calibración.',
+    'El informe PDF se genera con las fuentes aprobadas y conserva su revisión final independiente.':
+        'El informe PDF se genera con las fuentes registradas.',
+    'El responsable del sistema debe habilitar la generación del informe final. Las fuentes y aprobaciones se conservan.':
+        'El informe final se habilitará cuando corresponda.',
+}
+MOTIVO_INSPECCION_SIN_EVIDENCIA = 'Sin evidencia fotográfica de inspección adjunta; las fotografías se registran en las piezas seleccionadas.'
+
+
+def _guardar_tecnico(request,exp,ctx,diag,common,form,data,key,validar,extra):
+    """Guarda en un solo paso la información técnica (inspección) y el diagnóstico; con «validar» envía ambos."""
+    import uuid
+    from .models import Diagnostico, Inspeccion
+    ins=ctx['inspeccion']
+    # Solo los campos enviados por el formulario unificado; los demás (p. ej. un motivo guardado antes) se conservan.
+    datos_diag={k:v for k,v in data.items() if k=='version' or form.add_prefix(k) in request.POST};version_diag=datos_diag.pop('version')
+    t.guardar_revision(**common,tipo='DIAGNOSTICO',revision_id=diag.pk,version=version_diag,clave=key,datos=datos_diag)
+    if ins and not ins.enviado_en and 'ins-version' in request.POST:
+        iform=RevisionForm(request.POST,prefix='ins',tipo='INSPECCION',revision=ins);extra['inspeccion']=iform
+        if not iform.is_valid():
+            raise ValidationError('Revise la información técnica de la inspección.')
+        # Solo los campos presentes en el formulario unificado; los demás conservan su valor guardado.
+        idatos={k:v for k,v in iform.cleaned_data.items() if k in {'clave','version'} or iform.add_prefix(k) in request.POST}
+        ikey=idatos.pop('clave');iversion=idatos.pop('version')
+        actual=Inspeccion.objects.get(pk=ins.pk)
+        if not idatos.get('fecha') and not actual.fecha:
+            idatos['fecha']=datos_diag.get('fecha') or timezone.localdate()
+        if not (idatos.get('motivo_sin_evidencia') or actual.motivo_sin_evidencia).strip() and not t._evidencias(actual):
+            idatos['motivo_sin_evidencia']=MOTIVO_INSPECCION_SIN_EVIDENCIA
+        t.guardar_revision(**common,tipo='INSPECCION',revision_id=ins.pk,version=iversion,clave=ikey,datos=idatos)
+    if not validar:
+        return
+    ins_actual=Inspeccion.objects.get(pk=ins.pk) if ins else None
+    if ins_actual and not ins_actual.enviado_en:
+        try:
+            t.enviar_revision(**common,tipo='INSPECCION',revision_id=ins_actual.pk,version=ins_actual.version_edicion,
+                clave=uuid.uuid5(uuid.UUID(str(key)),'enviar-inspeccion'))
+        except ValidationError as error:
+            if 'inspeccion' in extra: _error(extra['inspeccion'],error)
+            raise ValidationError('Complete la información técnica de la inspección.') from error
+    diag_actual=Diagnostico.objects.get(pk=diag.pk)
+    if not diag_actual.motivo_sin_evidencia.strip() and not t._evidencias(diag_actual):
+        # Las fotografías viven en las piezas: la falta de evidencias de inspección no bloquea la validación.
+        t.guardar_revision(**common,tipo='DIAGNOSTICO',revision_id=diag_actual.pk,version=diag_actual.version_edicion,
+            clave=uuid.uuid5(uuid.UUID(str(key)),'motivo-diagnostico'),datos=dict(motivo_sin_evidencia=MOTIVO_INSPECCION_SIN_EVIDENCIA))
+        diag_actual=Diagnostico.objects.get(pk=diag.pk)
+    t.enviar_revision(**common,tipo='DIAGNOSTICO',revision_id=diag_actual.pk,version=diag_actual.version_edicion,
+        clave=uuid.uuid5(uuid.UUID(str(key)),'enviar-diagnostico'))
+
+
 @require_http_methods(['GET','POST'])
 @masiscam_access_required
 def detalle(request,pk):
@@ -253,6 +319,7 @@ def detalle(request,pk):
     op=request.POST.get('op','');ctx=s.resumen(exp,request.user);diag=ctx['diagnostico'];sol=ctx['solicitud']
     if request.GET.get('solicitud') and (not sol or request.GET['solicitud']!=str(sol.pk)):
         raise PermissionDenied('La solicitud histórica es de solo lectura.')
+    extra={}
     if op=='aplicar_plano':
         t.autorizar_tecnica(request.user, request.empresa_activa, {'ADMIN'}, exp)
         form=AplicarPlanoExistenteForm(request.POST, empresa=request.empresa_activa, usuario=request.user);nombre=op
@@ -260,7 +327,7 @@ def detalle(request,pk):
         form=PlanoTrabajoForm(request.POST,request.FILES);nombre=op
     elif op=='enviar_piezas' and diag:
         form=EnviarPiezasForm(request.POST);nombre=op
-    elif op in {'guardar','solicitud'} and diag and (not diag.enviado_en or 'fallas' in request.POST):
+    elif op in {'guardar','solicitud','validar'} and diag and (not diag.enviado_en or 'fallas' in request.POST):
         form=RevisionForm(request.POST,tipo='DIAGNOSTICO',revision=diag);nombre='diagnostico'
     elif op=='manual' and diag:
         form=PiezaManualForm(request.POST,request.FILES);nombre='manual'
@@ -305,8 +372,8 @@ def detalle(request,pk):
                     diagnostico_para_plano=t.preparar_diagnostico(**common,expediente_id=exp.pk,clave=key)
                 else:
                     diagnostico_para_plano=t.crear_revision(**common,expediente_id=exp.pk,tipo='DIAGNOSTICO',clave=key)
-            elif op=='guardar' and diag:
-                t.guardar_revision(**common,tipo='DIAGNOSTICO',revision_id=diag.pk,version=data.pop('version'),clave=key,datos=data)
+            elif op in {'guardar','validar'} and diag:
+                _guardar_tecnico(request,exp,ctx,diag,common,form,data,key,validar=op=='validar',extra=extra)
             elif op=='solicitud' and diag:
                 s.enviar_solicitud(**common,diagnostico_id=diag.pk,version=data.pop('version',request.POST.get('version')),clave=key,datos=data or None)
             elif op=='manual' and diag:
@@ -359,7 +426,7 @@ def detalle(request,pk):
                 if url_plano:
                     return redirect(url_plano)
             return redirect('masiscam:flujo_detalle',pk=exp.pk)
-    return render(request,template,contexto(request,exp,{nombre:form}),status=400)
+    return render(request,template,contexto(request,exp,{nombre:form,**extra}),status=400)
 
 
 @require_GET
