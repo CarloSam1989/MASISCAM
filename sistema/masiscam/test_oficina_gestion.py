@@ -33,7 +33,7 @@ class OficinaFixture(TresRolesFixture):
         self.client.force_login(self.oficina)
 
     def detalle(self,precio='12.35'):
-        return dict(moneda='USD',lineas=[dict(tipo='SERVICIO',descripcion='Reparación del reductor',cantidad='2',unidad='servicio',precio_unitario=precio)],
+        return dict(moneda='USD',lineas=[dict(tipo='SERVICIO',descripcion='Reparación del reductor',cantidad='2',unidad='servicio',precio_unitario=precio,justificacion='Servicio acordado con el cliente')],
             factura=dict(numero='FACTURA-REFERENCIA-QA',fecha='2026-11-14'))
 
     def cotizar(self,**changes):
@@ -106,16 +106,16 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         with self.assertRaises(ValidationError):   # no se acepta una línea por repuesto
             self.cotizar(cotizacion=dict(self.detalle(),lineas=[dict(pieza=self.pieza.pk,precio_unitario='5.00')]))
         detalle=dict(self.detalle('10.00'),lineas=[
-            dict(tipo='SERVICIO',descripcion='Reparación del reductor',cantidad='2',unidad='servicio',precio_unitario='10.00'),
-            dict(tipo='CONSUMIBLE',descripcion='Aceite ISO VG 220',cantidad='3.5',unidad='L',precio_unitario='4.00')])
+            dict(tipo='SERVICIO',descripcion='Reparación del reductor',cantidad='2',unidad='servicio',precio_unitario='10.00',justificacion='Acordado QA'),
+            dict(tipo='CONSUMIBLE',descripcion='Aceite ISO VG 220',cantidad='3.5',unidad='L',precio_unitario='4.00',justificacion='Acordado QA')])
         propuesta=self.cotizar(archivo=None,cotizacion=detalle)
         self.assertEqual(propuesta.snapshot['cotizacion']['total'],'34.00')   # 20.00 + 14.00; el repuesto no suma
         self.assertTrue(all('pieza' not in r for r in propuesta.snapshot['cotizacion']['lineas']))
         ev=s.generar_cotizacion_pdf(usuario=self.oficina,empresa=self.empresa,propuesta_id=propuesta.pk)
         with ev.documento.archivo.open('rb') as f:text=chr(10).join(pg.extract_text() for pg in PdfReader(BytesIO(f.read())).pages)
-        for esperado in ('SERVICIOS COTIZADOS','Aceite ISO VG 220','34.00','REPUESTOS REQUERIDOS','no incluidos en el valor',self.pieza.descripcion):
+        for esperado in ('SERVICIOS Y CONSUMIBLES COTIZADOS','Aceite ISO VG 220','34.00','REPUESTOS REQUERIDOS','no incluidos en el valor',self.pieza.descripcion):
             self.assertIn(esperado,text)
-        self.assertLess(text.index('SERVICIOS COTIZADOS'),text.index('REPUESTOS REQUERIDOS'))
+        self.assertLess(text.index('SERVICIOS Y CONSUMIBLES COTIZADOS'),text.index('REPUESTOS REQUERIDOS'))
         self.assertEqual(AdquisicionRepuesto.objects.count(),0)
         self.assertEqual(EnvioRepuestos.objects.count(),0)
         response=self.client.get(self.url)
@@ -124,10 +124,146 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertTrue(Auditoria.objects.filter(expediente=self.exp,accion='OFICINA_COTIZACION').exists())
 
     @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
+    def test_cotizacion_nace_del_diagnostico_de_taller(self):
+        import re
+        from io import BytesIO
+        from pypdf import PdfReader
+        self.preparar_solicitud(enviar=False)
+        diag=self.diag
+        base=dict(usuario=self.taller,empresa=self.empresa,diagnostico_id=diag.pk)
+        trabajos=[dict(tipo='MANTENIMIENTO',descripcion='Mantenimiento preventivo del reductor',cantidad='1',unidad='servicio'),
+            dict(tipo='REPARACION',descripcion='Reparación de eje y rodamientos',cantidad='2',unidad='hora'),
+            dict(tipo='CONSUMIBLE',descripcion='Aceite ISO VG 220',cantidad='5',unidad='L')]
+        for incompleto in (dict(trabajos[0],unidad=''),dict(trabajos[0],descripcion=''),dict(trabajos[0],cantidad='0'),dict(trabajos[0],tipo='VENTA')):
+            with self.assertRaises(ValidationError):   # no se inventan cantidades, unidades ni conceptos
+                t.agregar_concepto(**base,version=diag.version_edicion,clave=uuid.uuid4(),datos=incompleto)
+        clave=uuid.uuid4()
+        t.agregar_concepto(**base,version=diag.version_edicion,clave=clave,datos=trabajos[0])
+        t.agregar_concepto(**base,version=diag.version_edicion,clave=clave,datos=trabajos[0])   # reintento idempotente
+        with self.assertRaises(ValidationError):   # duplicado con otra clave
+            t.agregar_concepto(**base,version=diag.version_edicion,clave=uuid.uuid4(),datos=trabajos[0])
+        for trabajo in trabajos[1:]:
+            t.agregar_concepto(**base,version=diag.version_edicion,clave=uuid.uuid4(),datos=trabajo)
+        self.assertEqual(diag.conceptos.count(),3)
+        diag.refresh_from_db()
+        self.sol=s.enviar_solicitud(usuario=self.taller,empresa=self.empresa,diagnostico_id=diag.pk,version=diag.version_edicion,clave=uuid.uuid4())
+        self.assertEqual([c['descripcion'] for c in self.sol.snapshot['conceptos']],[x['descripcion'] for x in trabajos])
+        with self.assertRaises((ValidationError,PermissionDenied)):   # congelado con la solicitud
+            t.agregar_concepto(**base,version=diag.version_edicion,clave=uuid.uuid4(),datos=dict(trabajos[0],descripcion='Otro'))
+        t.decidir_diagnostico(usuario=self.admin,empresa=self.empresa,diagnostico_id=diag.pk,decision='APROBADO',motivo='QA',clave=uuid.uuid4())
+        self.pieza=diag.piezas.get(); self.url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
+        self.client.force_login(self.oficina)
+        response=self.client.get(self.url)
+        for texto in ('Mantenimiento preventivo del reductor','Reparación de eje y rodamientos','Aceite ISO VG 220','Componente solicitado QA'):
+            self.assertContains(response,texto)
+        self.assertEqual(len(response.context['forms']['cotizar'].filas),3)   # ya no hay filas vacías
+        self.assertNotContains(response,'Precio unitario de Componente solicitado QA')   # el repuesto no tiene precio
+        ids=[c['id'] for c in self.sol.snapshot['conceptos']]
+        def lineas(precios,**extra):
+            return dict(moneda='USD',lineas=[dict(concepto=i,precio_unitario=p) for i,p in zip(ids,precios)]+extra.get('mas',[]))
+        for malo in (lineas(['100.00','250.00']),lineas(['100.00','250.00','4.00'],mas=[dict(concepto=ids[0],precio_unitario='1')]),
+                dict(moneda='USD',lineas=[dict(concepto=999999,precio_unitario='1')]),
+                lineas(['100.00','250.00','4.00'],mas=[dict(tipo='SERVICIO',descripcion='Adicional',cantidad='1',unidad='serv',precio_unitario='5.00')])):
+            with self.assertRaises(ValidationError):   # faltan conceptos, duplicado, ajeno o adicional sin justificación
+                s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),referencia='COT-DIAG-QA',cotizacion=malo)
+        buena=lineas(['100.00','250.00','4.00'])
+        propuesta=s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),referencia='COT-DIAG-QA',cotizacion=buena)
+        self.assertEqual(propuesta.snapshot['cotizacion']['total'],'620.00')   # 100 + 2*250 + 5*4; los repuestos no suman
+        self.assertEqual([l['origen'] for l in propuesta.snapshot['cotizacion']['lineas']],['TALLER']*3)
+        self.assertEqual([l['concepto'] for l in propuesta.snapshot['cotizacion']['lineas']],ids)
+        self.assertEqual(PropuestaComercial.objects.filter(expediente=self.exp).count(),1)
+        repetida=s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),referencia='COT-DIAG-QA',cotizacion=buena)
+        self.assertEqual(repetida.pk,propuesta.pk)   # sin duplicar al repetir
+        self.assertEqual(PropuestaComercial.objects.filter(expediente=self.exp).count(),1)
+        ev=s.generar_cotizacion_pdf(usuario=self.oficina,empresa=self.empresa,propuesta_id=propuesta.pk)
+        with ev.documento.archivo.open('rb') as f:texto=chr(10).join(pg.extract_text() for pg in PdfReader(BytesIO(f.read())).pages)
+        for esperado in ('DIAGNÓSTICO TÉCNICO','Desgaste ficticio QA','SERVICIOS Y CONSUMIBLES COTIZADOS','Mantenimiento preventivo del reductor',
+                'Aceite ISO VG 220','620.00','REPUESTOS REQUERIDOS','Componente solicitado QA'):
+            self.assertIn(esperado,texto)
+        self.assertEqual(AdquisicionRepuesto.objects.count(),0); self.assertEqual(EnvioRepuestos.objects.count(),0)
+        self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion='CONCEPTO_COTIZABLE_AGREGADO').count(),3)
+        # La cotización queda ligada a su revisión; una nueva solicitud no la sobrescribe.
+        self.assertEqual(propuesta.diagnostico_id,diag.pk)
+
+    def _con_conceptos(self):
+        self.preparar_solicitud(enviar=False)
+        diag=self.diag
+        trabajos=[dict(tipo='MANTENIMIENTO',descripcion='Mantenimiento preventivo del reductor',cantidad='1',unidad='servicio'),
+            dict(tipo='REPARACION',descripcion='Reparación de eje y rodamientos',cantidad='2',unidad='hora'),
+            dict(tipo='CONSUMIBLE',descripcion='Aceite ISO VG 220',cantidad='5',unidad='L')]
+        for trabajo in trabajos:
+            t.agregar_concepto(usuario=self.taller,empresa=self.empresa,diagnostico_id=diag.pk,version=diag.version_edicion,clave=uuid.uuid4(),datos=trabajo)
+        diag.refresh_from_db()
+        self.sol=s.enviar_solicitud(usuario=self.taller,empresa=self.empresa,diagnostico_id=diag.pk,version=diag.version_edicion,clave=uuid.uuid4())
+        t.decidir_diagnostico(usuario=self.admin,empresa=self.empresa,diagnostico_id=diag.pk,decision='APROBADO',motivo='QA',clave=uuid.uuid4())
+        self.url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
+        return trabajos
+
+    @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
+    def test_conceptos_congelados_protegidos_y_oficina_solo_asigna_precios(self):
+        from django.db import DatabaseError, transaction
+        from .tecnica_models import ConceptoTecnico
+        trabajos=self._con_conceptos()
+        diag=self.diag
+        concepto=diag.conceptos.first()
+        # PostgreSQL impide modificar, eliminar o insertar conceptos ya congelados (aunque se eluda el servicio).
+        for accion in (lambda: ConceptoTecnico.objects.filter(pk=concepto.pk).update(cantidad=99),
+                lambda: ConceptoTecnico.objects.filter(pk=concepto.pk).update(unidad='kg'),
+                lambda: ConceptoTecnico.objects.filter(pk=concepto.pk).delete(),
+                lambda: ConceptoTecnico.objects.create(diagnostico=diag,tipo='SERVICIO',descripcion='Colado',cantidad=1,unidad='u'),
+                lambda: diag.conceptos.all().delete()):
+            with self.assertRaises(DatabaseError):
+                with transaction.atomic(): accion()
+        self.assertEqual(diag.conceptos.count(),3)
+        concepto.refresh_from_db(); self.assertEqual(str(concepto.cantidad.normalize()),'1')
+        # OFICINA (u otro rol) no registra ni retira conceptos técnicos.
+        base=dict(usuario=self.oficina,empresa=self.empresa,diagnostico_id=diag.pk,version=diag.version_edicion,clave=uuid.uuid4())
+        with self.assertRaises((PermissionDenied,ValidationError)): t.agregar_concepto(**base,datos=trabajos[0])
+        with self.assertRaises((PermissionDenied,ValidationError)): t.quitar_concepto(**base,concepto_id=concepto.pk)
+        self.client.force_login(self.oficina)
+        for op in ('concepto','concepto_quitar'):
+            respuesta=self.client.post(self.url,dict(op=op,clave=uuid.uuid4(),concepto=concepto.pk,version=diag.version_edicion,tipo='SERVICIO',
+                descripcion='Colado',cantidad='1',unidad='u'))
+            self.assertIn(respuesta.status_code,(400,403))
+        self.assertEqual(diag.conceptos.count(),3)
+        # En la cotización, OFICINA solo aporta precios: descripción, cantidad y unidad vienen de la versión enviada.
+        ids=[c['id'] for c in self.sol.snapshot['conceptos']]
+        manipulada=dict(moneda='USD',lineas=[dict(concepto=i,precio_unitario=p,descripcion='ALTERADA',cantidad='99',unidad='kg',tipo='CONSUMIBLE')
+            for i,p in zip(ids,('100.00','250.00','4.00'))])
+        propuesta=s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),referencia='COT-SEG-QA',cotizacion=manipulada)
+        lineas=propuesta.snapshot['cotizacion']['lineas']
+        self.assertEqual([(l['descripcion'],l['cantidad'],l['unidad'],l['tipo']) for l in lineas],
+            [(x['descripcion'],x['cantidad'],x['unidad'],x['tipo']) for x in trabajos])
+        self.assertEqual(propuesta.snapshot['cotizacion']['total'],'620.00')
+        # La cotización corresponde a la versión técnica enviada (misma revisión y solicitud íntegra).
+        self.assertEqual(propuesta.diagnostico_id,diag.pk)
+        self.assertEqual(propuesta.snapshot['revision'],diag.revision)
+        self.assertEqual(t._digest(self.sol.snapshot),self.sol.huella)
+
+    @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
+    def test_correccion_con_nueva_revision_conserva_historial_y_no_sobrescribe(self):
+        self._con_conceptos()
+        diag=self.diag; ids=[c['id'] for c in self.sol.snapshot['conceptos']]
+        antigua=s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),referencia='COT-V1-QA',
+            cotizacion=dict(moneda='USD',lineas=[dict(concepto=i,precio_unitario=p) for i,p in zip(ids,('100.00','250.00','4.00'))]))
+        nueva=t.crear_revision(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,tipo='DIAGNOSTICO',clave=uuid.uuid4(),motivo='Corrección QA')
+        self.assertNotEqual(nueva.pk,diag.pk)
+        self.assertEqual(sorted(nueva.conceptos.values_list('descripcion',flat=True)),sorted(diag.conceptos.values_list('descripcion',flat=True)))
+        self.assertEqual(diag.conceptos.count(),3)                      # la revisión anterior queda intacta
+        self.assertNotEqual(sorted(nueva.conceptos.values_list('pk',flat=True)),sorted(diag.conceptos.values_list('pk',flat=True)))
+        t.agregar_concepto(usuario=self.taller,empresa=self.empresa,diagnostico_id=nueva.pk,version=nueva.version_edicion,clave=uuid.uuid4(),
+            datos=dict(tipo='SERVICIO',descripcion='Alineación láser',cantidad='1',unidad='servicio'))
+        self.assertEqual(nueva.conceptos.count(),4); self.assertEqual(diag.conceptos.count(),3)
+        antigua.refresh_from_db()
+        self.assertEqual(antigua.diagnostico_id,diag.pk)                # no se sobrescribe la cotización histórica
+        self.assertEqual(antigua.snapshot['cotizacion']['total'],'620.00')
+        self.assertTrue(Auditoria.objects.filter(expediente=self.exp,accion='DIAGNOSTICO_CREADA').exists())
+
+    @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
     def test_error_no_redirige_e_historial_conserva_versiones(self):
         self.preparar()
         response=self.client.post(self.url,dict(op='cotizar',clave=uuid.uuid4(),referencia='QA',
-            l0_descripcion='Servicio QA',l0_cantidad='2',l0_precio='invalido'),follow=True)
+            x0_descripcion='Servicio QA',x0_cantidad='2',x0_unidad='servicio',x0_justificacion='Acordado QA',x0_precio='invalido'),follow=True)
         self.assertEqual(response.status_code,400)
         self.assertEqual(response.redirect_chain,[])
         self.assertEqual(PropuestaComercial.objects.count(),0)
@@ -223,7 +359,7 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         with self.assertRaises(PermissionDenied):self.cotizar(usuario=ajena,empresa=otra)
         self.client.force_login(self.taller)
         self.assertEqual(self.client.post(self.url,dict(op='cotizar',clave=uuid.uuid4(),referencia='QA',moneda='USD',
-            l0_descripcion='Servicio QA',l0_cantidad='2',l0_precio='1')).status_code,403)
+            x0_descripcion='Servicio QA',x0_cantidad='2',x0_unidad='servicio',x0_justificacion='Acordado QA',x0_precio='1')).status_code,403)
 
     def test_pdf_versionado_integridad_y_permisos(self):
         from io import BytesIO
@@ -308,6 +444,163 @@ class OficinaGestionTests(OficinaFixture,TestCase):
 @skipUnless(os.environ.get('MASISCAM_BROWSER_TESTS')=='1','Navegador aislado explícito')
 @override_settings(**FLAGS)
 class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
+    def _galleta(self,usuario):
+        client=Client();client.force_login(usuario)
+        return client.cookies[settings.SESSION_COOKIE_NAME].value
+
+    def _con_conceptos(self):
+        return OficinaGestionTests._con_conceptos(self)
+
+    @override_settings(MASISCAM_OPERACION_LOCAL=False,MASISCAM_CALIBRACION_LOCAL=False,MASISCAM_CIERRE_LOCAL=False)
+    def test_servicio_adicional_con_justificacion_y_aviso_de_nueva_revision(self):
+        from playwright.sync_api import sync_playwright, expect
+        self._con_conceptos()
+        galletas={n:self._galleta(u) for n,u in (('OFICINA',self.oficina),('ADMIN',self.admin))}
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                context=browser.new_context(viewport=dict(width=1440,height=1000))
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galletas['OFICINA'],url=self.live_server_url)])
+                page=context.new_page();page.goto(self.live_server_url+self.url)
+                quote=page.locator('#oficina-cotizacion')
+                expect(quote.locator('tr[data-concepto]')).to_have_count(3)
+                for fila,precio in zip(quote.locator('tr[data-concepto]').all(),('100.00','250.00','4.00')):
+                    fila.locator('input[name$=_precio]').fill(precio)
+                quote.get_by_text('Agregar un servicio no registrado por TALLER').click()
+                quote.locator('[name=referencia]').fill('COT-ADICIONAL-UI')
+                quote.locator('[name=x0_descripcion]').fill('Alineación láser')
+                quote.locator('[name=x0_cantidad]').fill('1');quote.locator('[name=x0_unidad]').fill('servicio');quote.locator('[name=x0_precio]').fill('50.00')
+                quote.get_by_role('button',name='Guardar cotización y enviar a ADMINISTRADOR',exact=True).click()
+                page.get_by_role('button',name='Sí, continuar',exact=True).click()
+                expect(page.locator('.errorlist').first).to_contain_text('justificación')   # sin justificación no se acepta
+                if page.locator('.swal2-popup').count():
+                    page.keyboard.press('Escape');expect(page.locator('.swal2-popup')).to_have_count(0)   # cierra el aviso de error
+                quote=page.locator('#oficina-cotizacion')
+                quote.locator('details').first.evaluate('d=>d.open=true')
+                quote.locator('[name=x0_justificacion]').fill('Se detectó desalineación durante la prueba de arranque')
+                for fila,precio in zip(quote.locator('tr[data-concepto]').all(),('100.00','250.00','4.00')):
+                    fila.locator('input[name$=_precio]').fill(precio)
+                quote.locator('[name=x0_descripcion]').fill('Alineación láser');quote.locator('[name=x0_cantidad]').fill('1')
+                quote.locator('[name=x0_unidad]').fill('servicio');quote.locator('[name=x0_precio]').fill('50.00')
+                quote.locator('[name=referencia]').fill('COT-ADICIONAL-UI')
+                expect(page.locator('#oficina-total')).to_have_text('670.00')
+                quote.get_by_role('button',name='Guardar cotización y enviar a ADMINISTRADOR',exact=True).click()
+                confirm=page.get_by_role('button',name='Sí, continuar',exact=True)
+                if confirm.count(): confirm.click()
+                expect(page).to_have_url(self.live_server_url+reverse('masiscam:oficina_inicio'))
+                context.close()
+            finally:
+                browser.close()
+        self.assertEqual(PropuestaComercial.objects.filter(expediente=self.exp).count(),1)   # el intento sin justificación no guardó nada
+        propuesta=PropuestaComercial.objects.get(expediente=self.exp)
+        lineas=propuesta.snapshot['cotizacion']['lineas']
+        self.assertEqual(propuesta.snapshot['cotizacion']['total'],'670.00')
+        adicional=[l for l in lineas if l['origen']=='OFICINA']
+        self.assertEqual(len(adicional),1)
+        self.assertTrue(adicional[0]['requiere_revision_tecnica'] and adicional[0]['justificacion'])
+        self.assertEqual(len([l for l in lineas if l['origen']=='TALLER']),3)
+        # ADMINISTRADOR ve el adicional marcado para su revisión.
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                context=browser.new_context(viewport=dict(width=390,height=1000))
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galletas['ADMIN'],url=self.live_server_url)])
+                page=context.new_page();page.goto(self.live_server_url+reverse('masiscam:tecnica_expediente',args=[self.exp.pk]))
+                expect(page.locator('[data-servicios-adicionales]')).to_contain_text('Alineación láser')
+                expect(page.locator('[data-servicios-adicionales]')).to_contain_text('desalineación')
+                self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+                context.close()
+            finally:
+                browser.close()
+        # TALLER corrige mediante una nueva revisión: OFICINA recibe el aviso y la cotización histórica queda intacta.
+        nueva=t.crear_revision(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,tipo='DIAGNOSTICO',clave=uuid.uuid4(),motivo='Corrección QA')
+        nueva.refresh_from_db()
+        nueva_sol=s.enviar_solicitud(usuario=self.taller,empresa=self.empresa,diagnostico_id=nueva.pk,version=nueva.version_edicion,clave=uuid.uuid4())
+        self.assertEqual(nueva_sol.diagnostico_id,nueva.pk)
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                for ancho in (1440,390):
+                    context=browser.new_context(viewport=dict(width=ancho,height=1000))
+                    context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galletas['OFICINA'],url=self.live_server_url)])
+                    page=context.new_page();page.goto(self.live_server_url+self.url)
+                    expect(page.locator('[data-cotizacion-otra-revision]')).to_contain_text('otra revisión')
+                    expect(page.locator('#oficina-cotizacion tr[data-concepto]')).to_have_count(3)
+                    expect(page.locator('#oficina-cotizacion input[name$=_precio]').first).to_have_value('')   # no hereda precios de otra revisión
+                    context.close()
+            finally:
+                browser.close()
+        propuesta.refresh_from_db()
+        self.assertEqual(PropuestaComercial.objects.filter(expediente=self.exp).count(),1)
+        self.assertEqual(propuesta.snapshot['cotizacion']['total'],'670.00')
+
+    @override_settings(MASISCAM_OPERACION_LOCAL=False,MASISCAM_CALIBRACION_LOCAL=False,MASISCAM_CIERRE_LOCAL=False)
+    def test_taller_registra_conceptos_y_oficina_los_recibe_para_cotizar(self):
+        from playwright.sync_api import sync_playwright, expect
+        from io import BytesIO
+        from pypdf import PdfReader
+        self.preparar_solicitud(enviar=False)
+        self.url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
+        galletas={n:self._galleta(u) for n,u in (('TALLER',self.taller),('OFICINA',self.oficina))}
+        trabajos=[('MANTENIMIENTO','Mantenimiento preventivo del reductor','1','servicio'),
+            ('REPARACION','Reparación de eje y rodamientos','2','hora'),('CONSUMIBLE','Aceite ISO VG 220','5','L')]
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                context=browser.new_context(viewport=dict(width=1440,height=1000))
+                context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galletas['TALLER'],url=self.live_server_url)])
+                page=context.new_page()
+                for tipo,descripcion,cantidad,unidad in trabajos:
+                    page.goto(self.live_server_url+self.url)
+                    form=page.locator('#mf-concepto-form')
+                    form.locator('[name=tipo]').select_option(tipo)
+                    form.locator('[name=descripcion]').fill(descripcion)
+                    form.locator('[name=cantidad]').fill(cantidad)
+                    form.locator('[name=unidad]').fill(unidad)
+                    form.get_by_role('button',name='Agregar a la cotización').click()
+                    expect(page.locator('#mf-conceptos')).to_contain_text(descripcion)
+                expect(page.locator('[data-concepto-registrado]')).to_have_count(3)
+                context.close()
+            finally:
+                browser.close()
+        self.assertEqual(self.diag.conceptos.count(),3)
+        self.diag.refresh_from_db()
+        self.sol=s.enviar_solicitud(usuario=self.taller,empresa=self.empresa,diagnostico_id=self.diag.pk,version=self.diag.version_edicion,clave=uuid.uuid4())
+        t.decidir_diagnostico(usuario=self.admin,empresa=self.empresa,diagnostico_id=self.diag.pk,decision='APROBADO',motivo='QA',clave=uuid.uuid4())
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                for ancho in (1440,390):
+                    context=browser.new_context(viewport=dict(width=ancho,height=1000))
+                    context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galletas['OFICINA'],url=self.live_server_url)])
+                    page=context.new_page();page.goto(self.live_server_url+self.url)
+                    quote=page.locator('#oficina-cotizacion')
+                    expect(quote.locator('tr[data-concepto]')).to_have_count(3)    # sin filas vacías
+                    for _,descripcion,_,_ in trabajos:
+                        expect(quote).to_contain_text(descripcion)
+                    expect(page.locator('#oficina-repuestos-titulo')).to_be_visible()
+                    expect(page.get_by_text('Componente solicitado QA').first).to_be_visible()
+                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),f'desborda a {ancho}px')
+                    if ancho==1440:
+                        for fila,precio in zip(quote.locator('tr[data-concepto]').all(),('100.00','250.00','4.00')):
+                            fila.locator('input[name$=_precio]').fill(precio)
+                        expect(page.locator('#oficina-total')).to_have_text('620.00')
+                        quote.locator('[name=referencia]').fill('COT-DIAGNOSTICO-UI')
+                        quote.get_by_role('button',name='Guardar cotización y enviar a ADMINISTRADOR',exact=True).click()
+                        page.get_by_role('button',name='Sí, continuar',exact=True).click()
+                        expect(page).to_have_url(self.live_server_url+reverse('masiscam:oficina_inicio'))
+                    context.close()
+            finally:
+                browser.close()
+        propuesta=PropuestaComercial.objects.get(expediente=self.exp)
+        self.assertEqual(propuesta.snapshot['cotizacion']['total'],'620.00')
+        self.assertEqual(len(propuesta.snapshot['cotizacion']['lineas']),3)
+        self.assertEqual(PropuestaComercial.objects.filter(expediente=self.exp).count(),1)
+        ev=propuesta.evidencias.filter(clave=uuid.uuid5(propuesta.clave,'cotizacion-pdf-v1')).get()
+        with ev.documento.archivo.open('rb') as f:texto=chr(10).join(pg.extract_text() for pg in PdfReader(BytesIO(f.read())).pages)
+        for esperado in ('DIAGNÓSTICO TÉCNICO','Aceite ISO VG 220','620.00','REPUESTOS REQUERIDOS'):
+            self.assertIn(esperado,texto)
+
     @override_settings(MASISCAM_OPERACION_LOCAL=False,MASISCAM_CALIBRACION_LOCAL=False,MASISCAM_CIERRE_LOCAL=False)
     def test_envio_pdf_privado_y_tarjetas_escritorio_movil(self):
         from playwright.sync_api import sync_playwright, expect
@@ -325,7 +618,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 page=context.new_page();page.goto(self.live_server_url+self.url)
                 quote=page.locator('#oficina-cotizacion')
                 quote.locator('[name=referencia]').fill('COT-NAVEGADOR-QA')
-                quote.locator('[name=l0_descripcion]').fill('Servicio QA');quote.locator('[name=l0_cantidad]').fill('2');quote.locator('[name=l0_precio]').fill('12.35')
+                quote.locator('[name=x0_descripcion]').fill('Servicio QA');quote.locator('[name=x0_cantidad]').fill('2');quote.locator('[name=x0_unidad]').fill('servicio');quote.locator('[name=x0_justificacion]').fill('Acordado QA');quote.locator('[name=x0_precio]').fill('12.35')
                 quote.get_by_role('button',name='Guardar cotización y enviar a ADMINISTRADOR',exact=True).click()
                 page.get_by_role('button',name='Sí, continuar',exact=True).click()
                 expect(page).to_have_url(self.live_server_url+reverse('masiscam:oficina_inicio'))
@@ -427,7 +720,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                 expect(page.get_by_role('button',name='Aprobar y enviar a TALLER',exact=True)).to_have_count(0)
                 quote=page.locator('#oficina-cotizacion')
                 expect(page.locator('[data-diagnostico-pendiente]')).to_be_visible()
-                quote.locator('[name=l0_descripcion]').fill('Servicio QA');quote.locator('[name=l0_cantidad]').fill('2');quote.locator('[name=l0_precio]').fill('12.35')
+                quote.locator('[name=x0_descripcion]').fill('Servicio QA');quote.locator('[name=x0_cantidad]').fill('2');quote.locator('[name=x0_unidad]').fill('servicio');quote.locator('[name=x0_justificacion]').fill('Acordado QA');quote.locator('[name=x0_precio]').fill('12.35')
                 expect(page.locator('#oficina-total')).to_have_text('24.70')
                 quote.locator('[name=referencia]').fill('COTIZACION-UI-QA')
                 expect(quote.locator('[name=moneda]')).to_have_count(0)

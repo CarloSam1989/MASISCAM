@@ -220,6 +220,21 @@ class PiezaRequerida(models.Model):
             models.CheckConstraint(condition=(models.Q(origen='MANUAL',parte__isnull=True)|models.Q(origen='BIBLIOTECA',parte__isnull=False)),name='tecnica_pieza_origen')]
 
 
+class ConceptoTecnico(models.Model):
+    """Trabajo o consumible que TALLER registra en su diagnóstico y que OFICINA valora sin reescribirlo.
+    La copia inmutable que se cotiza vive en el snapshot congelado de la solicitud."""
+    TIPOS = [('MANTENIMIENTO','Mantenimiento'),('REPARACION','Reparación'),('SERVICIO','Servicio'),('CONSUMIBLE','Consumible')]
+    diagnostico = models.ForeignKey(Diagnostico, on_delete=PROTECT, related_name='conceptos')
+    tipo = models.CharField(max_length=16, choices=TIPOS)
+    descripcion = models.CharField(max_length=500)
+    cantidad = models.DecimalField(max_digits=20, decimal_places=6)
+    unidad = models.CharField(max_length=40)
+
+    class Meta:
+        ordering = ['pk']
+        constraints = [models.CheckConstraint(condition=models.Q(cantidad__gt=0), name='tecnica_concepto_cantidad_positiva')]
+
+
 class EmisionInformeTecnico(models.Model):
     expediente = models.ForeignKey('ExpedienteMantenimiento', on_delete=PROTECT, related_name='informes_tecnicos')
     diagnostico = models.ForeignKey(Diagnostico, on_delete=PROTECT)

@@ -10,11 +10,14 @@
   function totals() {
     let total=0n, algunaLinea=false, complete=true;
     form.querySelectorAll('[data-linea]').forEach(row => {
-      const desc=row.querySelector('[name$="_descripcion"]').value.trim();
+      const descInput=row.querySelector('[name$="_descripcion"]');
+      const desc=descInput ? descInput.value.trim() : 'concepto';
       const priceText=row.querySelector('[name$="_precio"]').value.trim();
-      const qtyText=row.querySelector('[name$="_cantidad"]').value.trim() || '1';
+      const qtyInput=row.querySelector('[name$="_cantidad"]');
+      const qtyText=(qtyInput ? qtyInput.value.trim() : row.dataset.cantidad) || '1';
       const output=row.querySelector('[data-total-linea]');
       if (!desc && !priceText) {output.textContent='';return;}
+      if (row.dataset.concepto && !priceText) {output.textContent='—';complete=false;return;}
       const price=scaled(priceText,2), qty=scaled(qtyText,6);
       if (!desc || price===null || qty===null) {output.textContent='—';complete=false;return;}
       const value=price*qty;

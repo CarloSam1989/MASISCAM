@@ -467,7 +467,7 @@ class EmisionGuiaIngreso(models.Model):
 
 from .tecnica_models import (AsignacionTecnica, EtapaExpediente, Inspeccion, Diagnostico,
     EvidenciaTecnica, DecisionTecnica, ReferenciaTecnica, ComponenteTecnico,
-    ParteReferenciaTecnica, AplicabilidadReferenciaEquipo, PiezaRequerida, EmisionInformeTecnico)
+    ParteReferenciaTecnica, AplicabilidadReferenciaEquipo, PiezaRequerida, ConceptoTecnico, EmisionInformeTecnico)
 from .operacion_models import (PropuestaComercial, DecisionComercial, RecepcionRepuesto,
     ActividadReparacion, UsoRepuesto, ResultadoReparacion, RevisionReparacion,
     EvidenciaOperativa, EmisionOperativa, RevisionAdministrativa)

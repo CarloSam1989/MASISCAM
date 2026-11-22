@@ -36,38 +36,58 @@ class EnviarPiezasForm(BaseForm):
     version = forms.IntegerField(min_value=1, widget=forms.HiddenInput)
 
 
+class ConceptoForm(BaseForm):
+    """Trabajo o consumible que TALLER registra para que OFICINA lo valore."""
+    version=forms.IntegerField(min_value=1,widget=forms.HiddenInput)
+    tipo=forms.ChoiceField(choices=[('MANTENIMIENTO','Mantenimiento'),('REPARACION','Reparación'),('SERVICIO','Servicio'),('CONSUMIBLE','Consumible')],label='Tipo')
+    descripcion=forms.CharField(max_length=500,label='Descripción del trabajo o consumible')
+    cantidad=DecimalFlexible(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'),label='Cantidad')
+    unidad=forms.CharField(max_length=40,label='Unidad (p. ej. servicio, hora, L)')
+
+
 class CotizacionForm(BaseForm):
     referencia=forms.CharField(max_length=200,label='Número y versión del presupuesto')
     archivo=forms.FileField(required=False,label='Presupuesto PDF (puede adjuntarse antes de la aceptación)')
     observaciones=forms.CharField(required=False,widget=forms.Textarea(attrs={'rows':2}))
     condiciones=forms.CharField(required=False,max_length=20000,label='Condiciones comerciales',widget=forms.Textarea(attrs={'rows':3}))
 
-    LINEAS=8
+    EXTRAS=3
 
     def __init__(self,*args,solicitud=None,propuesta=None,**kwargs):
         super().__init__(*args,**kwargs)
-        self.filas=[]
+        self.filas=[]; self.extras=[]; self.conceptos=[]
         if solicitud is None: return
         self.fields['factura_numero']=forms.CharField(max_length=200,required=False,label='Número de factura')
         self.fields['factura_fecha']=forms.DateField(required=False,label='Fecha de factura',widget=forms.DateInput(attrs={'type':'date'}))
         actual=propuesta.snapshot.get('cotizacion',{}) if propuesta and propuesta.diagnostico_id==solicitud.diagnostico_id else {}
         if actual.get('moneda','USD')!='USD': actual={}
-        previas=[r for r in actual.get('lineas',[]) if 'pieza' not in r]
+        previas=actual.get('lineas',[])
+        por_concepto={r['concepto']:r for r in previas if r.get('concepto') is not None}
+        adicionales=[r for r in previas if r.get('concepto') is None and 'pieza' not in r]
         self.initial.update(condiciones=actual.get('condiciones',''),factura_numero=actual.get('factura',{}).get('numero',''),
             factura_fecha=actual.get('factura',{}).get('fecha',''),
             referencia=propuesta.snapshot.get('presupuesto_referencia','') if propuesta else '',
             observaciones=propuesta.observaciones if propuesta else '')
-        for i in range(self.LINEAS):
-            previa=previas[i] if i<len(previas) else {}
+        # Conceptos registrados por TALLER (versión congelada): OFICINA solo asigna el precio.
+        for c in solicitud.snapshot.get('conceptos',[]):
+            nombre=f"c{c['id']}_precio"
+            self.fields[nombre]=DecimalFlexible(max_digits=14,decimal_places=2,min_value=0,label=f"Precio unitario de {c['descripcion']}")
+            self.initial[nombre]=por_concepto.get(c['id'],{}).get('precio_unitario','')
+            self.conceptos.append(c)
+            self.filas.append(dict(concepto=c,precio=self[nombre],total=por_concepto.get(c['id'],{}).get('total','')))
+        # Servicios que TALLER no registró: exigen justificación y pasan por la revisión conjunta.
+        for i in range(self.EXTRAS):
+            previa=adicionales[i] if i<len(adicionales) else {}
             campos=dict(tipo=forms.ChoiceField(choices=[('SERVICIO','Servicio'),('CONSUMIBLE','Consumible')],required=False,label='Tipo'),
-                descripcion=forms.CharField(max_length=500,required=False,label='Servicio o consumible'),
+                descripcion=forms.CharField(max_length=500,required=False,label='Servicio o consumible adicional'),
                 cantidad=DecimalFlexible(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'),required=False,label='Cantidad'),
                 unidad=forms.CharField(max_length=40,required=False,label='Unidad'),
-                precio=DecimalFlexible(max_digits=14,decimal_places=2,min_value=0,required=False,label='Precio unitario (USD)'))
+                precio=DecimalFlexible(max_digits=14,decimal_places=2,min_value=0,required=False,label='Precio unitario (USD)'),
+                justificacion=forms.CharField(max_length=1000,required=False,label='Justificación (obligatoria)'))
             for nombre,campo in campos.items():
-                self.fields[f'l{i}_{nombre}']=campo
-                self.initial[f'l{i}_{nombre}']=previa.get('precio_unitario' if nombre=='precio' else nombre,'')
-            self.filas.append({n:self[f'l{i}_{n}'] for n in campos}|dict(total=previa.get('total',''),indice=i))
+                self.fields[f'x{i}_{nombre}']=campo
+                self.initial[f'x{i}_{nombre}']=previa.get('precio_unitario' if nombre=='precio' else nombre,'')
+            self.extras.append({n:self[f'x{i}_{n}'] for n in campos}|dict(total=previa.get('total',''),indice=i))
         for field in self.fields.values(): field.widget.attrs.setdefault('class','form-control')
         self.fields['archivo'].widget.attrs['accept']='.pdf,application/pdf'
 
@@ -78,14 +98,19 @@ class CotizacionForm(BaseForm):
         if bool(data.get('factura_numero'))!=bool(data.get('factura_fecha')):
             raise forms.ValidationError('Registre juntos el número y la fecha de la factura.')
         self.lineas_validas=[]
-        for i in range(self.LINEAS if self.filas else 0):
-            d={n:data.get(f'l{i}_{n}') for n in ('tipo','descripcion','cantidad','unidad','precio')}
-            if not (d['descripcion'] or d['precio'] is not None or d['cantidad'] is not None): continue
-            if not d['descripcion'] or d['precio'] is None:
-                raise forms.ValidationError(f'La línea {i+1} requiere descripción y precio unitario.')
-            self.lineas_validas.append(dict(tipo=d['tipo'] or 'SERVICIO',descripcion=d['descripcion'],
-                cantidad=str(d['cantidad'] if d['cantidad'] is not None else 1),unidad=d['unidad'] or '',precio_unitario=str(d['precio'])))
-        if self.filas and not self.lineas_validas:
+        for c in self.conceptos:
+            if data.get(f"c{c['id']}_precio") is not None:
+                self.lineas_validas.append(dict(concepto=c['id'],precio_unitario=str(data[f"c{c['id']}_precio"])))
+        for i in range(self.EXTRAS if self.filas is not None else 0):
+            d={n:data.get(f'x{i}_{n}') for n in ('tipo','descripcion','cantidad','unidad','precio','justificacion')}
+            if not (d['descripcion'] or d['precio'] is not None or d['cantidad'] is not None or d['justificacion']): continue
+            if not d['descripcion'] or d['precio'] is None or d['cantidad'] is None or not d['unidad']:
+                raise forms.ValidationError(f'El servicio adicional {i+1} requiere descripción, cantidad, unidad y precio unitario.')
+            if not (d['justificacion'] or '').strip():
+                raise forms.ValidationError(f'El servicio adicional {i+1} no fue registrado por TALLER: indique su justificación.')
+            self.lineas_validas.append(dict(tipo=d['tipo'] or 'SERVICIO',descripcion=d['descripcion'],cantidad=str(d['cantidad']),
+                unidad=d['unidad'],precio_unitario=str(d['precio']),justificacion=d['justificacion'].strip()))
+        if (self.conceptos or self.extras) and not self.lineas_validas:
             raise forms.ValidationError('Indique al menos un servicio o consumible cotizado. Los repuestos no se cotizan.')
         return data
 

@@ -208,6 +208,10 @@ def _crear_revision(*, usuario, empresa, expediente_id, tipo, clave, motivo='',
             for pieza in anterior.piezas.all():
                 values = {f.name:getattr(pieza,f.name) for f in PiezaRequerida._meta.fields if f.name not in {'id','diagnostico'}}
                 piezas_copiadas[pieza.pk]=PiezaRequerida.objects.create(diagnostico=obj, **values)
+            from .tecnica_models import ConceptoTecnico
+            for concepto in anterior.conceptos.all():   # la corrección conserva los conceptos y no toca la revisión anterior
+                ConceptoTecnico.objects.create(diagnostico=obj, tipo=concepto.tipo, descripcion=concepto.descripcion,
+                    cantidad=concepto.cantidad, unidad=concepto.unidad)
         for e in anterior.evidencias.all():
             EvidenciaTecnica.objects.create(**{tipo.lower():obj}, pieza=piezas_copiadas.get(e.pieza_id), documento=e.documento, referencia=e.referencia, clase=e.clase, leyenda=e.leyenda, autor=e.autor)
     field = tipo.lower()
@@ -624,6 +628,63 @@ def _parte_aplicable(parte,exp):
 def plano_de_trabajo(ref, exp):
     return (ref.empresa_id == exp.empresa_id and ref.tipo == 'PLANO'
         and ref.estado == 'BORRADOR' and ref.expediente_trabajo_id == exp.pk)
+
+
+def _concepto_valido(datos):
+    from .tecnica_models import ConceptoTecnico
+    tipo = str(datos.get('tipo', '')).strip().upper()
+    descripcion = str(datos.get('descripcion', '')).strip(); unidad = str(datos.get('unidad', '')).strip()
+    if tipo not in {t for t, _ in ConceptoTecnico.TIPOS}:
+        raise ValidationError('Indique el tipo: mantenimiento, reparación, servicio o consumible.')
+    if not descripcion or len(descripcion) > 500 or not unidad or len(unidad) > 40:
+        raise ValidationError('Descripción y unidad son obligatorias; no se inventan para completar la cotización.')
+    try:
+        cantidad = Decimal(str(datos.get('cantidad')))
+    except (InvalidOperation, ValueError):
+        raise ValidationError('Cantidad decimal inválida.') from None
+    if not cantidad.is_finite() or cantidad <= 0 or cantidad >= Decimal('100000000000000') or cantidad.as_tuple().exponent < -6:
+        raise ValidationError('Cantidad positiva con un máximo de seis decimales.')
+    return dict(tipo=tipo, descripcion=descripcion, cantidad=cantidad, unidad=unidad)
+
+
+@transaction.atomic
+def agregar_concepto(*, usuario, empresa, diagnostico_id, version, clave, datos):
+    """TALLER registra un trabajo o consumible cotizable mientras el diagnóstico es editable."""
+    from .tecnica_models import ConceptoTecnico
+    obj = Diagnostico.objects.get(pk=diagnostico_id)
+    exp = expediente_autorizado(usuario, empresa, obj.expediente_id, {'TALLER'}, True)
+    obj.refresh_from_db()
+    payload = dict(id=obj.pk, version=version, datos={k: str(v) for k, v in datos.items()})
+    old = _retry(exp, clave, 'CONCEPTO_COTIZABLE_AGREGADO', payload)
+    if old:
+        return ConceptoTecnico.objects.get(pk=old)
+    _editable(usuario, empresa, obj, version)
+    seleccion_editable(obj)
+    limpio = _concepto_valido(datos)
+    if obj.conceptos.filter(tipo=limpio['tipo'], descripcion__iexact=limpio['descripcion'], unidad=limpio['unidad']).exists():
+        raise ValidationError('Ese trabajo o consumible ya está registrado; edite su cantidad en lugar de duplicarlo.')
+    result = ConceptoTecnico.objects.create(diagnostico=obj, **limpio)
+    _event(exp, usuario, clave, 'CONCEPTO_COTIZABLE_AGREGADO', payload, result.pk)
+    return result
+
+
+@transaction.atomic
+def quitar_concepto(*, usuario, empresa, diagnostico_id, version, clave, concepto_id):
+    obj = Diagnostico.objects.get(pk=diagnostico_id)
+    exp = expediente_autorizado(usuario, empresa, obj.expediente_id, {'TALLER'}, True)
+    obj.refresh_from_db()
+    payload = dict(id=obj.pk, version=version, concepto=concepto_id)
+    old = _retry(exp, clave, 'CONCEPTO_COTIZABLE_RETIRADO', payload)
+    if old:
+        return old
+    _editable(usuario, empresa, obj, version)
+    seleccion_editable(obj)
+    concepto = obj.conceptos.filter(pk=concepto_id).first()
+    if not concepto:
+        raise PermissionDenied('Concepto de otro diagnóstico.')
+    concepto.delete()
+    _event(exp, usuario, clave, 'CONCEPTO_COTIZABLE_RETIRADO', payload, concepto_id)
+    return concepto_id
 
 
 def seleccion_editable(obj):

@@ -42,18 +42,23 @@ def cotizacion_comercial(s):
             ('LINEBELOW',(0,0),(-1,-1),.35,line)]))
         return table
     servicios = tabla(('Tipo','Descripción','Cantidad','Unidad','P. unitario\nUSD','Subtotal\nUSD'),
-        [[r.get('tipo','').capitalize(), r.get('descripcion',''), r.get('cantidad',''), r.get('unidad',''),
+        [[r.get('tipo','').capitalize(), r.get('descripcion','')+(('\nAdicional de OFICINA, pendiente de revisión técnica. Justificación: '+r['justificacion']) if r.get('origen')=='OFICINA' and r.get('justificacion') else ''), r.get('cantidad',''), r.get('unidad',''),
           r.get('precio_unitario',''), r.get('total','')] for r in s['lineas']],
         [70,185,50,50,80,80], 'Sin servicios cotizados')
     repuestos = tabla(('N.º en\nplano','Código','Descripción','Cantidad','Unidad','Compatibilidad'),
         [[r.get('posicion',''), r.get('codigo',''), r.get('descripcion',''), r.get('cantidad',''), r.get('unidad',''),
           r.get('compatibilidad','')] for r in s.get('repuestos', [])],
         [45,70,150,45,45,160], 'Sin repuestos requeridos')
-    totals=Table([[p('TOTAL SERVICIOS (USD)'),p(s['total'],heading)]],colWidths=[285,230])
+    totals=Table([[p('TOTAL DE SERVICIOS Y CONSUMIBLES (USD)'),p(s['total'],heading)]],colWidths=[285,230])
     totals.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#edf3f8')),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),12),('BOTTOMPADDING',(0,0),(-1,-1),12)]))
     acceptance=Table([[p('Nombre y cargo del cliente',small),p('Firma',small),p('Fecha',small)],['________________________','____________________','________________']],colWidths=[210,170,135])
     acceptance.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('TOPPADDING',(0,1),(-1,1),23)]))
-    story=[top,Spacer(1,18),info,Spacer(1,12),p('SERVICIOS COTIZADOS',heading_s),servicios,Spacer(1,12),totals,Spacer(1,18),
+    d=s.get('diagnostico') or {}
+    tecnico=[p('DIAGNÓSTICO TÉCNICO'+(f" (revisión {d['revision']})" if d.get('revision') else ''),heading_s)]
+    for etiqueta,clave in (('Fallas','fallas'),('Causas','causas'),('Componentes afectados','componentes_afectados'),('Recomendaciones','recomendaciones'),('Conclusiones','conclusiones')):
+        if d.get(clave):tecnico.append(p(f"{etiqueta}: {d[clave]}",body))
+    if len(tecnico)==1:tecnico.append(p('Sin diagnóstico textual registrado.',small))
+    story=[top,Spacer(1,18),info,Spacer(1,12)]+tecnico+[Spacer(1,8),p('SERVICIOS Y CONSUMIBLES COTIZADOS',heading_s),servicios,Spacer(1,12),totals,Spacer(1,18),
         p('REPUESTOS REQUERIDOS (no incluidos en el valor de la cotización)',heading_s),
         p('Lista informativa de TALLER. MASISCAM no vende ni factura estos repuestos en esta cotización.',small),Spacer(1,4),repuestos,Spacer(1,18),
         p('OBSERVACIONES'),p(s['observaciones'] or 'Sin observaciones registradas.'),Spacer(1,8),

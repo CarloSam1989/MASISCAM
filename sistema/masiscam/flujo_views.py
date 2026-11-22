@@ -11,7 +11,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET,require_http_methods
 from .access import masiscam_access_required
 from . import flujo_services as s, tecnica_services as t, operacion_services as o
-from .flujo_forms import CotizacionForm,ConfirmarEnvioForm,PiezaManualForm
+from .flujo_forms import CotizacionForm,ConfirmarEnvioForm,PiezaManualForm,ConceptoForm
 from .flujo_forms import PlanoTrabajoForm, EnviarPiezasForm, AplicarPlanoExistenteForm
 from .tecnica_forms import BaseForm,RevisionForm,EvidenciaForm
 from .tecnica_views import _error,_archivo
@@ -87,6 +87,7 @@ def contexto(request,exp,errores=None):
         forms['aplicar_plano']=AplicarPlanoExistenteForm(empresa=request.empresa_activa, usuario=request.user)
     if not historica and context['rol']=='TALLER' and diag and not diag.enviado_en and t.vigente(diag):
         forms['diagnostico']=RevisionForm(tipo='DIAGNOSTICO',revision=diag)
+        if not sol: forms['concepto']=ConceptoForm(initial={'version':diag.version_edicion})
     if not historica and context['rol']=='TALLER' and diag and not sol and t.vigente(diag):
         forms['enviar_piezas']=EnviarPiezasForm(initial={'version':diag.version_edicion})
     if not historica and context['rol']=='TALLER' and not sol:
@@ -170,7 +171,8 @@ def contexto(request,exp,errores=None):
                 pdf=next((ev for ev in version.evidencias.all() if ev.clave==uuid.uuid5(version.clave,'cotizacion-pdf-v1')),
                     next((ev for ev in version.evidencias.all() if ev.documento.tipo_mime=='application/pdf'),None)),
                 generar=version.snapshot.get('cotizacion',{}).get('moneda')=='USD' and not version.snapshot.get('propuesta_origen') and not any(ev.clave==uuid.uuid5(version.clave,'cotizacion-pdf-v1') for ev in version.evidencias.all()),
-                documentos=[ev for ev in version.evidencias.all() if ev.documento.tipo_mime=='application/pdf']))
+                documentos=[ev for ev in version.evidencias.all() if ev.documento.tipo_mime=='application/pdf'],
+                adicionales=[l for l in version.snapshot.get('cotizacion',{}).get('lineas',[]) if l.get('origen')=='OFICINA']))
     from .models import RevisionAdministrativa
     revision_administrativa=RevisionAdministrativa.objects.filter(expediente=exp).select_related('autor','propuesta','diagnostico').order_by('-pk').first()
     revision_vigente=bool(prop and s.aprobacion_conjunta_vigente(prop) and revision_administrativa and revision_administrativa.decision=='APROBADO')
@@ -210,6 +212,8 @@ def contexto(request,exp,errores=None):
     context.update(expediente=exp,equipo=exp.registro.equipo,inspeccion=ins,forms=forms,envio=envio,
         oficina_estado=oficina_estado,oficina_bloqueo=oficina_bloqueo,oficina_envio=False,
         diagnostico_pendiente=bool(diag and not diag.enviado_en),
+        conceptos=list(diag.conceptos.order_by('pk')) if diag else [],
+        propuesta_anterior_otra_revision=prop if (prop and sol and prop.diagnostico_id!=sol.diagnostico_id) else None,
         repuestos_informativos=[dict(pieza=pz,posicion=(pz.snapshot or {}).get('posicion',''),compatibilidad=((f"Plano {pz.snapshot['referencia']} r{pz.snapshot.get('revision','')}") if (pz.snapshot or {}).get('referencia') else 'Sin plano de referencia')) for pz in sol.diagnostico.piezas.order_by('pk')] if sol else [],
         cotizacion_habilitada=not bool(cotizacion_bloqueo),cotizacion_bloqueo=cotizacion_bloqueo,
         documentos_comerciales=documentos_comerciales,
@@ -327,6 +331,10 @@ def detalle(request,pk):
         form=RevisionForm(request.POST,tipo='DIAGNOSTICO',revision=diag);nombre='diagnostico'
     elif op=='manual' and diag:
         form=PiezaManualForm(request.POST,request.FILES);nombre='manual'
+    elif op=='concepto' and diag:
+        form=ConceptoForm(request.POST);nombre='concepto'
+    elif op=='concepto_quitar' and diag:
+        form=BaseForm(request.POST);nombre='concepto_quitar'
     elif op=='cotizar' and sol: form=CotizacionForm(request.POST,request.FILES,solicitud=sol,propuesta=ctx['propuesta']);nombre=op
     elif op=='recibir' and sol:
         raw=request.POST.get('envio','')
@@ -375,6 +383,13 @@ def detalle(request,pk):
                 fotos=data.pop('fotografias');version=data.pop('version')
                 guardar_seleccion(**common,diagnostico_id=diag.pk,version=version,clave=key,
                     datos=dict(data,origen='MANUAL'),fotografias=fotos)
+            elif op=='concepto' and diag:
+                version=data.pop('version')
+                t.agregar_concepto(**common,diagnostico_id=diag.pk,version=version,clave=key,datos=data)
+            elif op=='concepto_quitar' and diag:
+                raw=request.POST.get('concepto','')
+                if not raw.isascii() or not raw.isdecimal() or len(raw)>18: raise Http404
+                t.quitar_concepto(**common,diagnostico_id=diag.pk,version=request.POST.get('version',''),clave=key,concepto_id=int(raw))
             elif op=='cotizar' and sol: s.cotizar(**common,solicitud_id=sol.pk,clave=key,**form.datos())
             elif op in {'aprobar_expediente','devolver_expediente'}:
                 s.revisar_expediente(**common,expediente_id=exp.pk,clave=key,

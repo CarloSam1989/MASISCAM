@@ -106,6 +106,11 @@ def solicitud(usuario, empresa, pk, roles=None, lock=False, *, para_cotizacion=F
     return obj, exp
 
 
+def _conceptos(diag):
+    return [dict(id=c.pk, tipo=c.tipo, descripcion=c.descripcion, cantidad=format(c.cantidad.normalize(), 'f'), unidad=c.unidad)
+            for c in diag.conceptos.order_by('pk')]
+
+
 def _filas(diag):
     filas = []
     for pieza in diag.piezas.order_by('pk'):
@@ -151,7 +156,8 @@ def enviar_solicitud(*, usuario, empresa, diagnostico_id, version, clave, datos=
         diag = t.enviar_revision(usuario=usuario, empresa=empresa, tipo='DIAGNOSTICO', revision_id=diag.pk,
             version=diag.version_edicion, clave=uuid.uuid5(uuid.UUID(str(clave)), 'diagnostico'))
     snap = dict(expediente=exp.numero, cliente=exp.recepcion.snapshot,
-        diagnostico=diag.pk, revision=diag.revision, responsable=usuario.username, piezas=_filas(diag))
+        diagnostico=diag.pk, revision=diag.revision, responsable=usuario.username, piezas=_filas(diag),
+        conceptos=_conceptos(diag))
     if preliminar:
         snap['preliminar'] = True
     obj = t._save(SolicitudRepuestos(expediente=exp, autor=usuario, clave=clave, diagnostico=diag,
@@ -164,6 +170,8 @@ def enviar_solicitud(*, usuario, empresa, diagnostico_id, version, clave, datos=
 def vigente(obj):
     if not t.vigente(obj.diagnostico) or _filas(obj.diagnostico) != obj.snapshot['piezas']:
         raise ValidationError('Solicitud sustituida o fuentes distintas; se requiere una nueva revisión.')
+    if 'conceptos' in obj.snapshot and _conceptos(obj.diagnostico) != obj.snapshot['conceptos']:
+        raise ValidationError('Los trabajos y consumibles del diagnóstico cambiaron; se requiere una nueva revisión.')
 
 
 def autorizacion(obj):
@@ -185,25 +193,44 @@ def valorar_cotizacion(diag, detalle):
     filas=detalle.get('lineas')
     if not isinstance(filas,list) or not filas or len(filas)>200:
         raise ValidationError('Indique al menos un servicio o consumible cotizado.')
-    result=[]; total=Decimal('0')
-    for fila in filas:
-        if not isinstance(fila,dict) or 'pieza' in fila: raise ValidationError('Línea de cotización inválida: los repuestos no se cotizan.')
-        tipo=str(fila.get('tipo','SERVICIO')).strip().upper()
-        descripcion=str(fila.get('descripcion','')).strip(); unidad=str(fila.get('unidad','')).strip()
-        if tipo not in {'SERVICIO','CONSUMIBLE'} or not descripcion or len(descripcion)>500 or len(unidad)>40:
-            raise ValidationError('Cada línea requiere tipo (servicio o consumible) y descripción.')
-        try:
-            precio=Decimal(str(fila.get('precio_unitario'))); cantidad=Decimal(str(fila.get('cantidad','1')))
-        except (InvalidOperation,ValueError): raise ValidationError('Precio o cantidad inválidos.') from None
+    sol=SolicitudRepuestos.objects.filter(diagnostico=diag).first()
+    if not sol:
+        raise ValidationError('Solo se cotiza sobre un diagnóstico validado y enviado por TALLER.')
+    conceptos={c['id']:c for c in sol.snapshot.get('conceptos',[])}
+    result=[]; total=Decimal('0'); vistos=set()
+    def precio_de(fila):
+        try: precio=Decimal(str(fila.get('precio_unitario')))
+        except (InvalidOperation,ValueError): raise ValidationError('Precio inválido.') from None
         if not precio.is_finite() or precio<0 or precio>=Decimal('1000000000000') or precio.as_tuple().exponent < -2:
             raise ValidationError('Precio no negativo, con un máximo de dos decimales y doce enteros.')
-        if not cantidad.is_finite() or cantidad<=0 or cantidad>=Decimal('100000000000000') or cantidad.as_tuple().exponent < -6:
-            raise ValidationError('Cantidad positiva con un máximo de seis decimales.')
+        return precio
+    for fila in filas:
+        if not isinstance(fila,dict) or 'pieza' in fila: raise ValidationError('Línea de cotización inválida: los repuestos no se cotizan.')
+        precio=precio_de(fila)
+        if fila.get('concepto') is not None:
+            cid=fila['concepto']
+            if type(cid) is not int or cid not in conceptos or cid in vistos:
+                raise ValidationError('Concepto ajeno, inexistente o duplicado: la cotización parte del diagnóstico enviado.')
+            vistos.add(cid); c=conceptos[cid]
+            tipo,descripcion,unidad,cantidad,extra=c['tipo'],c['descripcion'],c['unidad'],Decimal(c['cantidad']),dict(concepto=cid,origen='TALLER')
+        else:
+            tipo=str(fila.get('tipo','SERVICIO')).strip().upper(); descripcion=str(fila.get('descripcion','')).strip()
+            unidad=str(fila.get('unidad','')).strip(); justificacion=str(fila.get('justificacion','')).strip()
+            if tipo not in {'SERVICIO','CONSUMIBLE'} or not descripcion or len(descripcion)>500 or not unidad or len(unidad)>40:
+                raise ValidationError('Cada línea adicional requiere tipo, descripción y unidad.')
+            if not justificacion or len(justificacion)>1000:
+                raise ValidationError('Todo servicio no registrado por TALLER exige justificación; será revisado antes de la aprobación.')
+            try: cantidad=Decimal(str(fila.get('cantidad')))
+            except (InvalidOperation,ValueError): raise ValidationError('Cantidad inválida.') from None
+            if not cantidad.is_finite() or cantidad<=0 or cantidad>=Decimal('100000000000000') or cantidad.as_tuple().exponent < -6:
+                raise ValidationError('Cantidad positiva con un máximo de seis decimales.')
+            extra=dict(concepto=None,origen='OFICINA',justificacion=justificacion,requiere_revision_tecnica=True)
         with localcontext() as context:
             context.prec=50
             subtotal=(cantidad*precio).quantize(Decimal('.01')); total+=subtotal
         result.append(dict(tipo=tipo,descripcion=descripcion,cantidad=format(cantidad.normalize(),'f'),unidad=unidad,
-            precio_unitario=format(precio,'.2f'),total=format(subtotal,'.2f')))
+            precio_unitario=format(precio,'.2f'),total=format(subtotal,'.2f'),**extra))
+    if vistos!=set(conceptos): raise ValidationError('Asigne precio a todos los trabajos y consumibles registrados por TALLER.')
     factura=detalle.get('factura') or {}
     if not isinstance(factura,dict): raise ValidationError('Referencia de factura inválida.')
     numero=str(factura.get('numero','')).strip(); fecha=str(factura.get('fecha','')).strip()
@@ -247,10 +274,13 @@ def generar_cotizacion_pdf(*,usuario,empresa,propuesta_id):
         compat=(f"Plano {origen['referencia']} r{origen.get('revision','')}"+(' (provisional)' if origen.get('provisional') else '')) if origen.get('referencia') else 'Sin plano de referencia'
         repuestos.append(dict(posicion=origen.get('posicion',''),codigo=fuente['codigo'],descripcion=fuente['descripcion'],
             cantidad=format(Decimal(fuente['cantidad']).normalize(),'f'),unidad=fuente['unidad'],compatibilidad=compat))
+    diag=propuesta.diagnostico
+    diagnostico=dict(fallas=diag.fallas,causas=diag.causas,componentes_afectados=diag.componentes_afectados,
+        recomendaciones=diag.recomendaciones,conclusiones=diag.conclusiones,revision=diag.revision)
     from .flujo_pdf import cotizacion_comercial
     contenido=cotizacion_comercial(dict(referencia=propuesta.snapshot['presupuesto_referencia'],
         version=propuesta.version,fecha=timezone.localtime(propuesta.creado_en).strftime('%d/%m/%Y'),
-        cliente=propuesta.snapshot['cliente'],expediente=propuesta.snapshot['numero'],lineas=lineas,repuestos=repuestos,
+        cliente=propuesta.snapshot['cliente'],expediente=propuesta.snapshot['numero'],lineas=lineas,repuestos=repuestos,diagnostico=diagnostico,
         total=precios['total'],observaciones=propuesta.observaciones,condiciones=precios.get('condiciones','')))
     archivo=ContentFile(contenido,name=f'cotizacion-v{propuesta.version}.pdf')
     archivo.content_type='application/pdf'
