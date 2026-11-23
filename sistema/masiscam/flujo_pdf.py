@@ -42,7 +42,7 @@ def cotizacion_comercial(s):
             ('LINEBELOW',(0,0),(-1,-1),.35,line)]))
         return table
     servicios = tabla(('Tipo','Descripción','Cantidad','Unidad','P. unitario\nUSD','Subtotal\nUSD'),
-        [[r.get('tipo','').capitalize(), r.get('descripcion','')+(('\nAdicional de OFICINA, pendiente de revisión técnica. Justificación: '+r['justificacion']) if r.get('origen')=='OFICINA' and r.get('justificacion') else ''), r.get('cantidad',''), r.get('unidad',''),
+        [[r.get('tipo','').capitalize(), r.get('descripcion','')+(('\nTrabajo asociado al componente '+(('N.º '+str(r['componente_posicion'])+' · ') if r.get('componente_posicion') else '')+(r.get('componente_codigo') or '')+' '+(r.get('componente_descripcion') or '')) if r.get('componente') is not None else '')+(('\nAdicional de OFICINA, pendiente de revisión técnica. Justificación: '+r['justificacion']) if r.get('origen')=='OFICINA' and r.get('justificacion') else ''), r.get('cantidad',''), r.get('unidad',''),
           r.get('precio_unitario',''), r.get('total','')] for r in s['lineas']],
         [70,185,50,50,80,80], 'Sin servicios cotizados')
     repuestos = tabla(('N.º en\nplano','Código','Descripción','Cantidad','Unidad','Compatibilidad'),

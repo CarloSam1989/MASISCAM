@@ -426,3 +426,109 @@ class PlanoBrowserTests(StaticLiveServerTestCase):
                     self.assertGreater(page.evaluate('window.scrollY'), 0)
                 finally:
                     browser.close()
+
+    def test_taller_selecciona_marca_modelo_ratio_rotacion_operacion_y_guarda_reductor(self):
+        from playwright.sync_api import sync_playwright, expect
+        from .models import Equipo
+        galleta = self._galleta(self.tecnico)
+        cliente = self.exp.cliente_contractual
+        total = Equipo.objects.count()
+        with sync_playwright() as pw:
+            for ancho, alto in ((1440, 1000), (390, 900)):
+                browser = pw.chromium.launch(channel='msedge', headless=True)
+                try:
+                    context = browser.new_context(viewport={'width':ancho,'height':alto})
+                    context.add_cookies([{'name':settings.SESSION_COOKIE_NAME,'value':galleta,'url':self.live_server_url}])
+                    page = context.new_page()
+                    page.goto(self.live_server_url+reverse('masiscam:ficha_crear')+f'?tipo=REDUCTOR&cliente={cliente.pk}')
+                    marca = page.locator('#sel-marca')
+                    expect(marca).to_be_visible()
+                    self.assertFalse(marca.is_disabled(), f'selector de marca deshabilitado a {ancho}px')
+                    opciones = marca.locator('option').all_inner_texts()
+                    self.assertIn('DERAN', opciones, f'marca ausente a {ancho}px: {opciones}')
+                    # Cadena: marca → modelo → ratio → rotación → operación (cada nivel se habilita con el anterior).
+                    expect(page.locator('#sel-modelo')).to_be_disabled()
+                    marca.select_option('DERAN')
+                    for nivel, valor in (('modelo','M20A'),('ratio','3:1'),('rotacion','#1'),('operacion','VERTICAL')):
+                        sel = page.locator('#sel-'+nivel)
+                        expect(sel).to_be_enabled()
+                        self.assertIn(valor, sel.locator('option').all_inner_texts())
+                        sel.select_option(valor)
+                    for nombre, valor in (('numero_serie',f'SER-MARCA-{ancho}'),('potencia','20 HP')):
+                        page.locator('#id_'+nombre).fill(valor)
+                    page.locator('#id_camaronera').fill('Camaronera QA'); page.locator('#id_estacion').fill(f'Estación {ancho}')
+                    page.locator('#id_sector').fill('Sector QA'); page.locator('#id_numero_equipo').fill(f'EQ-{ancho}')
+                    expect(page.locator('#cat-estado')).to_contain_text('Catálogo activo encontrado')
+                    page.get_by_role('button', name=re.compile(r'^Guardar reductor')).click()
+                    expect(page).not_to_have_url(re.compile(r'/equipos/nuevo/'), timeout=30000)
+                    context.close()
+                finally:
+                    browser.close()
+        self.assertEqual(Equipo.objects.count(), total+2)
+        for ancho in (1440, 390):
+            equipo = Equipo.objects.get(numero_serie=f'SER-MARCA-{ancho}')
+            self.assertEqual((equipo.marca, equipo.modelo, equipo.ratio, equipo.rotacion, equipo.operacion), ('DERAN','M20A','3:1','#1','VERTICAL'))
+
+    def test_catalogo_vacio_avisa_y_no_afecta_otras_categorias(self):
+        from .models import ReferenciaTecnica
+        ReferenciaTecnica.objects.filter(empresa=self.empresa).update(estado='RETIRADA')
+        client = Client(); client.force_login(self.tecnico)
+        vacio = client.get(reverse('masiscam:ficha_crear')+'?tipo=REDUCTOR')
+        self.assertContains(vacio, 'data-catalogo-vacio')
+        self.assertNotContains(vacio, 'data-catalogo="')
+        bomba = client.get(reverse('masiscam:ficha_crear')+'?tipo=BOMBA')
+        self.assertNotContains(bomba, 'data-catalogo-vacio')
+
+    def test_seleccion_lateral_resalta_y_centra_marcador_sin_inventar_coordenadas(self):
+        from playwright.sync_api import sync_playwright, expect
+        ref = tecnica.guardar_referencia(usuario=self.planta, empresa=self.empresa, clave=uuid.uuid4(),
+            archivo=dibujo_sintetico(), datos=dict(codigo='PLANO-S250-QA', tipo='PLANO', titulo='Plano S250 sintético',
+                procedencia='Fixture QA sin uso industrial', autorizacion_uso='Prueba aislada', proyecto_id=self.exp.registro.equipo.proyecto_id))
+        ids = {}
+        for clave, posicion, codigo in (('con', '1', 'S250'), ('sin', '2', 'S251')):
+            ids[clave] = tecnica.guardar_parte(usuario=self.planta, empresa=self.empresa, referencia_id=ref.pk, clave=uuid.uuid4(),
+                datos=dict(posicion=posicion, numero_parte=codigo, descripcion='Componente '+codigo, unidad='unidad QA'))
+        tecnica.estado_referencia(usuario=self.planta, empresa=self.empresa, referencia_id=ref.pk, estado='PUBLICADA', clave=uuid.uuid4())
+        tecnica.aplicar_referencia(usuario=self.planta, empresa=self.empresa, referencia_id=ref.pk,
+            equipo_id=self.exp.registro.equipo_id, fundamento='Solo prueba sintética del visor; no certifica compatibilidad industrial', clave=uuid.uuid4())
+        svc.guardar_mapa(usuario=self.planta, empresa=self.empresa, referencia_id=ref.pk, base_version=0,
+            posiciones=[dict(parte=ids['con'], pagina=1, x='.5', y=str(1-530/792))], clave=uuid.uuid4())
+        client = Client(); client.force_login(self.tecnico)
+        cookie = client.cookies[settings.SESSION_COOKIE_NAME].value
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(channel='msedge', headless=True)
+            try:
+                for ancho, alto in ((1440, 1000), (390, 900)):
+                    context = browser.new_context(viewport={'width': ancho, 'height': alto})
+                    context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': cookie, 'url': self.live_server_url}])
+                    page = context.new_page()
+                    page.goto(self.live_server_url+reverse('masiscam:plano', args=[ref.pk])+'?diagnostico='+str(self.diag.pk))
+                    expect(page.locator('#pl-app')).to_have_attribute('data-ready', 'true', timeout=60000)
+                    if ancho < 992: page.get_by_role('tab', name=re.compile('Componentes')).click()
+                    page.locator('.pl-part', has_text='S250').click()
+                    if ancho < 992: page.get_by_role('tab', name='Plano', exact=True).click()
+                    marcador = page.locator('.pl-point.is-active')
+                    expect(marcador).to_have_count(1); expect(marcador).to_have_text('1')
+                    centrado = """() => { const m=document.querySelector('.pl-point.is-active').getBoundingClientRect(),
+                        v=document.querySelector('.pl-viewport').getBoundingClientRect();
+                        return m.left>=v.left-1 && m.right<=v.right+1 && m.top>=v.top-1 && m.bottom<=v.bottom+1; }"""
+                    expect(page.locator('.pl-viewport')).to_be_visible()
+                    self.assertTrue(page.evaluate(centrado), f'marcador 1 fuera del visor a {ancho}px')
+                    if ancho < 992: page.get_by_role('tab', name=re.compile('Componentes')).click(); page.get_by_role('tab', name='Plano', exact=True).click()
+                    expect(page.locator('.pl-point.is-active')).to_have_count(1)           # se mantiene mientras siga seleccionado
+                    if ancho < 992: page.get_by_role('tab', name=re.compile('Componentes')).click()
+                    page.get_by_role('button', name='Agregar al diagnóstico', exact=True).click()   # registrar desde la selección lateral
+                    page.locator('#pl-position-quantity').fill('1'); page.locator('#pl-position-condition').fill('Condición QA')
+                    page.locator('#pl-position-action').select_option('EVALUAR'); page.locator('#pl-position-save').click()
+                    expect(page.locator('dialog[open]')).to_have_count(0, timeout=15000)
+                    if ancho < 992: page.get_by_role('tab', name='Plano', exact=True).click()
+                    expect(page.locator('.pl-point.is-active')).to_have_count(1)           # sigue resaltado tras registrar
+                    expect(page.locator('.pl-point.is-active')).to_have_text('1')
+                    self.assertTrue(page.evaluate(centrado), f'marcador 1 descentrado tras registrar a {ancho}px')
+                    if ancho < 992: page.get_by_role('tab', name=re.compile('Componentes')).click()
+                    page.locator('.pl-part', has_text='S251').click()                       # sin coordenadas: no se inventa marcador
+                    expect(page.locator('.pl-point.is-active')).to_have_count(0)
+                    expect(page.locator('.pl-point')).to_have_count(1)
+                    context.close()
+            finally:
+                browser.close()

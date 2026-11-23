@@ -55,7 +55,7 @@ class CotizacionForm(BaseForm):
 
     def __init__(self,*args,solicitud=None,propuesta=None,**kwargs):
         super().__init__(*args,**kwargs)
-        self.filas=[]; self.extras=[]; self.conceptos=[]
+        self.filas=[]; self.extras=[]; self.conceptos=[]; self.componentes=[]; self.historica=False
         if solicitud is None: return
         self.fields['factura_numero']=forms.CharField(max_length=200,required=False,label='Número de factura')
         self.fields['factura_fecha']=forms.DateField(required=False,label='Fecha de factura',widget=forms.DateInput(attrs={'type':'date'}))
@@ -63,7 +63,9 @@ class CotizacionForm(BaseForm):
         if actual.get('moneda','USD')!='USD': actual={}
         previas=actual.get('lineas',[])
         por_concepto={r['concepto']:r for r in previas if r.get('concepto') is not None}
-        adicionales=[r for r in previas if r.get('concepto') is None and 'pieza' not in r]
+        adicionales=[r for r in previas if r.get('concepto') is None and 'pieza' not in r and r.get('componente') is None]
+        por_componente={r['componente']:r for r in previas if r.get('componente') is not None}
+        self.historica=not solicitud.snapshot.get('conceptos')
         self.initial.update(condiciones=actual.get('condiciones',''),factura_numero=actual.get('factura',{}).get('numero',''),
             factura_fecha=actual.get('factura',{}).get('fecha',''),
             referencia=propuesta.snapshot.get('presupuesto_referencia','') if propuesta else '',
@@ -88,6 +90,20 @@ class CotizacionForm(BaseForm):
                 self.fields[f'x{i}_{nombre}']=campo
                 self.initial[f'x{i}_{nombre}']=previa.get('precio_unitario' if nombre=='precio' else nombre,'')
             self.extras.append({n:self[f'x{i}_{n}'] for n in campos}|dict(total=previa.get('total',''),indice=i))
+        # «COTIZAR» sobre un componente: un único trabajo técnico por pieza (se reutiliza si ya existe).
+        for pz in solicitud.snapshot.get('piezas',[]):
+            previa=por_componente.get(pz['pieza'],{}); k=f"k{pz['pieza']}"
+            campos=dict(tipo=forms.ChoiceField(choices=[('SERVICIO','Servicio'),('CONSUMIBLE','Consumible')],required=False,label='Tipo'),
+                descripcion=forms.CharField(max_length=500,required=False,label='Mantenimiento o reparación del componente'),
+                cantidad=DecimalFlexible(max_digits=20,decimal_places=6,min_value=Decimal('0.000001'),required=False,label='Cantidad'),
+                unidad=forms.CharField(max_length=40,required=False,label='Unidad'),
+                precio=DecimalFlexible(max_digits=14,decimal_places=2,min_value=0,required=False,label='Precio unitario (USD)'),
+                justificacion=forms.CharField(max_length=1000,required=False,label='Justificación (obligatoria)'))
+            for nombre,campo in campos.items():
+                self.fields[f'{k}_{nombre}']=campo
+                self.initial[f'{k}_{nombre}']=previa.get('precio_unitario' if nombre=='precio' else nombre,'')
+            self.componentes.append(dict(pieza=pz,abierto=bool(previa),total=previa.get('total',''),
+                **{n:self[f'{k}_{n}'] for n in campos}))
         for field in self.fields.values(): field.widget.attrs.setdefault('class','form-control')
         self.fields['archivo'].widget.attrs['accept']='.pdf,application/pdf'
 
@@ -110,6 +126,16 @@ class CotizacionForm(BaseForm):
                 raise forms.ValidationError(f'El servicio adicional {i+1} no fue registrado por TALLER: indique su justificación.')
             self.lineas_validas.append(dict(tipo=d['tipo'] or 'SERVICIO',descripcion=d['descripcion'],cantidad=str(d['cantidad']),
                 unidad=d['unidad'],precio_unitario=str(d['precio']),justificacion=d['justificacion'].strip()))
+        for comp in self.componentes:
+            k=f"k{comp['pieza']['pieza']}"
+            d={n:data.get(f'{k}_{n}') for n in ('tipo','descripcion','cantidad','unidad','precio','justificacion')}
+            if not (d['descripcion'] or d['precio'] is not None or d['cantidad'] is not None or d['justificacion']): continue
+            if not d['descripcion'] or d['precio'] is None or d['cantidad'] is None or not d['unidad']:
+                raise forms.ValidationError(f"El trabajo del componente «{comp['pieza'].get('descripcion','')}» requiere descripción, cantidad, unidad y precio unitario.")
+            if not (d['justificacion'] or '').strip():
+                raise forms.ValidationError(f"El trabajo del componente «{comp['pieza'].get('descripcion','')}» requiere justificación: pasa por revisión técnica.")
+            self.lineas_validas.append(dict(tipo=d['tipo'] or 'SERVICIO',descripcion=d['descripcion'],cantidad=str(d['cantidad']),
+                unidad=d['unidad'],precio_unitario=str(d['precio']),justificacion=d['justificacion'].strip(),componente=comp['pieza']['pieza']))
         if (self.conceptos or self.extras) and not self.lineas_validas:
             raise forms.ValidationError('Indique al menos un servicio o consumible cotizado. Los repuestos no se cotizan.')
         return data

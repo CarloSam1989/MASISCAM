@@ -200,6 +200,71 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         return trabajos
 
     @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
+    def test_expediente_nuevo_muestra_solo_los_dos_conceptos_de_taller(self):
+        self.preparar_solicitud(enviar=False); diag=self.diag
+        for trabajo in (dict(tipo='REPARACION',descripcion='Reparación de eje',cantidad='2',unidad='hora'),
+                dict(tipo='MANTENIMIENTO',descripcion='Cambio de sellos',cantidad='1',unidad='servicio')):
+            t.agregar_concepto(usuario=self.taller,empresa=self.empresa,diagnostico_id=diag.pk,version=diag.version_edicion,clave=uuid.uuid4(),datos=trabajo)
+        diag.refresh_from_db()
+        self.sol=s.enviar_solicitud(usuario=self.taller,empresa=self.empresa,diagnostico_id=diag.pk,version=diag.version_edicion,clave=uuid.uuid4())
+        t.decidir_diagnostico(usuario=self.admin,empresa=self.empresa,diagnostico_id=diag.pk,decision='APROBADO',motivo='QA',clave=uuid.uuid4())
+        self.url=reverse('masiscam:flujo_detalle',args=[self.exp.pk]); self.client.force_login(self.oficina)
+        respuesta=self.client.get(self.url); form=respuesta.context['forms']['cotizar']
+        self.assertEqual(len(form.filas),2)                                    # ni ocho filas vacías ni conceptos ficticios
+        self.assertFalse(form.historica)
+        self.assertContains(respuesta,'Reparación de eje'); self.assertNotContains(respuesta,'data-solicitud-historica')
+        self.assertEqual(diag.conceptos.count(),2)
+
+    @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
+    def test_solicitud_historica_sin_conceptos_advierte_y_no_inventa(self):
+        self.preparar()                                                        # solicitud enviada sin conceptos estructurados
+        self.client.force_login(self.oficina)
+        respuesta=self.client.get(self.url); form=respuesta.context['forms']['cotizar']
+        self.assertTrue(form.historica); self.assertEqual(len(form.filas),0)
+        self.assertContains(respuesta,'data-solicitud-historica')
+        self.assertEqual(self.diag.conceptos.count(),0)
+
+    @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
+    def test_cotizar_componente_reutiliza_trabajo_sin_duplicar_y_va_al_pdf(self):
+        import re
+        from io import BytesIO
+        from pypdf import PdfReader
+        self._con_conceptos(); self.client.force_login(self.oficina)
+        pieza=self.diag.piezas.get(); k=f'k{pieza.pk}'
+        ids=[c['id'] for c in self.sol.snapshot['conceptos']]
+        base={f'c{i}_precio':p for i,p in zip(ids,('100.00','250.00','4.00'))}
+        respuesta=self.client.get(self.url); self.assertContains(respuesta,'COTIZAR'); self.assertContains(respuesta,f'data-cotizar-componente="{pieza.pk}"')
+        # sin justificación o sin datos completos no se acepta una intervención inventada
+        malo=self.client.post(self.url,dict(op='cotizar',clave=uuid.uuid4(),referencia='COT-COMP',**base,**{f'{k}_descripcion':'Reparación del componente',
+            f'{k}_cantidad':'1',f'{k}_unidad':'hora',f'{k}_precio':'30.00'}))
+        self.assertEqual(malo.status_code,400); self.assertEqual(PropuestaComercial.objects.filter(expediente=self.exp).count(),0)
+        datos=dict(op='cotizar',clave=uuid.uuid4(),referencia='COT-COMP',**base,**{f'{k}_descripcion':'Reparación del componente',
+            f'{k}_cantidad':'1',f'{k}_unidad':'hora',f'{k}_precio':'30.00',f'{k}_justificacion':'Desgaste visto en el diagnóstico'})
+        self.assertEqual(self.client.post(self.url,datos).status_code,302)
+        propuesta=PropuestaComercial.objects.get(expediente=self.exp)
+        lineas=propuesta.snapshot['cotizacion']['lineas']
+        asociadas=[l for l in lineas if l.get('componente')==pieza.pk]
+        self.assertEqual(len(asociadas),1); self.assertEqual(len(lineas),4)
+        self.assertTrue(asociadas[0]['requiere_revision_tecnica']); self.assertEqual(asociadas[0]['origen'],'OFICINA')
+        self.assertEqual(propuesta.snapshot['cotizacion']['total'],'650.00')      # 620 de TALLER + 30; el repuesto no suma
+        self.assertNotIn('precio_unitario',[k2 for k2 in self.sol.snapshot['piezas'][0]])
+        # El formulario reutiliza el trabajo ya asociado: se rellena en lugar de crear otro.
+        form=self.client.get(self.url).context['forms']['cotizar']
+        comp=[c for c in form.componentes if c['pieza']['pieza']==pieza.pk][0]
+        self.assertTrue(comp['abierto']); self.assertEqual(comp['descripcion'].value(),'Reparación del componente')
+        # Un componente ajeno o duplicado se rechaza en el servicio.
+        for malo in (dict(componente=999999),dict(componente=pieza.pk)):
+            with self.assertRaises(ValidationError):
+                s.cotizar(usuario=self.oficina,empresa=self.empresa,solicitud_id=self.sol.pk,clave=uuid.uuid4(),referencia='COT-DUP',cotizacion=dict(moneda='USD',
+                    lineas=[dict(concepto=i,precio_unitario='1') for i in ids]+[dict(tipo='SERVICIO',descripcion='A',cantidad='1',unidad='u',precio_unitario='1',justificacion='J',componente=pieza.pk),
+                        dict(tipo='SERVICIO',descripcion='B',cantidad='1',unidad='u',precio_unitario='1',justificacion='J',**malo)]))
+        ev=s.generar_cotizacion_pdf(usuario=self.oficina,empresa=self.empresa,propuesta_id=propuesta.pk)
+        with ev.documento.archivo.open('rb') as f:texto=chr(10).join(pg.extract_text() for pg in PdfReader(BytesIO(f.read())).pages)
+        for esperado in ('Trabajo asociado al componente','Reparación del componente','650.00','REPUESTOS REQUERIDOS (no incluidos'):
+            self.assertIn(esperado,texto)
+        self.assertEqual(PropuestaComercial.objects.filter(expediente=self.exp).count(),1)
+
+    @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
     def test_conceptos_congelados_protegidos_y_oficina_solo_asigna_precios(self):
         from django.db import DatabaseError, transaction
         from .tecnica_models import ConceptoTecnico
@@ -450,6 +515,34 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
 
     def _con_conceptos(self):
         return OficinaGestionTests._con_conceptos(self)
+
+    @override_settings(MASISCAM_OPERACION_LOCAL=False,MASISCAM_CALIBRACION_LOCAL=False,MASISCAM_CIERRE_LOCAL=False)
+    def test_boton_cotizar_en_componente_asocia_trabajo_y_actualiza_total(self):
+        from playwright.sync_api import sync_playwright, expect
+        self._con_conceptos()
+        galleta=self._galleta(self.oficina); pieza_id=self.diag.piezas.get().pk
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                for ancho in (1440,390):
+                    context=browser.new_context(viewport=dict(width=ancho,height=1000))
+                    context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galleta,url=self.live_server_url)])
+                    page=context.new_page();page.goto(self.live_server_url+self.url)
+                    quote=page.locator('#oficina-cotizacion')
+                    expect(quote.locator('tr[data-concepto]')).to_have_count(3)
+                    for fila,precio in zip(quote.locator('tr[data-concepto]').all(),('100.00','250.00','4.00')):
+                        fila.locator('input[name$=_precio]').fill(precio)
+                    expect(quote.locator(f'[data-componente-form="{pieza_id}"]')).to_be_hidden()
+                    quote.locator(f'[data-cotizar-componente="{pieza_id}"]').click()
+                    bloque=quote.locator(f'[data-componente-form="{pieza_id}"]'); expect(bloque).to_be_visible()
+                    k=f'k{pieza_id}'
+                    quote.locator(f'[name={k}_descripcion]').fill('Reparación del componente'); quote.locator(f'[name={k}_cantidad]').fill('1')
+                    quote.locator(f'[name={k}_unidad]').fill('hora'); quote.locator(f'[name={k}_precio]').fill('30.00')
+                    expect(page.locator('#oficina-total')).to_have_text('650.00')       # el repuesto no suma; solo el trabajo asociado
+                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),f'desborda a {ancho}px')
+                    context.close()
+            finally:
+                browser.close()
 
     @override_settings(MASISCAM_OPERACION_LOCAL=False,MASISCAM_CALIBRACION_LOCAL=False,MASISCAM_CIERRE_LOCAL=False)
     def test_servicio_adicional_con_justificacion_y_aviso_de_nueva_revision(self):

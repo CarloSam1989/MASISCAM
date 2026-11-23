@@ -40,3 +40,13 @@
     });
   }
 })();
+
+document.addEventListener('click', event => {
+  const boton = event.target.closest('[data-cotizar-componente]');
+  if (!boton) return;
+  const bloque = document.getElementById('componente-' + boton.dataset.cotizarComponente);
+  if (!bloque) return;
+  bloque.hidden = false;
+  bloque.scrollIntoView({block: 'center'});
+  bloque.querySelector('[name$="_descripcion"]')?.focus();
+});

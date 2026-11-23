@@ -197,7 +197,8 @@ def valorar_cotizacion(diag, detalle):
     if not sol:
         raise ValidationError('Solo se cotiza sobre un diagnóstico validado y enviado por TALLER.')
     conceptos={c['id']:c for c in sol.snapshot.get('conceptos',[])}
-    result=[]; total=Decimal('0'); vistos=set()
+    componentes={p['pieza']:p for p in sol.snapshot.get('piezas',[])}
+    result=[]; total=Decimal('0'); vistos=set(); asociados=set()
     def precio_de(fila):
         try: precio=Decimal(str(fila.get('precio_unitario')))
         except (InvalidOperation,ValueError): raise ValidationError('Precio inválido.') from None
@@ -225,6 +226,13 @@ def valorar_cotizacion(diag, detalle):
             if not cantidad.is_finite() or cantidad<=0 or cantidad>=Decimal('100000000000000') or cantidad.as_tuple().exponent < -6:
                 raise ValidationError('Cantidad positiva con un máximo de seis decimales.')
             extra=dict(concepto=None,origen='OFICINA',justificacion=justificacion,requiere_revision_tecnica=True)
+            if fila.get('componente') is not None:   # COTIZAR: trabajo técnico asociado a un componente de TALLER (no vende el repuesto)
+                pid=fila['componente']
+                if type(pid) is not int or pid not in componentes or pid in asociados:
+                    raise ValidationError('Componente ajeno, inexistente o con trabajo duplicado: reutilice el trabajo ya asociado.')
+                asociados.add(pid); comp=componentes[pid]
+                extra.update(componente=pid,componente_codigo=comp.get('codigo',''),componente_descripcion=comp.get('descripcion',''),
+                    componente_posicion=(comp.get('origen') or {}).get('posicion',''))
         with localcontext() as context:
             context.prec=50
             subtotal=(cantidad*precio).quantize(Decimal('.01')); total+=subtotal

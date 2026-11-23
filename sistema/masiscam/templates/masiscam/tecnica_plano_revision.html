@@ -1,4 +1,4 @@
-{% extends 'masiscam/base.html' %}{% load static %}
+{% extends 'masiscam/base.html' %}{% load static masiscam_assets %}
 {% block content %}
 <section class="container py-4" id="revision-plano" style="overflow-wrap:anywhere">
   <h1>{{ referencia.titulo }}</h1>
@@ -31,4 +31,4 @@
   {% endif %}
 </section>
 {% endblock %}
-{% block javascript %}<script type="module" src="{% static 'masiscam/js/plano.js' %}?v=20261113-revision"></script>{% endblock %}
+{% block javascript %}<script type="module" src="{% static_v 'masiscam/js/plano.js' %}"></script>{% endblock %}

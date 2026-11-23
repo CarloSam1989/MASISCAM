@@ -78,7 +78,7 @@ if (root) {
       button.setAttribute('aria-selected', String(active));
       button.tabIndex = active ? 0 : -1;
     });
-    if (name === 'plano') setTimeout(() => render().catch(error => message(error.message, true)), 0);
+    if (name === 'plano') setTimeout(() => render().then(centrarMarcador).catch(error => message(error.message, true)), 0);
   }
   root.querySelectorAll('.pl-mobile-tabs [data-tab]').forEach((button, index, buttons) => {
     button.addEventListener('click', () => tab(button.dataset.tab));
@@ -103,6 +103,7 @@ if (root) {
       button.dataset.parte = point.parte;
       button.setAttribute('aria-label', `Posición ${point.numero}`);
       button.classList.toggle('is-active', point.parte === state.active);
+      if (point.parte === state.active) button.setAttribute('aria-current', 'true');
       button.classList.toggle('is-selected', state.data.piezas.some(piece => piece.parte === point.parte));
       button.addEventListener('click', event => {
         event.stopPropagation(); select(point.parte, point.id);
@@ -160,7 +161,7 @@ if (root) {
   // Desplaza el visor hasta el marcador resaltado (si la pieza aún no tiene coordenadas no se inventa ninguna).
   function centrarMarcador() {
     const marker = $('#pl-points .pl-point.is-active');
-    if (!marker || !viewport) return;
+    if (!marker || !viewport || !viewport.clientWidth) return;   // panel oculto o sin coordenadas: no se desplaza ni se inventa posición
     const m = marker.getBoundingClientRect(), v = viewport.getBoundingClientRect();
     viewport.scrollBy({left: m.left + m.width / 2 - (v.left + v.width / 2), top: m.top + m.height / 2 - (v.top + v.height / 2)});
   }

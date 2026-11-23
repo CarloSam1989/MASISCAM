@@ -65,4 +65,4 @@
 {% if historial_disponible and rol != 'OFICINA' %}<div class="d-flex"><a class="btn btn-outline-primary" href="{% url 'masiscam:cierre_historial' equipo.pk %}">Historial autorizado</a></div>{% endif %}
 </div>{% endblock %}
 
-{% block javascript %}<script type="module" src="{% static_v 'masiscam/js/plano.js' %}"></script><script src="{% static 'masiscam/js/flujo.js' %}?v=20261114-cotizacion-pdf" defer></script>{% endblock %}
+{% block javascript %}<script type="module" src="{% static_v 'masiscam/js/plano.js' %}"></script><script src="{% static_v 'masiscam/js/flujo.js' %}" defer></script>{% endblock %}
