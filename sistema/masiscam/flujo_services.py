@@ -567,6 +567,10 @@ def resumen(exp, usuario):
         elif not mensaje:
             try: autorizacion(sol); auth=True
             except ValidationError as error: auth=False; mensaje='; '.join(error.messages)
+            if not auth and not hasattr(prop,'decision'):
+                # La aprobación conjunta de ADMINISTRADOR ya existe; falta la respuesta del cliente (paso distinto).
+                mensaje=('Pendiente de aceptación del cliente. ADMINISTRADOR ya aprobó el diagnóstico y la cotización; '
+                    +('OFICINA registra la respuesta del cliente.' if o.politica() else 'el registro de la aceptación exige la política comercial aprobada por el propietario, que no está vigente: '+mensaje))
             if not auth:
                 if not hasattr(prop,'decision') and role=='OFICINA': accion=action('Registrar respuesta del cliente',op='aceptacion')
                 bloqueo=not bool(o.politica()) or hasattr(prop,'decision')

@@ -199,6 +199,61 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
         return trabajos
 
+    def test_transicion_admin_cliente_repuestos_y_reparacion_en_taller_sin_nuevo_expediente(self):
+        from .models import ExpedienteMantenimiento, RevisionAdministrativa
+        from .test_plano import foto_pieza
+        self.preparar(aprobar_tecnico=False)
+        prop=self.cotizar(archivo=None)
+        def taller(): return s.resumen(self.exp,self.taller)
+        def lista():
+            self.client.force_login(self.taller)
+            return self.client.get(reverse('masiscam:taller_estado')).content.decode()
+        def detalle_taller():
+            self.client.force_login(self.taller)
+            return self.client.get(reverse('masiscam:taller_equipo',args=[self.exp.registro.equipo_id])+f'?expediente={self.exp.pk}')
+        # 1) Cotizada: TALLER ve que falta la aprobación de ADMINISTRADOR (no la del cliente).
+        self.assertIn('revisar conjuntamente',taller()['mensaje']); self.assertIn('Pendiente de revisión de ADMINISTRADOR',lista())
+        # 2) Aprobación administrativa persistida; TALLER la ve, y NO se confunde con la aceptación del cliente.
+        s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
+            propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
+        self.assertEqual(RevisionAdministrativa.objects.get(expediente=self.exp).decision,'APROBADO')
+        self.assertTrue(s.aprobacion_conjunta_vigente(prop)); self.assertEqual(Diagnostico.objects.get(pk=self.diag.pk).estado,'FINALIZADO')
+        r=taller(); self.assertIn('Pendiente de aceptación del cliente',r['mensaje']); self.assertIsNone(r['accion'])
+        self.assertIn('Pendiente de aceptación del cliente',lista())
+        self.assertContains(detalle_taller(),'Pendiente de aceptación del cliente')
+        self.assertEqual(s.resumen(self.exp,self.oficina)['accion']['texto'],'Registrar respuesta del cliente')
+        with self.assertRaises(PermissionDenied):   # solo el rol autorizado registra la aceptación
+            o.decidir_comercial(usuario=self.taller,empresa=self.empresa,propuesta_id=prop.pk,clave=uuid.uuid4(),archivo=pdf_plano(),
+                datos=dict(decision='APROBADO',fecha_cliente=timezone.now(),representante_cliente='X',motivo='X',**verificacion_qa()))
+        with self.assertRaises(ValidationError):    # aprobar administrativamente no autoriza reparar
+            o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
+                datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
+        # 3) Aceptación del cliente: se habilita el registro de repuestos del cliente, sin compra ni envío.
+        o.decidir_comercial(usuario=self.oficina,empresa=self.empresa,propuesta_id=prop.pk,clave=uuid.uuid4(),archivo=pdf_plano(),
+            datos=dict(decision='APROBADO',fecha_cliente=timezone.now(),representante_cliente='Cliente ficticio QA',motivo='Aceptación simulada',**verificacion_qa()))
+        r=taller(); self.assertEqual(r['accion']['texto'],'Registrar repuestos del cliente'); self.assertIn('Repuestos del cliente',lista())
+        self.assertContains(detalle_taller(),'Registrar repuestos del cliente')
+        with self.assertRaises(ValidationError):
+            o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
+                datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
+        # 4) Repuestos del cliente registrados: TALLER puede iniciar la reparación en el mismo expediente.
+        rec=o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
+            datos=dict(pieza_id=self.pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=self.pieza.numero_parte,
+                descripcion=self.pieza.descripcion,cantidad=str(self.pieza.cantidad),unidad=self.pieza.unidad,fecha=timezone.now(),guia='',discrepancia=''))
+        r=taller(); self.assertEqual((r['paso'],r['accion']['texto']),(4,'Iniciar reparación')); self.assertIn('Registra la reparación',r['mensaje'])
+        act=o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
+            datos=dict(trabajo='Mantenimiento del reductor',componentes='Pieza QA',inicio=timezone.now()))
+        o.usar_repuesto(usuario=self.taller,empresa=self.empresa,actividad_id=act.pk,recepcion_id=rec.pk,cantidad=str(self.pieza.cantidad),observaciones='QA',clave=uuid.uuid4())
+        o.evidencia_actividad(usuario=self.taller,empresa=self.empresa,actividad_id=act.pk,clave=uuid.uuid4(),clase='DURANTE',leyenda='Trabajo QA',archivo=foto_pieza())
+        resultado=o.terminar_actividad(usuario=self.taller,empresa=self.empresa,actividad_id=act.pk,clave=uuid.uuid4(),
+            datos=dict(fin=timezone.now(),trabajo_realizado='Mantenimiento del reductor',resultado='Resultado QA'))
+        self.assertIn('ADMINISTRADOR debe revisar',taller()['mensaje'])
+        o.revisar_actividad(usuario=self.admin,empresa=self.empresa,resultado_id=resultado.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='Revisión independiente QA')
+        self.assertIn('Reparación y mantenimiento',lista())
+        self.assertIn('protocolo',taller()['mensaje'])   # siguiente etapa: calibración, que sigue exigiendo un protocolo exacto validado
+        self.assertEqual(ExpedienteMantenimiento.objects.filter(registro__equipo=self.exp.registro.equipo).count(),1)
+        self.assertEqual((EnvioRepuestos.objects.count(),AdquisicionRepuesto.objects.count()),(0,0))
+
     @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
     def test_idempotencia_guardar_avance_y_validar_sin_conflictos(self):
         import re
@@ -558,6 +613,43 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
 
     def _con_conceptos(self):
         return OficinaGestionTests._con_conceptos(self)
+
+    @override_settings(**FLAGS)
+    def test_taller_ve_en_el_mismo_expediente_cada_cambio_de_estado(self):
+        from playwright.sync_api import sync_playwright, expect
+        OficinaGestionTests.preparar_solicitud(self,enviar=True)
+        t.decidir_diagnostico(usuario=self.admin,empresa=self.empresa,diagnostico_id=self.diag.pk,decision='APROBADO',motivo='QA',clave=uuid.uuid4())
+        prop=OficinaGestionTests.cotizar(self,archivo=None)
+        galleta=self._galleta(self.taller)
+        pagina=self.live_server_url+reverse('masiscam:taller_equipo',args=[self.exp.registro.equipo_id])+f'?expediente={self.exp.pk}'
+        def ver(texto,botones=()):
+            with sync_playwright() as pw:
+                browser=pw.chromium.launch(channel='msedge',headless=True)
+                try:
+                    for ancho in (1440,390):
+                        context=browser.new_context(viewport=dict(width=ancho,height=1000))
+                        context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galleta,url=self.live_server_url)])
+                        page=context.new_page(); page.goto(pagina)
+                        expect(page.locator('body')).to_contain_text(texto)
+                        for boton in botones: expect(page.get_by_role('link',name=boton).or_(page.get_by_role('button',name=boton)).first).to_be_visible()
+                        self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),f'desborda a {ancho}px')
+                        context.close()
+                finally:
+                    browser.close()
+        ver('Tu diagnóstico está en revisión')
+        s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
+            propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
+        ver('Pendiente de aceptación del cliente')                         # sin recargar el expediente ni crear otro
+        o.decidir_comercial(usuario=self.oficina,empresa=self.empresa,propuesta_id=prop.pk,clave=uuid.uuid4(),archivo=pdf_plano(),
+            datos=dict(decision='APROBADO',fecha_cliente=timezone.now(),representante_cliente='Cliente QA',motivo='Aceptación simulada',**verificacion_qa()))
+        ver('Servicios autorizados',botones=('Registrar repuestos del cliente',))
+        pieza=self.diag.piezas.get()
+        o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
+            datos=dict(pieza_id=pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=pieza.numero_parte,
+                descripcion=pieza.descripcion,cantidad=str(pieza.cantidad),unidad=pieza.unidad,fecha=timezone.now(),guia='',discrepancia=''))
+        ver('Registra la reparación',botones=('Iniciar reparación',))
+        from .models import ExpedienteMantenimiento
+        self.assertEqual(ExpedienteMantenimiento.objects.filter(registro__equipo=self.exp.registro.equipo).count(),1)
 
     @override_settings(MASISCAM_OPERACION_LOCAL=False,MASISCAM_CALIBRACION_LOCAL=False,MASISCAM_CIERRE_LOCAL=False)
     def test_guardar_modificar_guardar_doble_clic_y_reintento_de_red_sin_conflicto(self):

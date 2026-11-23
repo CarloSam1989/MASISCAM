@@ -12,7 +12,7 @@ from django.shortcuts import redirect
 from django.db import transaction
 
 from .access import autorizar_creacion_equipo, equipos_taller, masiscam_access_required
-from .models import ActividadReparacion, Calibracion, CierreExpediente, DecisionComercial, Equipo, InformeFinal, EnvioRepuestos, RecepcionRepuesto
+from .models import ActividadReparacion, Calibracion, CierreExpediente, DecisionComercial, Equipo, InformeFinal, EnvioRepuestos, RecepcionRepuesto, PropuestaComercial, RevisionAdministrativa, SolicitudRepuestos
 from .recepcion_services import expedientes_autorizados
 
 
@@ -68,6 +68,11 @@ def estados_autorizados(request):
         cerrado=Exists(CierreExpediente.objects.filter(expediente_id=OuterRef('pk'))),
         tiene_reparacion=Exists(ActividadReparacion.objects.filter(expediente_id=OuterRef('pk'))),
         repuestos_enviados=Exists(EnvioRepuestos.objects.filter(expediente_id=OuterRef('pk'),confirmacion__isnull=True)),
+        # Fase comercial visible para TALLER: la aprobación de ADMINISTRADOR y la aceptación del cliente son pasos distintos.
+        tiene_solicitud=Exists(SolicitudRepuestos.objects.filter(expediente_id=OuterRef('pk'))),
+        tiene_cotizacion=Exists(PropuestaComercial.objects.filter(expediente_id=OuterRef('pk'))),
+        admin_aprobo=Exists(RevisionAdministrativa.objects.filter(expediente_id=OuterRef('pk'),decision='APROBADO')),
+        cliente_decidio=Exists(DecisionComercial.objects.filter(expediente_id=OuterRef('pk'))),
         # Flujo actual: servicios autorizados y aún sin reparación; el cliente aporta los repuestos.
         repuestos_cliente=Exists(DecisionComercial.objects.filter(expediente_id=OuterRef('pk'),decision='APROBADO'))
             & ~Exists(ActividadReparacion.objects.filter(expediente_id=OuterRef('pk'))),
