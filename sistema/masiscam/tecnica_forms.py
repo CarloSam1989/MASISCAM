@@ -8,6 +8,24 @@ from .models import (Inspeccion,Diagnostico,Documento,Proyecto,Equipo,RolMasisca
 from .tecnica_services import referencias_visibles
 
 
+def rotar_clave(*formularios):
+    """Tras un error la página vuelve a mostrarse con los datos escritos, pero con una clave idempotente NUEVA.
+
+    Un paso previo de la misma acción (p. ej. el guardado que precede a «Validar») pudo registrarse con la clave
+    anterior; reutilizarla con contenido editado produciría «Conflicto: clave utilizada con otra operación o contenido».
+    Los reintentos de red reenvían la página original, así que conservan su clave y no duplican.
+    También se actualiza la versión de edición, que un guardado previo pudo avanzar."""
+    for form in formularios:
+        if form is None or not getattr(form,'is_bound',False) or 'clave' not in getattr(form,'fields',{}): continue
+        nombre=form.add_prefix('clave')
+        datos=form.data.copy(); datos[nombre]=str(uuid.uuid4())
+        revision=getattr(form,'_revision',None)
+        if revision is not None and 'version' in form.fields:   # un paso previo pudo avanzar la versión: no reenviar la caducada
+            actual=type(revision).objects.filter(pk=revision.pk).values_list('version_edicion',flat=True).first()
+            if actual: datos[form.add_prefix('version')]=str(actual)
+        form.data=datos
+
+
 class BaseForm(forms.Form):
     clave=forms.UUIDField(initial=uuid.uuid4,widget=forms.HiddenInput)
 
@@ -38,6 +56,7 @@ class RevisionForm(BaseForm):
     def __init__(self,*args,tipo,revision,**kwargs):
         initial={f.name:getattr(revision,f.name) for f in revision._meta.fields if f.name not in {'id'}}
         initial['version']=revision.version_edicion
+        self._revision=revision
         super().__init__(*args,initial=initial,**kwargs)
         names={'estado_fisico':'Estado físico','condiciones_generales':'Condiciones generales','hallazgos':'Hallazgos y daños'} if tipo=='INSPECCION' else {
             'fallas':'Fallas identificadas','causas':'Posibles causas y limitaciones','componentes_afectados':'Componentes afectados','recomendaciones':'Recomendaciones','conclusiones':'Conclusiones técnicas'}

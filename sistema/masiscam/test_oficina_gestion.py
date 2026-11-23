@@ -17,7 +17,7 @@ from .test_tres_roles import TresRolesFixture
 from . import test_flujo as qa_flujo
 from .test_operacion import presupuesto_qa, verificacion_qa
 from .test_tecnica import pdf_plano
-from .models import PropuestaComercial, EnvioRepuestos, RecepcionRepuesto, Auditoria, AdquisicionRepuesto
+from .models import PropuestaComercial, EnvioRepuestos, RecepcionRepuesto, Auditoria, AdquisicionRepuesto, Diagnostico
 
 FLAGS=qa_flujo.FLAGS
 
@@ -198,6 +198,49 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         t.decidir_diagnostico(usuario=self.admin,empresa=self.empresa,diagnostico_id=diag.pk,decision='APROBADO',motivo='QA',clave=uuid.uuid4())
         self.url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
         return trabajos
+
+    @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
+    def test_idempotencia_guardar_avance_y_validar_sin_conflictos(self):
+        import re
+        self.preparar_solicitud(enviar=False)
+        self.client.force_login(self.taller); url=reverse('masiscam:flujo_detalle',args=[self.exp.pk])
+        def leer(html):
+            form=html[html.index('id="mf-diagnostico"'):]; form=form[:form.index('</form>')]
+            clave=re.search(r'name="clave"[^>]*value="([0-9a-f-]{36})"',form) or re.search(r'value="([0-9a-f-]{36})"[^>]*name="clave"',form)
+            return clave.group(1),int(re.search(r'name="version"[^>]*value="(\d+)"',form).group(1))
+        def pagina():
+            return leer(self.client.get(url).content.decode())
+        def datos(clave,version,op,**campos):
+            base=dict(op=op,clave=clave,version=version,fecha=timezone.localdate().isoformat(),fallas='Desgaste ficticio QA',
+                causas='Hipótesis QA',componentes_afectados='Componente QA',recomendaciones='Reemplazar',conclusiones='Alcance QA',
+                repuestos='REQUERIDOS',motivo_sin_evidencia='Sin evidencia adicional QA',observaciones='')
+            return base|campos
+        def eventos(): return Auditoria.objects.filter(expediente=self.exp,accion='DIAGNOSTICO_GUARDADA').count()
+        k1,v1=pagina()
+        # 1) Un «Validar» que guarda y luego falla vuelve con lo escrito y una clave NUEVA (no la ya consumida).
+        malo=self.client.post(url,datos(k1,v1,'validar',fallas='',causas='',componentes_afectados='',recomendaciones='',conclusiones=''))
+        self.assertEqual(malo.status_code,400)
+        k2,v2=leer(malo.content.decode())
+        self.assertNotEqual(k2,k1)
+        self.assertEqual(Diagnostico.objects.get(pk=self.diag.pk).enviado_en,None)
+        # 2) Corregir el formulario y volver a guardar no produce conflicto, ni con Guardar avance ni con Validar.
+        ok=self.client.post(url,datos(k2,v2,'guardar',fallas='Desgaste corregido QA'))
+        self.assertEqual(ok.status_code,302)
+        antes=eventos()
+        # 3) Doble clic / reenvío / reintento de red: misma clave y mismo contenido, sin duplicar ni conflicto.
+        for _ in range(3): self.assertEqual(self.client.post(url,datos(k2,v2,'guardar',fallas='Desgaste corregido QA')).status_code,302)
+        self.assertEqual(eventos(),antes)
+        self.assertEqual(Diagnostico.objects.filter(expediente=self.exp).count(),1)
+        # 4) La protección sigue: la misma clave con otro contenido se rechaza y no altera el diagnóstico.
+        conflicto=self.client.post(url,datos(k2,v2,'guardar',fallas='Otro contenido'))
+        self.assertEqual(conflicto.status_code,400); self.assertContains(conflicto,'Conflicto',status_code=400)
+        self.assertEqual(Diagnostico.objects.get(pk=self.diag.pk).fallas,'Desgaste corregido QA')
+        # 5) Cada guardado nuevo usa clave nueva: modificar y volver a guardar, y luego validar.
+        k3,v3=pagina(); self.assertNotEqual(k3,k2)
+        self.assertEqual(self.client.post(url,datos(k3,v3,'guardar',fallas='Tercera edición QA')).status_code,302)
+        k4,v4=pagina(); self.assertNotEqual(k4,k3)
+        self.assertEqual(self.client.post(url,datos(k4,v4,'validar',fallas='Tercera edición QA')).status_code,302)
+        self.assertIsNotNone(Diagnostico.objects.get(pk=self.diag.pk).enviado_en)
 
     @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
     def test_expediente_nuevo_muestra_solo_los_dos_conceptos_de_taller(self):
@@ -515,6 +558,49 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
 
     def _con_conceptos(self):
         return OficinaGestionTests._con_conceptos(self)
+
+    @override_settings(MASISCAM_OPERACION_LOCAL=False,MASISCAM_CALIBRACION_LOCAL=False,MASISCAM_CIERRE_LOCAL=False)
+    def test_guardar_modificar_guardar_doble_clic_y_reintento_de_red_sin_conflicto(self):
+        from playwright.sync_api import sync_playwright, expect
+        from .models import Diagnostico
+        OficinaGestionTests.preparar_solicitud(self,enviar=False)
+        url=self.live_server_url+reverse('masiscam:flujo_detalle',args=[self.exp.pk]); galleta=self._galleta(self.taller)
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                for ancho in (1440,390):
+                    context=browser.new_context(viewport=dict(width=ancho,height=1000))
+                    context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galleta,url=self.live_server_url)])
+                    page=context.new_page(); page.goto(url)
+                    form=page.locator('#mf-diagnostico')
+                    aviso=page.locator('body')
+                    # Guardar, modificar y volver a guardar sin recargar a mano.
+                    for texto in (f'Primera edición {ancho}',f'Segunda edición {ancho}'):
+                        form.locator('[name=fallas]').fill(texto)
+                        form.get_by_role('button',name='Guardar avance').click()
+                        expect(form.locator('[name=fallas]')).to_have_value(texto)
+                        expect(aviso).not_to_contain_text('Conflicto')
+                    # Reintento de red: el primer envío se pierde, el segundo conserva la clave y funciona.
+                    form.locator('[name=fallas]').fill(f'Tras fallo de red {ancho}')
+                    perdidas=[]
+                    def cortar(route):
+                        if not perdidas: perdidas.append(1); route.abort()
+                        else: route.continue_()
+                    page.route('**/flujo/',cortar)
+                    form.get_by_role('button',name='Guardar avance').click()
+                    page.wait_for_timeout(500)
+                    page.unroute('**/flujo/')
+                    page.goto(url); form=page.locator('#mf-diagnostico')
+                    # Doble clic: una sola operación efectiva y sin mensaje de conflicto.
+                    form.locator('[name=fallas]').fill(f'Doble clic {ancho}')
+                    form.get_by_role('button',name='Guardar avance').dblclick()
+                    expect(form.locator('[name=fallas]')).to_have_value(f'Doble clic {ancho}')
+                    expect(page.locator('body')).not_to_contain_text('Conflicto')
+                    context.close()
+            finally:
+                browser.close()
+        self.assertEqual(Diagnostico.objects.get(pk=self.diag.pk).fallas,'Doble clic 390')
+        self.assertEqual(Diagnostico.objects.filter(expediente=self.exp).count(),1)
 
     @override_settings(MASISCAM_OPERACION_LOCAL=False,MASISCAM_CALIBRACION_LOCAL=False,MASISCAM_CIERRE_LOCAL=False)
     def test_boton_cotizar_en_componente_asocia_trabajo_y_actualiza_total(self):

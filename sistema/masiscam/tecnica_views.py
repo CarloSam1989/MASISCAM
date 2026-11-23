@@ -211,6 +211,9 @@ def tecnica_revision(request,tipo,pk):
                 if action == 'enviar' and request.rol_masiscam.rol == 'TALLER':
                     return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
                 return redirect('masiscam:tecnica_revision',tipo=tipo,pk=pk)
+    if request.method=='POST':
+        from .tecnica_forms import rotar_clave
+        rotar_clave(forms.get(request.POST.get('op')))   # el reintento tras un error usa clave nueva; lo escrito se conserva
     role=_role(request)
     editable=role in svc.OPERADORES and obj.tecnico_id==request.user.pk and not obj.enviado_en and svc.vigente(obj)
     for f in forms['guardar'].fields.values():

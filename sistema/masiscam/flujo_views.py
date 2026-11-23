@@ -430,6 +430,8 @@ def detalle(request,pk):
                 if url_plano:
                     return redirect(url_plano)
             return redirect('masiscam:flujo_detalle',pk=exp.pk)
+    from .tecnica_forms import rotar_clave
+    rotar_clave(form,*extra.values())   # conserva lo escrito, pero el siguiente intento usa una clave nueva
     return render(request,template,contexto(request,exp,{nombre:form,**extra}),status=400)
 
 
