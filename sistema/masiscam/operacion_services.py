@@ -107,7 +107,59 @@ def informe_propuesta(p):
     return revision.informe if revision else None
 
 
+ADMINISTRATIVA = 'ADMINISTRATIVA'
+
+
+def _revision_aprobada(p):
+    """Revisión conjunta APROBADA de ADMINISTRADOR (diagnóstico + cotización PDF) vigente para la propuesta p.
+
+    Es la única condición comercial: exige una revisión real registrada; las propuestas históricas sin revisión
+    de ADMINISTRADOR no se autorizan ni se les inventa una aprobación."""
+    from .flujo_services import aprobacion_conjunta_vigente
+    from .models import RevisionAdministrativa
+    rev = RevisionAdministrativa.objects.filter(expediente_id=p.expediente_id).order_by('-pk').first()
+    if (rev and rev.decision == 'APROBADO' and rev.propuesta_id == p.pk and rev.diagnostico_id == p.diagnostico_id
+            and not p.snapshot.get('propuesta_origen') and aprobacion_conjunta_vigente(p)
+            and t._aprobado(p.diagnostico) and not PropuestaComercial.objects.filter(expediente_id=p.expediente_id, version__gt=p.version).exists()):
+        return rev
+    return None
+
+
+def autorizacion_administrativa(exp, crear=False, usuario=None):
+    """Autorización derivada de la aprobación de ADMINISTRADOR, sin aceptación del cliente ni política JSON.
+
+    Sin ``crear`` devuelve un registro sin guardar (consultas); con ``crear`` lo persiste una sola vez, con clave
+    determinista, para vincular la reparación y la calibración. Si ya existe una decisión para la propuesta
+    (p. ej. histórica con aceptación del cliente) no se toca."""
+    p = PropuestaComercial.objects.filter(expediente=exp).order_by('-version').first()
+    if not p or DecisionComercial.objects.filter(propuesta=p).exists():
+        return None
+    rev = _revision_aprobada(p)
+    if not rev:
+        return None
+    d = DecisionComercial(expediente=exp, autor=rev.autor, clave=uuid.uuid5(rev.clave, 'autorizacion-administrativa'), propuesta=p,
+        decision='APROBADO', fecha_cliente=rev.creado_en, representante_cliente='No aplica: autorización administrativa',
+        motivo='Autorización por la aprobación conjunta de ADMINISTRADOR del diagnóstico técnico y la cotización.',
+        politica=dict(tipo=ADMINISTRATIVA, revision=rev.pk, huella=rev.huella, propuesta=p.pk, version=p.version, diagnostico=p.diagnostico_id))
+    if crear:
+        d = t._save(d)
+        t._event(exp, usuario or rev.autor, d.clave, 'AUTORIZACION_ADMINISTRATIVA',
+            dict(revision=rev.pk, propuesta=p.pk, aprobada_por=rev.autor_id), d.pk)
+    return d
+
+
+def autorizacion_vigente(exp):
+    """Autorización válida actual (decisión histórica del cliente o aprobación administrativa), o None."""
+    auth = DecisionComercial.objects.filter(expediente=exp, decision='APROBADO').order_by('-propuesta__version').first()
+    if not auth:
+        auth = autorizacion_administrativa(exp)
+    return auth if auth and autorizacion_valida(auth) else None
+
+
 def autorizacion_valida(auth):
+    if auth.politica.get('tipo') == ADMINISTRATIVA:
+        rev = _revision_aprobada(auth.propuesta)
+        return bool(rev and auth.decision == 'APROBADO' and rev.pk == auth.politica.get('revision') and rev.huella == auth.politica.get('huella'))
     p = politica()
     verificacion=auth.politica.get('verificacion_cliente', {})
     return bool(p and auth.decision=='APROBADO' and all(auth.politica.get(k)==v for k,v in p.items())
@@ -120,14 +172,19 @@ def autorizacion_valida(auth):
         and verificacion.get('informe_hash')==informe_propuesta(auth.propuesta).hash_sha256)
 
 
-def exigir_autorizacion(exp):
+def exigir_autorizacion(exp, crear=False, usuario=None):
     from .flujo_services import aprobacion_conjunta_vigente
     actual=PropuestaComercial.objects.filter(expediente=exp).order_by('-version').first()
     if actual and not aprobacion_conjunta_vigente(actual):
         raise ValidationError('Pendiente de revisión conjunta: ADMINISTRADOR debe aprobar las versiones actuales del diagnóstico y la cotización.')
     auth = DecisionComercial.objects.filter(expediente=exp, decision='APROBADO').order_by('-propuesta__version').first()
+    if not auth:
+        auth = autorizacion_administrativa(exp, crear, usuario)
     if not auth or not autorizacion_valida(auth):
-        raise ValidationError('Reparación bloqueada: falta política aprobada y autorización comercial vigente para el diagnóstico exacto.')
+        raise ValidationError('Reparación bloqueada: falta la aprobación de ADMINISTRADOR del diagnóstico y la cotización vigentes.')
+    if auth.politica.get('tipo') == ADMINISTRATIVA:
+        verificar_presupuesto(auth.propuesta)
+        return auth
     verificar_presupuesto(auth.propuesta)
     # Check acceptance evidence and the exact initial report before each action.
     for e in auth.evidencias.select_related('documento'):
@@ -150,7 +207,8 @@ def estado(exp):
         return 'OBSERVADO'
     d = DecisionComercial.objects.filter(propuesta=p).first()
     if not d:
-        return 'PENDIENTE_AUTORIZACION'
+        d = autorizacion_administrativa(exp)
+        return 'AUTORIZADO' if d and autorizacion_valida(d) else 'PENDIENTE_AUTORIZACION'
     if d.decision=='RECHAZADO':
         return 'RECHAZADO'
     if not autorizacion_valida(d):
@@ -335,7 +393,7 @@ def iniciar_actividad(*, usuario, empresa, expediente_id, clave, datos):
     old = t._retry(exp,clave,'REPARACION_INICIADA',datos)
     if old:
         return ActividadReparacion.objects.get(pk=old)
-    auth = exigir_autorizacion(exp)
+    auth = exigir_autorizacion(exp, crear=True, usuario=usuario)
     _texto(datos, ('trabajo','componentes'))
     _fecha(datos.get('inicio'))
     # Required parts must be documented as received with matching units and

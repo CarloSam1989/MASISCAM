@@ -200,7 +200,7 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         return trabajos
 
     def test_transicion_admin_cliente_repuestos_y_reparacion_en_taller_sin_nuevo_expediente(self):
-        from .models import ExpedienteMantenimiento, RevisionAdministrativa
+        from .models import ExpedienteMantenimiento, RevisionAdministrativa, DecisionComercial
         from .test_plano import foto_pieza
         self.preparar(aprobar_tecnico=False)
         prop=self.cotizar(archivo=None)
@@ -218,24 +218,15 @@ class OficinaGestionTests(OficinaFixture,TestCase):
             propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
         self.assertEqual(RevisionAdministrativa.objects.get(expediente=self.exp).decision,'APROBADO')
         self.assertTrue(s.aprobacion_conjunta_vigente(prop)); self.assertEqual(Diagnostico.objects.get(pk=self.diag.pk).estado,'FINALIZADO')
-        r=taller(); self.assertIn('Pendiente de aceptación del cliente',r['mensaje']); self.assertIsNone(r['accion'])
-        self.assertIn('Pendiente de aceptación del cliente',lista())
-        self.assertContains(detalle_taller(),'Pendiente de aceptación del cliente')
-        self.assertEqual(s.resumen(self.exp,self.oficina)['accion']['texto'],'Registrar respuesta del cliente')
-        with self.assertRaises(PermissionDenied):   # solo el rol autorizado registra la aceptación
-            o.decidir_comercial(usuario=self.taller,empresa=self.empresa,propuesta_id=prop.pk,clave=uuid.uuid4(),archivo=pdf_plano(),
-                datos=dict(decision='APROBADO',fecha_cliente=timezone.now(),representante_cliente='X',motivo='X',**verificacion_qa()))
-        with self.assertRaises(ValidationError):    # aprobar administrativamente no autoriza reparar
+        # La aprobación de ADMINISTRADOR es la única condición comercial: no se pide aceptación del cliente ni política JSON.
+        r=taller(); self.assertEqual(r['accion']['texto'],'Registrar repuestos del cliente'); self.assertNotIn('aceptación del cliente',r['mensaje'].lower())
+        self.assertIn('Aprobado por ADMINISTRADOR',lista()); self.assertNotContains(detalle_taller(),'Pendiente de aceptación del cliente')
+        self.assertNotIn('Registrar respuesta del cliente',str(s.resumen(self.exp,self.oficina)['accion']))
+        self.assertFalse(DecisionComercial.objects.filter(expediente=self.exp).exists())   # sin aprobaciones inventadas hasta usarla
+        with self.assertRaises(ValidationError):    # sin repuestos del cliente registrados no se repara
             o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
                 datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
-        # 3) Aceptación del cliente: se habilita el registro de repuestos del cliente, sin compra ni envío.
-        o.decidir_comercial(usuario=self.oficina,empresa=self.empresa,propuesta_id=prop.pk,clave=uuid.uuid4(),archivo=pdf_plano(),
-            datos=dict(decision='APROBADO',fecha_cliente=timezone.now(),representante_cliente='Cliente ficticio QA',motivo='Aceptación simulada',**verificacion_qa()))
-        r=taller(); self.assertEqual(r['accion']['texto'],'Registrar repuestos del cliente'); self.assertIn('Repuestos del cliente',lista())
-        self.assertContains(detalle_taller(),'Registrar repuestos del cliente')
-        with self.assertRaises(ValidationError):
-            o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
-                datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
+        self.assertFalse(DecisionComercial.objects.filter(expediente=self.exp).exists())
         # 4) Repuestos del cliente registrados: TALLER puede iniciar la reparación en el mismo expediente.
         rec=o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
             datos=dict(pieza_id=self.pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=self.pieza.numero_parte,
@@ -249,6 +240,9 @@ class OficinaGestionTests(OficinaFixture,TestCase):
             datos=dict(fin=timezone.now(),trabajo_realizado='Mantenimiento del reductor',resultado='Resultado QA'))
         self.assertIn('ADMINISTRADOR debe revisar',taller()['mensaje'])
         o.revisar_actividad(usuario=self.admin,empresa=self.empresa,resultado_id=resultado.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='Revisión independiente QA')
+        dec=DecisionComercial.objects.get(expediente=self.exp)   # autorización derivada de la revisión de ADMINISTRADOR
+        self.assertEqual((dec.politica['tipo'],dec.politica['revision']),('ADMINISTRATIVA',RevisionAdministrativa.objects.get(expediente=self.exp).pk))
+        self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion='AUTORIZACION_ADMINISTRATIVA').count(),1)
         self.assertIn('Reparación y mantenimiento',lista())
         self.assertIn('protocolo',taller()['mensaje'])   # siguiente etapa: calibración, que sigue exigiendo un protocolo exacto validado
         self.assertEqual(ExpedienteMantenimiento.objects.filter(registro__equipo=self.exp.registro.equipo).count(),1)
@@ -639,10 +633,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
         ver('Tu diagnóstico está en revisión')
         s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
             propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
-        ver('Pendiente de aceptación del cliente')                         # sin recargar el expediente ni crear otro
-        o.decidir_comercial(usuario=self.oficina,empresa=self.empresa,propuesta_id=prop.pk,clave=uuid.uuid4(),archivo=pdf_plano(),
-            datos=dict(decision='APROBADO',fecha_cliente=timezone.now(),representante_cliente='Cliente QA',motivo='Aceptación simulada',**verificacion_qa()))
-        ver('Servicios autorizados',botones=('Registrar repuestos del cliente',))
+        ver('Aprobado por ADMINISTRADOR',botones=('Registrar repuestos del cliente',))   # sin aceptación del cliente ni política JSON
         pieza=self.diag.piezas.get()
         o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
             datos=dict(pieza_id=pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=pieza.numero_parte,
@@ -1039,19 +1030,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                     page.screenshot(path=str(Path(os.environ['MASISCAM_UI_EVIDENCE_DIR'])/'administrador-expediente.png'),full_page=True)
                 context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=oficina_cookie,url=self.live_server_url)])
                 page.goto(self.live_server_url+self.url)
-                page.locator('#oficina-aceptacion summary').click()
-                accept=page.locator('#oficina-aceptacion form')
-                accept.locator('[name=decision]').select_option('APROBADO')
-                accept.locator('[name=fecha_cliente]').fill('2026-11-14T12:00')
-                for name,value in dict(representante_cliente='Cliente ficticio UI',motivo='Aceptación QA',
-                        identidad='Identidad QA',medio_verificacion='Verificación QA',respaldo_verificacion='Respaldo QA').items():
-                    accept.locator(f'[name={name}]').fill(value)
-                accept.locator('[name=calidad]').select_option('TITULAR')
-                accept.locator('[name=canal]').select_option('PRESENCIAL_FIRMADA')
-                accept.locator('[name=verificacion_confirmada]').check()
-                pdf=pdf_plano();accept.locator('[name=archivo]').set_input_files(dict(name=pdf.name,mimeType='application/pdf',buffer=pdf.read()))
-                accept.get_by_role('button',name='Registrar respuesta del cliente').click()
-                page.get_by_role('button',name='Sí, continuar',exact=True).click()
+                expect(page.locator('#oficina-aceptacion')).to_have_count(0)   # ya no se registra una aceptación del cliente
                 expect(page.locator('#oficina-estado')).to_have_text('Autorizado')
                 expect(page.get_by_role('button',name='Aprobar y enviar a TALLER',exact=True)).to_have_count(0)
                 for retirado in ('#oficina-disponibles','#oficina-enviar'):

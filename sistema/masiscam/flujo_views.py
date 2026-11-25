@@ -105,13 +105,12 @@ def contexto(request,exp,errores=None):
         else:
             pass   # Los repuestos los aporta el cliente: no hay compra ni envío desde MASISCAM.
         if prop and prop.diagnostico_id==sol.diagnostico_id and not hasattr(prop,'decision') and o._propuesta_vigente(prop):
-            forms['aceptacion']=OperacionForm(op='decision',exp=exp,politica=o.politica())
-            forms['aceptacion'].fields['propuesta_id'].queryset=o.PropuestaComercial.objects.filter(pk=prop.pk)
+            # La autorización es la aprobación conjunta de ADMINISTRADOR: ya no se registra una aceptación del cliente.
             if not prop.evidencias.exists():
                 forms['respaldo']=OperacionForm(op='respaldo',exp=exp,politica=o.politica())
                 forms['respaldo'].fields['propuesta_id'].queryset=o.PropuestaComercial.objects.filter(pk=prop.pk)
             from django.forms import HiddenInput
-            for nombre in ('aceptacion','respaldo'):
+            for nombre in ('respaldo',):
                 if nombre not in forms: continue
                 forms[nombre].initial['propuesta_id']=prop.pk
                 forms[nombre].fields['propuesta_id'].widget=HiddenInput()

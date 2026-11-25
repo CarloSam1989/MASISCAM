@@ -109,4 +109,4 @@ def resumen(user,empresa,filters=None,limite=100):
     events=Auditoria.objects.filter(expediente_id__in=[r.pk for r in rows]).select_related('usuario','expediente').order_by('-creado_en','-pk')[:20]
     return dict(expedientes=rows[:limite] if limite else rows,total=len(rows),conteos=sorted(counts.items()),abiertos=sum(not r.cerrado for r in rows),
         finalizados=sum(r.cerrado for r in rows),alertas=sum(r.alerta_documental for r in rows),actividades=events,
-        comercial_habilitado=bool(s.o.politica()),protocolos_habilitados=bool(getattr(s.settings,'MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL',[])))
+        comercial_habilitado=True,protocolos_habilitados=bool(getattr(s.settings,'MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL',[])))

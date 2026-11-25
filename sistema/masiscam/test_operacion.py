@@ -88,12 +88,22 @@ class OperacionTests(TestCase):
         return s.revisar_actividad(usuario=self.planta,empresa=self.empresa,resultado_id=r.pk,clave=uuid.uuid4(),decision=decision,motivo='Revisión QA independiente')
 
     def test_default_bloquea_aprobacion_y_reparacion(self):
+        """Sin política JSON no se registra una aceptación del cliente; la reparación exige la aprobación de ADMINISTRADOR."""
         self.assertIsNone(s.politica())
         p=self.propuesta()
-        with self.assertRaises(ValidationError): self.decision(p)
-        with self.assertRaises(ValidationError): self.actividad()
+        with self.assertRaises(ValidationError): self.decision(p)   # la aceptación del cliente sigue sin habilitarse sin política
         self.assertFalse(DecisionComercial.objects.exists())
-        self.assertFalse(ActividadReparacion.objects.exists())
+        from . import flujo_services as _fs
+        from .models import RevisionAdministrativa
+        if not RevisionAdministrativa.objects.filter(expediente=self.exp,decision='APROBADO').exists():
+            with self.assertRaises(ValidationError): self.actividad()   # sin aprobación de ADMINISTRADOR no se repara
+            self.assertFalse(ActividadReparacion.objects.exists())
+            _fs.revisar_expediente(usuario=self.planta,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=self.d.pk,
+                propuesta_id=p.pk,decision='APROBADO',clave=uuid.uuid4())
+        self.assertEqual(s.estado(self.exp),'AUTORIZADO')
+        act=self.actividad()   # con la aprobación de ADMINISTRADOR basta; se vincula una autorización derivada y auditada
+        self.assertEqual(act.autorizacion.politica['tipo'],'ADMINISTRATIVA')
+        self.assertEqual(DecisionComercial.objects.count(),1)
 
     def test_rechazo_no_autoriza_y_nueva_propuesta_conserva_historia(self):
         p=self.propuesta()
@@ -108,7 +118,8 @@ class OperacionTests(TestCase):
         from . import flujo_services as _fs
         _fs.revisar_expediente(usuario=self.planta,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=self.d.pk,
             propuesta_id=q.pk,decision='APROBADO',clave=uuid.uuid4())
-        self.assertEqual(s.estado(self.exp),'PENDIENTE_AUTORIZACION')
+        self.assertEqual(s.estado(self.exp),'AUTORIZADO')   # la nueva versión queda autorizada por ADMINISTRADOR; el rechazo previo se conserva
+        self.assertEqual(DecisionComercial.objects.get(pk=d.pk).decision,'RECHAZADO')
 
     @override_settings(MASISCAM_POLITICA_COMERCIAL_LOCAL=QA_POLICY)
     def test_autorizacion_valida_exacta_y_revocada_por_nueva_propuesta(self):
@@ -286,7 +297,7 @@ class OperacionTests(TestCase):
         self.assertEqual(s.estado(self.exp),'OBSERVADO')  # el respaldo cambia las fuentes: exige nueva aprobación conjunta
         _fs.revisar_expediente(usuario=self.planta,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=self.d.pk,
             propuesta_id=p.pk,decision='APROBADO',clave=uuid.uuid4())
-        self.assertEqual(s.estado(self.exp),'PENDIENTE_AUTORIZACION')
+        self.assertEqual(s.estado(self.exp),'AUTORIZADO')   # con la nueva aprobación de ADMINISTRADOR queda autorizado
 
     def test_http_manipulado_aceptacion_y_estados(self):
         p=self.propuesta();c=Client();c.force_login(self.gerencia)

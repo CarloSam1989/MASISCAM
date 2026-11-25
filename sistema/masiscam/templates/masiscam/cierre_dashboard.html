@@ -1,7 +1,6 @@
 {% extends 'masiscam/base.html' %}{% block content %}
 <div class="container py-4"><h1>Seguimiento de mantenimiento</h1>
 <p>Estados registrados en su empresa. Las aprobaciones históricas no sustituyen la vigencia de sus fuentes.</p>
-{% if not comercial_habilitado %}<div class="alert alert-warning">Política comercial pendiente: cierre operativo bloqueado.</div>{% endif %}
 {% if not protocolos_habilitados %}<div class="alert alert-warning">Protocolos industriales pendientes de aprobación expresa.</div>{% endif %}
 {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
 <form method="get" class="row g-2 mb-4">

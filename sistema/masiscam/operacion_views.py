@@ -43,13 +43,10 @@ def detalle(request,pk):
     exp=svc.expediente(request.user,request.empresa_activa,pk)
     rol=svc.autorizar(request.user,request.empresa_activa,expediente=exp).rol
     state=svc.estado(exp)
-    auth=DecisionComercial.objects.filter(expediente=exp,decision='APROBADO').order_by('-propuesta__version').first()
+    auth=svc.autorizacion_vigente(exp)
     actions=[op for op,roles in AREAS.items() if rol in roles]
-    if state not in {'AUTORIZADO','EN_REPARACION','OBSERVADO'} or not svc.politica():
+    if state not in {'AUTORIZADO','EN_REPARACION','OBSERVADO'} or not auth:
         actions=[op for op in actions if op not in {'actividad','uso','foto','resultado','revision'}]
-    else:
-        if not auth or not svc.autorizacion_valida(auth):
-            actions=[op for op in actions if op not in {'actividad','uso','foto','resultado','revision'}]
     # Only the accepted work scope is operational; never disclose the budget,
     # representative identity or verification evidence to technicians/plant.
     commercial=rol in {'OFICINA'}
@@ -59,7 +56,7 @@ def detalle(request,pk):
         p.recibidos=[r for r in receipts if r.pieza_id==p.pk]
     return render(request,'masiscam/operacion_detalle.html',dict(expediente=exp,estado_operativo=state,
         politica=svc.politica(),acciones=[(op,LABELS[op]) for op in actions],comercial=commercial,
-        alcance_autorizado=auth.propuesta.alcance if auth and svc.autorizacion_valida(auth) else None,
+        alcance_autorizado=auth.propuesta.alcance if auth else None,
         propuestas=PropuestaComercial.objects.filter(expediente=exp).order_by('-version') if commercial else [],
         recepciones=receipts,piezas=pieces,actividades=ActividadReparacion.objects.filter(expediente=exp).order_by('pk'),
         emisiones=EmisionOperativa.objects.filter(expediente=exp).order_by('-pk'),
@@ -120,9 +117,9 @@ def operar(request,pk,op):
             if request.rol_masiscam.rol == 'TALLER' and op == 'resultado':
                 return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
             return redirect('masiscam:operacion_detalle',pk=pk)
-    auth=DecisionComercial.objects.filter(expediente=exp,decision='APROBADO').order_by('-propuesta__version').first()
+    auth=svc.autorizacion_vigente(exp)
     return render(request,'masiscam/operacion_form.html',dict(form=form,operacion=LABELS[op],expediente=exp,politica=svc.politica(),
-        alcance_autorizado=auth.propuesta.alcance if auth and svc.autorizacion_valida(auth) else None),
+        alcance_autorizado=auth.propuesta.alcance if auth else None),
         status=400 if request.method=='POST' else 200)
 
 

@@ -567,13 +567,8 @@ def resumen(exp, usuario):
         elif not mensaje:
             try: autorizacion(sol); auth=True
             except ValidationError as error: auth=False; mensaje='; '.join(error.messages)
-            if not auth and not hasattr(prop,'decision'):
-                # La aprobación conjunta de ADMINISTRADOR ya existe; falta la respuesta del cliente (paso distinto).
-                mensaje=('Pendiente de aceptación del cliente. ADMINISTRADOR ya aprobó el diagnóstico y la cotización; '
-                    +('OFICINA registra la respuesta del cliente.' if o.politica() else 'el registro de la aceptación exige la política comercial aprobada por el propietario, que no está vigente: '+mensaje))
             if not auth:
-                if not hasattr(prop,'decision') and role=='OFICINA': accion=action('Registrar respuesta del cliente',op='aceptacion')
-                bloqueo=not bool(o.politica()) or hasattr(prop,'decision')
+                bloqueo=True   # la autorización comercial es la aprobación conjunta de ADMINISTRADOR; no se pide otra al cliente
             else:
                 pendientes=sol.envios.filter(confirmacion__isnull=True).order_by('pk')
                 faltan=any((o.RecepcionRepuesto.objects.filter(expediente=exp,pieza=p,numero_parte=p.numero_parte,unidad=p.unidad).aggregate(n=Sum('cantidad'))['n'] or 0)<p.cantidad for p in diag.piezas.all())
@@ -581,7 +576,7 @@ def resumen(exp, usuario):
                     mensaje='Existe un envío histórico sin confirmar. TALLER debe confirmar las cantidades realmente recibidas.'
                     if role=='TALLER': accion=action('Confirmar repuestos recibidos',op='recibir')
                 elif faltan:
-                    mensaje='Servicios autorizados. El cliente aporta los repuestos: registre su recepción o disponibilidad antes de iniciar la reparación.'
+                    mensaje='Aprobado por ADMINISTRADOR. El cliente aporta los repuestos: registre su recepción o disponibilidad antes de iniciar la reparación.'
                     if role in {'TALLER','OFICINA'}: accion=action('Registrar repuestos del cliente',url=reverse('masiscam:operacion_operar',args=[exp.pk,'repuesto'])+'?flujo=1')
                 else:
                     paso=4; pasos[2]['estado']='Listo'

@@ -72,10 +72,9 @@ def estados_autorizados(request):
         tiene_solicitud=Exists(SolicitudRepuestos.objects.filter(expediente_id=OuterRef('pk'))),
         tiene_cotizacion=Exists(PropuestaComercial.objects.filter(expediente_id=OuterRef('pk'))),
         admin_aprobo=Exists(RevisionAdministrativa.objects.filter(expediente_id=OuterRef('pk'),decision='APROBADO')),
-        cliente_decidio=Exists(DecisionComercial.objects.filter(expediente_id=OuterRef('pk'))),
+        ultima_revision=Subquery(RevisionAdministrativa.objects.filter(expediente_id=OuterRef('pk')).order_by('-pk').values('decision')[:1]),
         # Flujo actual: servicios autorizados y aún sin reparación; el cliente aporta los repuestos.
-        repuestos_cliente=Exists(DecisionComercial.objects.filter(expediente_id=OuterRef('pk'),decision='APROBADO'))
-            & ~Exists(ActividadReparacion.objects.filter(expediente_id=OuterRef('pk'))),
+        repuestos_cliente=Q(ultima_revision='APROBADO') & ~Exists(ActividadReparacion.objects.filter(expediente_id=OuterRef('pk'))),
     )
 
 
