@@ -1,5 +1,6 @@
 """Explicit deployment configuration; enabling code never grants approvals."""
 import json
+import logging
 import re
 from pathlib import Path
 from datetime import datetime
@@ -24,20 +25,33 @@ def _read(path,expected):
         raise ImproperlyConfigured('Archivo de aprobaciones MASISCAM inválido; no se activa con valores sustitutos.') from None
 
 
+def _politica_historica(path):
+    """Política comercial JSON: solo sirve para validar aceptaciones históricas del cliente (opcional).
+
+    La autorización vigente es la aprobación conjunta de ADMINISTRADOR, así que una variable ausente, vacía,
+    obsoleta o inválida NUNCA impide el arranque: se ignora (sin política) y se deja constancia en el registro.
+    Los archivos de protocolos de calibración conservan su validación estricta."""
+    if not path: return None
+    try:
+        policy=_read(path,dict)
+        required={'version','aprobacion_propietario','procedimiento','vigente_desde'}
+        if set(policy)!=required or any(not isinstance(v,str) or not v.strip() for v in policy.values()): raise ValueError
+        if datetime.fromisoformat(policy['vigente_desde']).utcoffset() is None: raise ValueError
+        return policy
+    except (ImproperlyConfigured,ValueError,TypeError,KeyError):
+        logging.getLogger('masiscam.config').warning(
+            'MASISCAM_POLITICA_COMERCIAL_FILE ignorado (ausente, obsoleto o inválido): la autorización comercial es '
+            'la aprobación conjunta de ADMINISTRADOR; solo se omite la validación de aceptaciones históricas.')
+        return None
+
+
 def configurar(env,debug):
     enabled=env.bool('MASISCAM_EXPEDIENTES_ENABLED',default=False)
     result={f'MASISCAM_{phase}_LOCAL':enabled or env.bool(f'MASISCAM_{phase}_ENABLED',default=False)
         or (debug and env.bool(f'MASISCAM_{phase}_LOCAL',default=False))
         for phase in ('RECEPCION','TECNICA','OPERACION','CALIBRACION','CIERRE')}
-    policy=_read(env('MASISCAM_POLITICA_COMERCIAL_FILE',default=''),dict)
+    policy=_politica_historica(env('MASISCAM_POLITICA_COMERCIAL_FILE',default=''))
     protocols=_read(env('MASISCAM_PROTOCOLOS_CALIBRACION_FILE',default=''),list) or []
-    if policy is not None:
-        required={'version','aprobacion_propietario','procedimiento','vigente_desde'}
-        try:
-            if set(policy)!=required or any(not isinstance(v,str) or not v.strip() for v in policy.values()): raise ValueError
-            if datetime.fromisoformat(policy['vigente_desde']).utcoffset() is None: raise ValueError
-        except (ValueError,TypeError):
-            raise ImproperlyConfigured('Procedimiento comercial sin referencia de aprobación o fecha con zona horaria.') from None
     for anchor in protocols:
         if (not isinstance(anchor,dict) or set(anchor)!={'huella','aprobacion_propietario'}
                 or not isinstance(anchor.get('huella'),str) or not re.fullmatch('[0-9a-f]{64}',anchor['huella'])

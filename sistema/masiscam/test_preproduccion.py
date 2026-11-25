@@ -106,8 +106,16 @@ class ConfiguracionProduccionTests(SimpleTestCase):
             for invalid in ('[{"huella":"sin-huella","aprobacion_propietario":""}]','[{"huella":"a","huella":"b"}]','{}'):
                 protocol.write_text(invalid,encoding='utf-8')
                 with self.assertRaises(ImproperlyConfigured): self.config(env)
-            protocol.write_text('[]',encoding='utf-8');policy.write_text('{}',encoding='utf-8')
-            with self.assertRaises(ImproperlyConfigured): self.config(env)
+            # La política JSON ya no es obligatoria: archivo inválido, obsoleto, vacío o ausente se ignora sin impedir el arranque.
+            protocol.write_text('[]',encoding='utf-8')
+            for variante in ('{}','no es json',json.dumps(dict(QA_POLICY,vigente_desde='2026-01-01T00:00:00'))):
+                policy.write_text(variante,encoding='utf-8')
+                self.assertIsNone(self.config(env)['MASISCAM_POLITICA_COMERCIAL_LOCAL'])
+            for env_politica in ({'MASISCAM_POLITICA_COMERCIAL_FILE':str(Path(temp)/'obsoleta.json'),'MASISCAM_PROTOCOLOS_CALIBRACION_FILE':str(protocol)},
+                    {'MASISCAM_POLITICA_COMERCIAL_FILE':'','MASISCAM_PROTOCOLOS_CALIBRACION_FILE':str(protocol)},{'MASISCAM_PROTOCOLOS_CALIBRACION_FILE':str(protocol)}):
+                self.assertIsNone(self.config(env_politica)['MASISCAM_POLITICA_COMERCIAL_LOCAL'])
+            protocol.write_text('{}',encoding='utf-8')   # los protocolos siguen siendo estrictos aunque la política falte
+            with self.assertRaises(ImproperlyConfigured): self.config({'MASISCAM_PROTOCOLOS_CALIBRACION_FILE':str(protocol)})
 
     def test_settings_reales_en_modo_produccion_sin_conexion_externa(self):
         values=dict(DEBUG='false',SECRET_KEY=secrets.token_urlsafe(64),DATABASE_URL='postgres://qa:qa@127.0.0.1:1/masiscam_qa_sin_conexion',
