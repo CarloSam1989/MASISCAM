@@ -50,14 +50,6 @@ class InicioForm(BaseForm):
         self.fields['plantilla_id'].label_from_instance=lambda p:f'{p.codigo} v{p.version} · {p.titulo}'
 
 
-class PreliminarForm(BaseForm):
-    """Datos preliminares sin protocolo aprobado: texto libre; no crea puntos, parámetros ni conformidad."""
-    fecha=forms.DateTimeField(required=False,label='Fecha',widget=forms.DateTimeInput(format='%Y-%m-%dT%H:%M',attrs={'type':'datetime-local'}))
-    instrumentos=forms.CharField(required=False,widget=forms.Textarea,label='Instrumentos utilizados',max_length=20000)
-    resultados=forms.CharField(required=False,widget=forms.Textarea,label='Datos y mediciones preliminares',max_length=20000)
-    observaciones=forms.CharField(required=False,widget=forms.Textarea,label='Observaciones',max_length=20000)
-
-
 class DatosForm(BaseForm):
     version=forms.IntegerField(min_value=1,widget=forms.HiddenInput)
     fecha=forms.DateTimeField(required=False,widget=forms.DateTimeInput(format='%Y-%m-%dT%H:%M',attrs={'type':'datetime-local'}))
@@ -116,6 +108,52 @@ class FormatoCalibracionForm(BaseForm):
         if data.get('evidencia_archivo') and not (data.get('evidencia_leyenda') or '').strip():
             self.add_error('evidencia_leyenda','Describa la evidencia que adjunta.')
         return data
+
+
+class HojaInicioForm(BaseForm):
+    """Abre la hoja de calibración de TALLER (o su nueva revisión, con motivo). No pide protocolo ni aprobación."""
+    motivo=forms.CharField(required=False,widget=forms.Textarea(attrs={'rows':3}),label='Motivo de la nueva revisión de la hoja')
+
+
+class HojaCalibracionForm(FormatoCalibracionForm):
+    """Hoja de calibración con el orden del formato físico (shims, datos de calibración, presiones, 16 mediciones, observaciones, fecha).
+
+    Todo se lee de la ficha técnica de la configuración del equipo; las unidades se eligen (no hay unidad por defecto) y se recuerdan
+    para la próxima hoja de la misma configuración, igual que tolerancia, mínimo y máximo, que solo se precargan para verificarlos."""
+    unidad_longitud=forms.ChoiceField(required=False,label='Unidad de longitud (shims, backlash, referencias y mediciones)',
+        choices=[('','Selecciona')]+[(u,u) for u in ('mm','µm','in','mil')],widget=forms.Select(attrs={'class':'form-select'}))
+    unidad_presion=forms.ChoiceField(required=False,label='Unidad de presión',
+        choices=[('','Selecciona')]+[(u,u) for u in ('psi','bar','kPa','MPa')],widget=forms.Select(attrs={'class':'form-select'}))
+
+    def __init__(self,*args,calibracion,**kwargs):
+        super().__init__(*args,calibracion=calibracion,**kwargs)
+        from . import calibracion_services as servicios
+        for campo in ('instrumentos','resultados','motivo_sin_evidencia'): del self.fields[campo]
+        self.fields['observaciones'].label='Observaciones'
+        self.fields['evidencia_clase'].label='Tipo de evidencia (opcional)'
+        previos=servicios.valores_previos(calibracion);guardadas=(calibracion.parametros or {}).get('_unidades',{})
+        for grupo in ('longitud','presion'):
+            self.fields[f'unidad_{grupo}'].initial=guardadas.get(grupo) or previos.get('unidades',{}).get(grupo,'')
+        self.precargados=[]
+        for n,(codigo,nombre,grupo,no_negativo) in enumerate(servicios.PARAMETROS_HOJA):
+            campo=self.fields[f'param_{n}'];campo.label=nombre
+            if no_negativo: campo.widget.attrs['min']='0'
+            if (calibracion.parametros or {}).get(codigo) in (None,'') and codigo in servicios.CAMPOS_REFERENCIA and previos.get(codigo) not in (None,''):
+                campo.initial=previos[codigo];self.precargados.append(nombre)
+        valores={m.punto:m.valor for m in calibracion.mediciones.all()}
+        for n,fila in enumerate(calibracion.plantilla.definicion['mediciones']):
+            campo=self.fields[f'medicion_{n}'];campo.label=f'Medición {n+1}'
+            if valores.get(fila['codigo']) is not None: campo.initial=servicios._decimal_texto(valores[fila['codigo']])   # sin ceros de relleno
+        self._bound_fields_cache={}   # las etiquetas cambiaron: se vuelven a crear los campos enlazados
+        nombres={codigo:nombre for nombre,codigo in self.parametros}
+        self.bf_unidad_longitud=self['unidad_longitud'];self.bf_unidad_presion=self['unidad_presion']
+        self.bf_shims=[self[nombres[c]] for c in ('SHIM-VS','SHIM-VI','SHIM-H')]
+        self.bf_datos=[self[nombres[c]] for c in ('BACKLASH','TOLERANCIA','CAL-TOTAL','MINIMO','MAXIMO')]
+        self.bf_presiones=[self[nombres[c]] for c in ('PRES-V','PRES-H')]
+        self.bf_mediciones=[(n,self[nombre]) for n,(nombre,_) in enumerate(self.puntos,1)]
+        if not self.is_bound and calibracion.fecha is None:
+            from django.utils import timezone
+            self.initial['fecha']=timezone.localtime().replace(second=0,microsecond=0)   # propuesta: la fecha de hoy; el técnico puede cambiarla
 
 
 class MedicionForm(BaseForm):

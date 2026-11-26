@@ -91,13 +91,25 @@ def construir_informe(s,fotografias=()):
         facts(activity);facts(activity['aprobacion'])
         for usage in activity['usos']: facts(usage)
     photos('Intervención / repuestos')
-    cal=s['calibracion'];story.extend([PageBreak(),p('7. Calibración y aprobación técnica',head)])
-    for k in ('protocolo','protocolo_version','protocolo_huella','tecnico','fecha','instrumentos','resultados','observaciones','estado'):
-        story.append(p(f'{k.replace("_"," ")}: {cal[k]}'))
-    story.append(table([['Punto','Valor / unidad','Mín. / Máx.','Tolerancia','Evaluación']]+[[r['nombre'],str(r['valor'])+' / '+r.get('unidad',''),str(r.get('minimo','No definido'))+' / '+str(r.get('maximo','No definido')),r.get('tolerancia','No definida'),r['evaluacion']] for r in cal['mediciones']],[.25,.2,.17,.2,.18]))
-    for row in cal['mediciones']: story.append(p(f'{row["codigo"]} | Fuente: {row.get("fuente","")} | Criterio: {row.get("criterio", "Pendiente")} | Observaciones: {row.get("observaciones", "")}',small))
-    for row in cal['parametros']: facts(row)
-    facts(cal['decision'] or {})
+    cal=s['calibracion']
+    if cal.get('plantilla')=='hoja-calibracion-v1':
+        # Hoja elaborada y generada por TALLER (tercer documento): sin aprobación de ADMINISTRADOR y sin afirmar conformidad técnica.
+        story.extend([PageBreak(),p('7. Hoja de calibración (elaborada por TALLER)',head),
+            p('Documento técnico elaborado y generado por TALLER; no requiere aprobación de ADMINISTRADOR. Se adjunta como tercer documento del expediente.')])
+        story.append(p(f"Ficha técnica: {cal['protocolo']} v{cal['protocolo_version']} · Técnico responsable: {cal.get('tecnico_nombre') or cal['tecnico']} · Fecha: {cal['fecha']}"))
+        story.append(table([['Dato de la hoja','Valor registrado']]+[[r['nombre'],((str(r['valor'])+' '+(r.get('unidad') or '')).strip() if r['valor'] is not None else 'Pendiente')] for r in cal['parametros']],[.5,.5]))
+        story.append(table([['N.º','Valor / unidad','Verificación']]+[[str(n),(str(r['valor'])+' '+(r.get('unidad') or '')).strip() if r['valor'] is not None else 'Pendiente',r['evaluacion']] for n,r in enumerate(cal['mediciones'],1)],[.12,.33,.55]))
+        story.append(p(cal['verificacion']['texto']))
+        for aviso in cal.get('advertencias',[]): story.append(p(aviso))
+        story.append(p(f"Observaciones: {cal['observaciones'] or 'Sin observaciones'}"))
+    else:
+        story.extend([PageBreak(),p('7. Calibración y aprobación técnica',head)])
+        for k in ('protocolo','protocolo_version','protocolo_huella','tecnico','fecha','instrumentos','resultados','observaciones','estado'):
+            story.append(p(f'{k.replace("_"," ")}: {cal[k]}'))
+        story.append(table([['Punto','Valor / unidad','Mín. / Máx.','Tolerancia','Evaluación']]+[[r['nombre'],str(r['valor'])+' / '+r.get('unidad',''),str(r.get('minimo','No definido'))+' / '+str(r.get('maximo','No definido')),r.get('tolerancia','No definida'),r['evaluacion']] for r in cal['mediciones']],[.25,.2,.17,.2,.18]))
+        for row in cal['mediciones']: story.append(p(f'{row["codigo"]} | Fuente: {row.get("fuente","")} | Criterio: {row.get("criterio", "Pendiente")} | Observaciones: {row.get("observaciones", "")}',small))
+        for row in cal['parametros']: facts(row)
+        facts(cal['decision'] or {})
     story.append(p('Las evaluaciones son decisiones humanas sobre el protocolo exacto validado. No se calcula conformidad ni se certifican instrumentos por este informe.'))
     photos('Calibración')
     story.append(p('8. Responsables, revisión final y cierre',head))

@@ -46,6 +46,25 @@ class OficinaFixture(TresRolesFixture):
         data.update(changes)
         return s.cotizar(**data)
 
+    VALORES_HOJA=('0.50','0.55','0.60','0.12','0.05','0.10','0.05','0.20','35','40')   # shims, backlash, tolerancia, total, mín., máx., presiones
+
+    def datos_hoja(self,hoja,accion='generar',n=16,**extra):
+        """Envío del formulario de la hoja de calibración con el orden del formato físico (sin protocolo ni instrumentos)."""
+        datos=dict(op='formato',accion=accion,clave=uuid.uuid4(),version=hoja.version_edicion,fecha='2026-11-21T10:00',
+            observaciones='Calibración registrada por TALLER',unidad_longitud='mm',unidad_presion='psi',
+            **{f'param_{i}':v for i,v in enumerate(self.VALORES_HOJA)},**{f'medicion_{i}':str(Decimal('0.10')+Decimal(i)/100) for i in range(n)})
+        datos.update(extra); return datos
+
+    def hoja_generada(self,usuario=None,**extra):
+        """TALLER abre, completa y genera la hoja (PDF incluido) por la misma vista que usa en pantalla; devuelve la calibración."""
+        from . import calibracion_services as c
+        hoja=c.iniciar_hoja(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4())
+        self.client.force_login(usuario or self.taller)
+        with self.captureOnCommitCallbacks(execute=True):
+            r=self.client.post(reverse('masiscam:calibracion_revision',args=[hoja.pk]),self.datos_hoja(hoja,**extra))
+        assert r.status_code==302,r.content.decode()[:2000]
+        hoja.refresh_from_db(); return hoja
+
     def aceptar(self,propuesta):
         if not s.aprobacion_conjunta_vigente(propuesta):
             s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,
@@ -274,32 +293,19 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         r=taller()
         self.assertTrue(r['aprobado_admin']); self.assertEqual([p['estado'] for p in r['pasos']][2],'Aprobado'); self.assertEqual(r['pasos'][2]['clase'],'ok')
         self.assertIn('clase',r['pasos'][0]); self.assertNotIn('Pendiente de aceptación del cliente',r['mensaje'])
-        # Calibración: sin protocolo aprobado se bloquea con un mensaje claro; con protocolo validado TALLER genera el informe.
+        # Calibración: la hoja es de TALLER; no hay mensajes de «falta protocolo» ni espera de aprobación de ADMINISTRADOR.
         self.assertEqual(r['accion']['texto'],'Registrar calibración'); self.assertFalse(r['bloqueo'])
-        self.assertIn('datos preliminares',r['mensaje']); self.assertIn('No existe un protocolo de calibración',r['mensaje'])
-        from . import calibracion_services as c, test_calibracion as cq
-        # La pantalla de inicio de calibración no depende de la política comercial JSON: sin protocolo avisa; con protocolo ofrece iniciar.
+        self.assertIn('sin aprobación de ADMINISTRADOR',r['mensaje']); self.assertNotIn('protocolo',r['mensaje'].lower())
         self.client.force_login(self.taller); url_cal=reverse('masiscam:calibracion_expediente',args=[self.exp.pk])+'?flujo=1'
         html=self.client.get(url_cal).content.decode()
-        self.assertIn('data-sin-protocolo',html); self.assertIn('Falta protocolo de calibración aprobado para continuar',html); self.assertNotIn('No hay acciones de inicio disponibles',html)
-        definicion=cq.definicion_qa(); definicion['aplicacion'].update(marca=self.exp.registro.equipo.marca,modelo=self.exp.registro.equipo.modelo)
-        protocolo=c.crear_plantilla(usuario=self.admin,empresa=self.empresa,clave=uuid.uuid4(),archivo=cq.protocolo_pdf(),
-            datos=dict(codigo='OG-QA',titulo='PROTOCOLO FICTICIO QA',tipo_equipo=self.exp.registro.equipo.tipo_producto,definicion=definicion,proyecto_id=self.exp.registro.equipo.proyecto_id))
-        c.aplicar_plantilla(usuario=self.admin,empresa=self.empresa,plantilla_id=protocolo.pk,equipo_id=self.exp.registro.equipo_id,
-            clave=uuid.uuid4(),fundamento='Solo QA',version_equipo=definicion['aplicacion']['version_equipo'])
-        with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[cq.anchor_qa(protocolo)]):
-            from .test_tecnica import usuario as _usuario
-            cq.validar_qa(self.empresa,_usuario(self.empresa,'validador-og-qa','ADMIN'),protocolo)
-            r=taller(); self.assertEqual(r['accion']['texto'],'Registrar calibración'); self.assertFalse(r['bloqueo'])
-            html=self.client.get(url_cal).content.decode()
-            self.assertIn('Iniciar calibración',html); self.assertNotIn('data-sin-protocolo',html); self.assertNotIn('No hay acciones de inicio disponibles',html)
-            self.client.force_login(self.taller)
-            html=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk])).content.decode()
-            self.assertIn('Registrar calibración',html); self.assertIn('data-aprobado-admin',html); self.assertIn('is-ok',html)
-            self.assertIn(url_cal.split('?')[0],html)   # la hoja de calibración es accesible desde la secuencia de TALLER
-            self.assertNotIn('Registrar respuesta del cliente',html); self.assertNotIn('MASISCAM_POLITICA_COMERCIAL',html)
-            self.client.force_login(self.oficina)
-            self.assertNotEqual(s.resumen(self.exp,self.oficina)['accion'] and s.resumen(self.exp,self.oficina)['accion']['texto'],'Registrar calibración')
+        for marca in ('data-ficha','data-sin-tolerancia','data-abrir-hoja','Abrir hoja de calibración'): self.assertIn(marca,html,marca)
+        for prohibido in ('Falta protocolo','data-sin-protocolo','data-form-preliminar','Iniciar calibración'): self.assertNotIn(prohibido,html,prohibido)
+        html=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk])).content.decode()
+        self.assertIn('Registrar calibración',html); self.assertIn('data-aprobado-admin',html); self.assertIn('is-ok',html)
+        self.assertIn(url_cal.split('?')[0],html)   # la hoja de calibración es accesible desde la secuencia de TALLER
+        self.assertNotIn('Registrar respuesta del cliente',html); self.assertNotIn('MASISCAM_POLITICA_COMERCIAL',html); self.assertNotIn('Falta protocolo',html)
+        self.client.force_login(self.oficina)
+        self.assertNotEqual(s.resumen(self.exp,self.oficina)['accion'] and s.resumen(self.exp,self.oficina)['accion']['texto'],'Registrar calibración')
         self.assertEqual(ExpedienteMantenimiento.objects.filter(registro__equipo=self.exp.registro.equipo).count(),1)
         self.assertEqual((EnvioRepuestos.objects.count(),AdquisicionRepuesto.objects.count()),(0,0))
 
@@ -418,7 +424,7 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertEqual(ResultadoReparacion.objects.count(),2)
         self.assertEqual(o.estado(self.exp),'REPARACION_FINALIZADA')   # la corrección se finaliza sin otra aprobación; self.assertFalse(RecepcionRepuesto.objects.exists())
 
-    def test_calibracion_accesible_tras_aprobacion_pero_exige_mantenimiento_y_protocolo(self):
+    def test_calibracion_accesible_tras_aprobacion_pero_exige_solo_mantenimiento_finalizado(self):
         from . import calibracion_services as c
         self._con_conceptos(); ids=[x['id'] for x in self.sol.snapshot['conceptos']]
         prop=self.cotizar(archivo=None,cotizacion=dict(moneda='USD',lineas=[dict(concepto=i,precio_unitario=p) for i,p in zip(ids,('100.00','250.00','4.00'))]))
@@ -428,8 +434,9 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         r=self.client.get(reverse('masiscam:calibracion_expediente',args=[self.exp.pk])+'?flujo=1')
         self.assertEqual(r.status_code,200); html=r.content.decode()
         self.assertIn('data-espera-mantenimiento',html); self.assertNotIn('Iniciar calibración',html); self.assertNotIn('revisado por ADMINISTRADOR',html)
-        with self.assertRaises(ValidationError):   # el servidor mantiene los bloqueos aunque la hoja sea accesible
-            c.iniciar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,plantilla_id=1,clave=uuid.uuid4())
+        with self.assertRaises(ValidationError):   # el servidor mantiene el bloqueo del mantenimiento aunque la hoja sea accesible
+            c.iniciar_hoja(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4())
+        self.assertEqual(self.client.post(reverse('masiscam:calibracion_expediente',args=[self.exp.pk]),dict(op='hoja',clave=uuid.uuid4())).status_code,400)
         accion=s.resumen(self.exp,self.taller)['secuencia'][1]
         self.assertEqual((accion['texto'],accion['estado']),('Registrar calibración','No disponible')); self.assertIn('/calibracion/',accion['url'])
 
@@ -460,24 +467,10 @@ class OficinaGestionTests(OficinaFixture,TestCase):
             for texto in ('Registrar repuestos del cliente','Repuesto utilizado','Iniciar actividad','Resultado de actividad','Fotografía de actividad'): self.assertNotIn(texto,html,ruta)
         o.registrar_mantenimiento(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),inicio=timezone.now(),
             observaciones='Desarmado y limpieza',resultado='Reductor mantenido y probado sin fugas',finalizar=True)
-        definicion=cq.definicion_qa(); definicion['aplicacion'].update(marca=self.exp.registro.equipo.marca,modelo=self.exp.registro.equipo.modelo)
-        protocolo=c.crear_plantilla(usuario=self.admin,empresa=self.empresa,clave=uuid.uuid4(),archivo=cq.protocolo_pdf(),
-            datos=dict(codigo='IF-QA',titulo='PROTOCOLO FICTICIO QA',tipo_equipo=self.exp.registro.equipo.tipo_producto,definicion=definicion,proyecto_id=self.exp.registro.equipo.proyecto_id))
-        c.aplicar_plantilla(usuario=self.admin,empresa=self.empresa,plantilla_id=protocolo.pk,equipo_id=self.exp.registro.equipo_id,
-            clave=uuid.uuid4(),fundamento='Solo QA',version_equipo=definicion['aplicacion']['version_equipo'])
-        with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[cq.anchor_qa(protocolo)]):
-            cq.validar_qa(self.empresa,_usuario(self.empresa,'validador-if-qa','ADMIN'),protocolo)
-            cal=c.iniciar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,plantilla_id=protocolo.pk,clave=uuid.uuid4())
-            cal=cq.completar(self.empresa,self.taller,cal)
-            c.enviar(usuario=self.taller,empresa=self.empresa,calibracion_id=cal.pk,version=cal.version_edicion,clave=uuid.uuid4())
-            c.decidir(usuario=self.admin,empresa=self.empresa,calibracion_id=cal.pk,clave=uuid.uuid4(),decision='APROBADA',motivo='SIMULACIÓN QA',
-                evaluaciones={r['codigo']:'CONFORME' for r in protocolo.definicion['mediciones']})
-            # TALLER ve la tercera acción y genera el informe final con la misma cuenta.
-            r=s.resumen(self.exp,self.taller)
-            self.assertEqual(r['accion']['texto'],'Generar informe final')
-            self.assertEqual([(e['texto'],e['estado']) for e in r['secuencia']],[('Registrar mantenimiento','Finalizado'),('Registrar calibración','Finalizado'),('Generar informe final','Disponible')])
-            em=cs.reservar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4())
-            cs.generar(em.pk); em.refresh_from_db()
+        cal=self.hoja_generada()   # hoja de TALLER: sin protocolo ni aprobación; el informe final se genera solo al quedar listo su PDF
+        r=s.resumen(self.exp,self.taller)
+        self.assertEqual([(e['texto'],e['estado']) for e in r['secuencia']][:2],[('Registrar mantenimiento','Finalizado'),('Registrar calibración','Finalizado')])
+        em=InformeFinal.objects.get(expediente=self.exp); self.assertTrue(em.documento_id)
         snap=em.snapshot
         # Sin recepciones ni movimientos inventados; las piezas del diagnóstico figuran como información técnica.
         self.assertEqual((RecepcionRepuesto.objects.count(),UsoRepuesto.objects.count(),EnvioRepuestos.objects.count(),AdquisicionRepuesto.objects.count()),(0,0,0,0))
@@ -488,12 +481,12 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertIn('Mantenimiento preventivo del reductor',rep['trabajo']); self.assertEqual(rep['resultado'],'Reductor mantenido y probado sin fugas')
         self.assertEqual((rep['aprobacion']['responsable'],rep['usos']),(self.admin.username,[]))
         self.assertTrue(any(e['seccion']=='Intervención / repuestos' and e['foto'] for e in snap['evidencias']))
-        self.assertEqual(snap['calibracion']['estado'],'APROBADA'); self.assertEqual(snap['calibracion']['decision']['responsable'],self.admin.username)
+        self.assertEqual((snap['calibracion']['estado'],snap['calibracion']['decision']),('FINALIZADA',None))   # hoja de TALLER, sin decisión de ADMINISTRADOR
         self.assertEqual(len(snap['calibracion']['mediciones']),16)
         self.assertTrue(snap['autorizacion']['responsable']); self.assertEqual(snap['tecnico']['piezas'][0]['cantidad'],str(self.pieza.cantidad))
         lector=PdfReader(BytesIO(em.documento.archivo.open('rb').read())); texto='\n'.join(p.extract_text() for p in lector.pages)
         for palabra in ('INFORME FINAL','Diagnóstico',self.pieza.descripcion[:15],'Reparación y montaje','Mantenimiento preventivo del reductor','Reductor mantenido y probado sin fugas',
-                'Calibración y aprobación técnica','Sin recepciones de repuestos registradas','no condicionó el mantenimiento'): self.assertIn(palabra,texto,palabra)
+                'Hoja de calibración (elaborada por TALLER)','Sin recepciones de repuestos registradas','no condicionó el mantenimiento'): self.assertIn(palabra,texto,palabra)
         self.assertGreaterEqual(sum(len(p.images) for p in lector.pages),1)   # la fotografía del mantenimiento va incrustada
         self.assertEqual(InformeFinal.objects.filter(expediente=self.exp).count(),1)
 
@@ -503,9 +496,8 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         from unittest.mock import patch
         from django.core.files.uploadedfile import SimpleUploadedFile
         from pypdf import PdfReader
-        from . import calibracion_services as c, cierre_services as cs, test_calibracion as cq
-        from .models import Calibracion, InformeFinal, CierreExpediente, RevisionReparacion, ActividadReparacion, ResultadoReparacion
-        from .test_tecnica import usuario as _usuario
+        from . import cierre_services as cs
+        from .models import Calibracion, DecisionCalibracion, InformeFinal, CierreExpediente, RevisionReparacion, ActividadReparacion, ResultadoReparacion
         self._con_conceptos(); ids=[x['id'] for x in self.sol.snapshot['conceptos']]
         self.pieza=self.diag.piezas.get()
         prop=self.cotizar(archivo=None,cotizacion=dict(moneda='USD',lineas=[dict(concepto=i,precio_unitario=p) for i,p in zip(ids,('100.00','250.00','4.00'))]))
@@ -544,100 +536,99 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertIsNone(s.resumen(self.exp,self.admin)['accion'])   # ADMINISTRADOR no debe aprobar el mantenimiento
         html=como(self.taller).get(flujo).content.decode()
         for prohibido in ('Ahora','debe revisarlo','Revisar reparación'): self.assertNotIn(prohibido,html)
-        # 2. Calibración sin protocolo: datos preliminares, requisito exacto, sin conformidad ni informe.
+        # 2. Calibración: la hoja es un documento de TALLER; no hay protocolo ni aprobación de ADMINISTRADOR en el camino.
         url_c=reverse('masiscam:calibracion_expediente',args=[self.exp.pk])
         html=como(self.taller).get(url_c).content.decode()
-        for marca in ('data-sin-protocolo','data-form-preliminar','No existe un protocolo de calibración'): self.assertIn(marca,html)
-        pre=dict(op='preliminar',clave=uuid.uuid4(),fecha='2026-11-20T10:00',instrumentos='Instrumento QA',resultados='Lecturas preliminares QA',observaciones='Sin protocolo')
-        self.assertEqual(self.client.post(url_c,pre).status_code,302); self.assertEqual(self.client.post(url_c,pre).status_code,302)
-        self.assertEqual((Auditoria.objects.filter(expediente=self.exp,accion='CAL_PRELIMINAR').count(),Calibracion.objects.count()),(1,0))
-        html=self.client.get(url_c).content.decode(); self.assertIn('data-preliminares',html); self.assertIn('PRELIMINAR',html)
-        for otro in (self.admin,self.oficina):
-            self.assertIn(como(otro).post(url_c,dict(pre,clave=uuid.uuid4())).status_code,(400,403))
-            self.assertNotIn('data-form-preliminar',self.client.get(url_c).content.decode())
-        self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion='CAL_PRELIMINAR').count(),1)
-        with self.assertRaises(ValidationError): cs.reservar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4())
-        # Protocolo registrado pero no validado ni aprobado por el propietario: dice exactamente qué falta y no permite iniciar.
-        definicion=cq.definicion_qa(); definicion['aplicacion'].update(marca=self.exp.registro.equipo.marca,modelo=self.exp.registro.equipo.modelo)
-        protocolo=c.crear_plantilla(usuario=self.admin,empresa=self.empresa,clave=uuid.uuid4(),archivo=cq.protocolo_pdf(),
-            datos=dict(codigo='INTEGRAL-QA',titulo='PROTOCOLO FICTICIO QA',tipo_equipo=self.exp.registro.equipo.tipo_producto,definicion=definicion,proyecto_id=self.exp.registro.equipo.proyecto_id))
-        c.aplicar_plantilla(usuario=self.admin,empresa=self.empresa,plantilla_id=protocolo.pk,equipo_id=self.exp.registro.equipo_id,
-            clave=uuid.uuid4(),fundamento='Solo QA',version_equipo=definicion['aplicacion']['version_equipo'])
-        html=como(self.taller).get(url_c).content.decode()
-        self.assertIn('falta la validación técnica independiente',html); self.assertIn('falta la aprobación del propietario',html)
-        r=self.client.post(url_c,dict(clave=uuid.uuid4(),plantilla_id=protocolo.pk)); self.assertEqual(r.status_code,400)
+        for marca in ('data-ficha','data-sin-tolerancia','data-abrir-hoja','Abrir hoja de calibración'): self.assertIn(marca,html,marca)
+        for prohibido in ('Falta protocolo','data-sin-protocolo','Iniciar calibración','data-form-preliminar'): self.assertNotIn(prohibido,html,prohibido)
+        with self.assertRaises(ValidationError): cs.reservar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4())   # sin hoja no hay informe
+        for otro in (self.admin,self.oficina): self.assertIn(como(otro).post(url_c,dict(op='hoja',clave=uuid.uuid4())).status_code,(400,403))
         self.assertFalse(Calibracion.objects.exists())
-        with self.assertRaises(ValidationError): c.iniciar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,plantilla_id=protocolo.pk,clave=uuid.uuid4())
-        with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[cq.anchor_qa(protocolo)]):
-            cq.validar_qa(self.empresa,_usuario(self.empresa,'validador-integral-qa','ADMIN'),protocolo)
-            self.assertIn('Iniciar calibración',como(self.taller).get(url_c).content.decode())
-            r=self.client.post(url_c+'?flujo=1',dict(clave=uuid.uuid4(),plantilla_id=protocolo.pk)); self.assertEqual(r.status_code,302)
-            cal=Calibracion.objects.get(); hoja=reverse('masiscam:calibracion_revision',args=[cal.pk])
-            self.assertEqual(r['Location'],hoja+'?flujo=1')
-            self.assertEqual(sec(self.taller)[1],('Registrar calibración','En proceso'))
-            # 3. Hoja única: guardar avance y finalizar sin duplicados.
-            def hoja_post(accion,n=16,usuario=None,**extra):
-                cal.refresh_from_db()
-                datos=dict(op='formato',accion=accion,clave=extra.pop('clave',uuid.uuid4()),version=extra.pop('version',cal.version_edicion),fecha='2026-11-20T10:00',
-                    instrumentos='INSTRUMENTO FICTICIO QA',resultados='Registro ficticio QA',observaciones='Observaciones finales QA',param_0='1.5',
-                    **{f'medicion_{i}':str(i) for i in range(n)})
-                datos.update(extra); return como(usuario or self.taller).post(hoja,datos)
-            self.assertEqual(hoja_post('guardar',n=4).status_code,302); cal.refresh_from_db(); self.assertEqual(cal.mediciones.count(),4)
-            self.assertEqual(hoja_post('informe',n=8).status_code,400)   # incompleta: se guarda lo escrito pero no se envía
-            cal.refresh_from_db(); self.assertEqual((cal.mediciones.count(),cal.enviado_en),(8,None))
-            clave_h=uuid.uuid4(); version=cal.version_edicion
-            evid=lambda: dict(evidencia_clase='FOTO',evidencia_leyenda='Fotografía de la calibración QA',
-                evidencia_archivo=SimpleUploadedFile('cal.png',self._png('green'),content_type='image/png'))
-            with patch('masiscam.calibracion_tasks.generar_informe_calibracion.apply_async') as tarea:
-                self.assertEqual(hoja_post('informe',clave=clave_h,version=version,**evid()).status_code,302)
-                eventos=Auditoria.objects.filter(expediente=self.exp,accion__startswith='CAL_').count()
-                self.assertEqual(hoja_post('informe',clave=clave_h,version=version,**evid()).status_code,302)   # doble clic
-                self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion__startswith='CAL_').count(),eventos)
-            cal.refresh_from_db()
-            self.assertEqual((cal.estado,cal.mediciones.count(),cal.evidencias.count(),cal.emisiones.count()),('PENDIENTE_REVISION',16,1,1))
-            # La hoja enviada está en revisión: TALLER ve quién debe actuar; no hay «Ahora»; ADMINISTRADOR recibe acceso directo.
-            self.assertEqual(sec(self.taller),[('Registrar mantenimiento','Finalizado'),('Registrar calibración','En proceso'),('Generar informe final','No disponible')])
-            html=como(self.taller).get(flujo).content.decode()
-            self.assertNotIn('Ahora',html); self.assertIn('data-responsables',html); self.assertIn(self.admin.username,html); self.assertIn('Enviada',html)
-            accion=s.resumen(self.exp,self.admin)['accion']; self.assertEqual((accion['texto'],accion['url']),('Revisar calibración',hoja+'?flujo=1'))
-            for user in (self.taller,self.oficina,self.admin): enlaces(user,flujo)
-            # 4. Revisión técnica independiente (real): el autor no aprueba; ADMINISTRADOR sí. La generación del informe final es automática.
-            decision=dict(op='decision',decision='APROBADA',motivo='Revisión independiente QA',**{f'eval_{i}':'CONFORME' for i in range(16)})
-            self.assertEqual(como(self.taller).post(hoja,dict(decision,clave=uuid.uuid4())).status_code,403)
-            clave_d=uuid.uuid4()
-            with self.captureOnCommitCallbacks(execute=True):
-                self.assertEqual(como(self.admin).post(hoja+'?flujo=1',dict(decision,clave=clave_d)).status_code,302)
-            self.assertEqual(self.client.post(hoja+'?flujo=1',dict(decision,clave=clave_d)).status_code,302)   # repetición idempotente
-            cal.refresh_from_db(); self.assertEqual(cal.estado,'APROBADA')
-            self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion='CAL_DECISION').count(),1)
-            informe=InformeFinal.objects.get(expediente=self.exp)
-            self.assertTrue(informe.documento_id); self.assertEqual(informe.estado,'PENDIENTE_REVISION')
-            self.assertEqual(sec(self.taller),[('Registrar mantenimiento','Finalizado'),('Registrar calibración','Finalizado'),('Generar informe final','Finalizado')])
-            # 5. Informe final: PDF descargable por TALLER con diagnóstico, trabajos, fotografías, calibración y aprobaciones.
-            descarga=como(self.taller).get(reverse('masiscam:cierre_documento',args=[self.exp.pk,informe.pk]))
-            self.assertEqual((descarga.status_code,descarga['Content-Type']),(200,'application/pdf'))
-            lector=PdfReader(BytesIO(b''.join(descarga.streaming_content))); texto='\n'.join(p.extract_text() for p in lector.pages)
-            for palabra in ('INFORME FINAL','Diagnóstico','Reductor mantenido y probado sin fugas','Calibración y aprobación técnica','Sin recepciones de repuestos registradas'): self.assertIn(palabra,texto,palabra)
-            self.assertGreaterEqual(sum(len(p.images) for p in lector.pages),2)   # fotografías del mantenimiento y de la calibración
-            # 6. Revisión del informe por ADMINISTRADOR y cierre independiente.
-            url_f=reverse('masiscam:cierre_detalle',args=[self.exp.pk])
-            for user in (self.taller,self.oficina,self.admin): enlaces(user,url_f)
-            self.assertEqual(s.resumen(self.exp,self.admin)['accion']['texto'],'Revisar informe final')
-            revisar=dict(op='revisar',informe=informe.pk,decision='APROBADO',motivo='Informe conforme QA',clave=uuid.uuid4())
-            self.assertEqual(como(self.taller).post(url_f,revisar).status_code,403)
-            self.assertEqual(como(self.admin).post(url_f,revisar).status_code,302)
-            self.assertEqual(self.client.post(url_f,revisar).status_code,302)   # idempotente
-            informe.refresh_from_db(); self.assertEqual(informe.estado,'APROBADO')
-            self.assertEqual(s.resumen(self.exp,self.admin)['accion']['texto'],'Revisar cierre administrativo')
-            cerrar=dict(op='cerrar',informe=informe.pk,motivo='Cierre administrativo QA',clave=uuid.uuid4())
-            self.assertEqual(self.client.post(url_f,cerrar).status_code,403)   # quien revisó no cierra
-            self.assertEqual(como(self.admin_cierre).post(url_f,cerrar).status_code,302)
-            self.assertEqual(self.client.post(url_f,cerrar).status_code,302)   # idempotente
-            informe.refresh_from_db(); self.assertEqual(informe.estado,'FINALIZADO'); self.assertEqual(CierreExpediente.objects.filter(expediente=self.exp).count(),1)
+        clave_i=uuid.uuid4()
+        r=como(self.taller).post(url_c+'?flujo=1',dict(op='hoja',clave=clave_i)); self.assertEqual(r.status_code,302)
+        self.assertEqual(self.client.post(url_c+'?flujo=1',dict(op='hoja',clave=clave_i)).status_code,302)   # doble clic: una sola hoja
+        cal=Calibracion.objects.get(); hoja=reverse('masiscam:calibracion_revision',args=[cal.pk])
+        self.assertEqual(r['Location'],hoja+'?flujo=1'); self.assertTrue(cal.plantilla.codigo.startswith('FICHA-'))
+        self.assertEqual(sec(self.taller)[1],('Registrar calibración','En proceso'))
+        # 3. Hoja del formato físico: datos generales precargados, shims, datos, presión, 16 mediciones, observaciones, fecha y técnico.
+        html=como(self.taller).get(hoja).content.decode()
+        for marca in ('A · Datos generales','B · Shims','C · Datos de calibración','D · Mediciones','E · Observaciones, fecha y técnico responsable','Técnico responsable',
+                'Guardar avance','Generar hoja de calibración','Shim vertical superior','Shim vertical inferior','Shim horizontal','Backlash','Tolerancia','Calibración total',
+                'Mínimo','Máximo','Presión eje vertical','Presión eje horizontal','Medición 1','Medición 16','Marca','Modelo','Serie','Ratio','Rotación','data-sin-tolerancia'):
+            self.assertIn(marca,html,marca)
+        self.assertEqual(html.count('name="medicion_'),16)
+        for prohibido in ('Guardar calibración','Generar informe de calibración','Instrumentos utilizados','Resultado de la calibración'): self.assertNotIn(prohibido,html,prohibido)
+        def hoja_post(accion,n=16,**extra):
+            cal.refresh_from_db(); return como(extra.pop('usuario',self.taller)).post(hoja,self.datos_hoja(cal,accion,n,**extra))
+        self.assertEqual(hoja_post('avance',n=4).status_code,302); cal.refresh_from_db(); self.assertEqual((cal.mediciones.count(),cal.estado),(4,'EN_PROCESO'))
+        r=hoja_post('generar',n=8); self.assertEqual(r.status_code,400); self.assertContains(r,'faltan',status_code=400)
+        cal.refresh_from_db(); self.assertEqual((cal.mediciones.count(),cal.enviado_en),(8,None)); self.assertFalse(cal.emisiones.exists())
+        # Controles de rango y unidad: nada de negativos, mínimo mayor que máximo ni unidades fuera de la lista.
+        for extra,texto in ((dict(param_0='-1'),'negativo'),(dict(param_6='0.5',param_7='0.1'),'mínimo'),(dict(unidad_presion='atm'),'Select a valid choice')):
+            r=hoja_post('avance',**extra); self.assertEqual(r.status_code,400,extra)
+        cal.refresh_from_db(); self.assertEqual(cal.parametros.get('PRES-V'),'35')   # lo válido se conservó; lo inválido no se guardó
+        clave_h=uuid.uuid4(); version=cal.version_edicion
+        evid=lambda: dict(evidencia_clase='FOTO',evidencia_leyenda='Fotografía de la calibración QA',
+            evidencia_archivo=SimpleUploadedFile('cal.png',self._png('green'),content_type='image/png'))
+        with self.captureOnCommitCallbacks(execute=True):
+            self.assertEqual(hoja_post('generar',clave=clave_h,version=version,**evid()).status_code,302)
+        eventos=Auditoria.objects.filter(expediente=self.exp,accion__startswith='CAL_').count()
+        self.assertEqual(hoja_post('generar',clave=clave_h,version=version,**evid()).status_code,302)   # doble clic: no duplica nada
+        self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion__startswith='CAL_').count(),eventos)
+        cal.refresh_from_db()
+        self.assertEqual((cal.estado,cal.mediciones.count(),cal.evidencias.count(),cal.emisiones.count()),('FINALIZADA',16,1,1))
+        emision=cal.emisiones.get(); self.assertEqual((emision.estado,emision.version),('GENERADA',1)); self.assertTrue(emision.documento_id)
+        self.assertEqual(cal.parametros['_unidades'],dict(longitud='mm',presion='psi')); self.assertEqual(cal.parametros['_equipo']['marca'],self.exp.registro.equipo.marca)
+        self.assertFalse(DecisionCalibracion.objects.exists())   # sin decisión de ADMINISTRADOR
+        self.assertEqual(como(self.admin).post(hoja,dict(op='decision',decision='APROBADA',motivo='No aplica',clave=uuid.uuid4(),**{f'eval_{i}':'PENDIENTE' for i in range(16)})).status_code,400)
+        self.assertFalse(DecisionCalibracion.objects.exists())
+        # Hoja finalizada: inmutable y con su PDF; el informe final se generó solo, con la hoja como tercer documento.
+        self.assertEqual(hoja_post('avance').status_code,403)
+        informe=InformeFinal.objects.get(expediente=self.exp)
+        self.assertTrue(informe.documento_id); self.assertEqual(informe.estado,'PENDIENTE_REVISION')
+        titulos=[a['titulo'] for a in informe.snapshot['anexos']]
+        self.assertIn('Calibración v1',titulos); self.assertIn('Ficha técnica de calibración',titulos)
+        self.assertTrue(any(a['documento']==emision.documento_id for a in informe.snapshot['anexos']))
+        self.assertEqual(sec(self.taller),[('Registrar mantenimiento','Finalizado'),('Registrar calibración','Finalizado'),('Generar informe final','Finalizado')])
+        html=como(self.taller).get(flujo).content.decode()
+        for prohibido in ('Ahora','Revisar calibración','revisión técnica independiente de ADMINISTRADOR'): self.assertNotIn(prohibido,html,prohibido)
+        self.assertIn('espera la revisión de ADMINISTRADOR',html)   # solo espera ADMINISTRADOR por el informe final
+        self.assertEqual(s.resumen(self.exp,self.admin)['accion']['texto'],'Revisar informe final')
+        for user in (self.taller,self.oficina,self.admin): enlaces(user,flujo)
+        for user in (self.taller,self.admin): enlaces(user,hoja,url_c)   # la calibración es de TALLER; OFICINA no la ve
+        self.assertEqual(como(self.oficina).get(hoja).status_code,403)
+        # 4. PDF de la hoja: formato físico, sin afirmar conformidad.
+        descarga=como(self.taller).get(reverse('masiscam:calibracion_documento',args=[self.exp.pk,emision.documento_id]))
+        self.assertEqual((descarga.status_code,descarga['Content-Type']),(200,'application/pdf'))
+        lector=PdfReader(BytesIO(b''.join(descarga.streaming_content))); texto='\n'.join(p.extract_text() for p in lector.pages)
+        for palabra in ('HOJA DE CALIBRACIÓN','Datos generales','Shims','Backlash','Presión eje vertical','Mediciones (1 a 16)','Observaciones, fecha y técnico responsable',
+                'No requiere aprobación de ADMINISTRADOR','Sin tolerancia aprobada','No se afirma conformidad técnica'): self.assertIn(palabra,texto,palabra)
+        self.assertNotIn('Dentro del rango aprobado',texto)
+        # 5. Informe final: PDF descargable por TALLER con diagnóstico, trabajos, fotografías y la hoja de calibración.
+        descarga=como(self.taller).get(reverse('masiscam:cierre_documento',args=[self.exp.pk,informe.pk]))
+        self.assertEqual((descarga.status_code,descarga['Content-Type']),(200,'application/pdf'))
+        lector=PdfReader(BytesIO(b''.join(descarga.streaming_content))); texto='\n'.join(p.extract_text() for p in lector.pages)
+        for palabra in ('INFORME FINAL','Diagnóstico','Reductor mantenido y probado sin fugas','Hoja de calibración (elaborada por TALLER)','Sin recepciones de repuestos registradas'): self.assertIn(palabra,texto,palabra)
+        self.assertNotIn('Calibración y aprobación técnica',texto)
+        self.assertGreaterEqual(sum(len(p.images) for p in lector.pages),2)   # fotografías del mantenimiento y de la calibración
+        # 6. Revisión del informe por ADMINISTRADOR y cierre independiente.
+        url_f=reverse('masiscam:cierre_detalle',args=[self.exp.pk])
+        for user in (self.taller,self.oficina,self.admin): enlaces(user,url_f)
+        revisar=dict(op='revisar',informe=informe.pk,decision='APROBADO',motivo='Informe conforme QA',clave=uuid.uuid4())
+        self.assertEqual(como(self.taller).post(url_f,revisar).status_code,403)
+        self.assertEqual(como(self.admin).post(url_f,revisar).status_code,302)
+        self.assertEqual(self.client.post(url_f,revisar).status_code,302)   # idempotente
+        informe.refresh_from_db(); self.assertEqual(informe.estado,'APROBADO')
+        self.assertEqual(s.resumen(self.exp,self.admin)['accion']['texto'],'Revisar cierre administrativo')
+        cerrar=dict(op='cerrar',informe=informe.pk,motivo='Cierre administrativo QA',clave=uuid.uuid4())
+        self.assertEqual(self.client.post(url_f,cerrar).status_code,403)   # quien revisó no cierra
+        self.assertEqual(como(self.admin_cierre).post(url_f,cerrar).status_code,302)
+        self.assertEqual(self.client.post(url_f,cerrar).status_code,302)   # idempotente
+        informe.refresh_from_db(); self.assertEqual(informe.estado,'FINALIZADO'); self.assertEqual(CierreExpediente.objects.filter(expediente=self.exp).count(),1)
         eventos=set(Auditoria.objects.filter(expediente=self.exp).values_list('accion',flat=True))
-        for accion in ('REPARACION_INICIADA','REPARACION_RESULTADO','CAL_PRELIMINAR','CAL_INICIADA','CAL_GUARDADA','CAL_ENVIADA','CAL_DECISION','FINAL_RESERVADO','FINAL_PDF_GENERADO','FINAL_REVISION','EXPEDIENTE_CERRADO'):
+        for accion in ('REPARACION_INICIADA','REPARACION_RESULTADO','CAL_INICIADA','CAL_GUARDADA','CAL_FINALIZADA','CAL_INFORME','CAL_PDF_GENERADO','FINAL_RESERVADO','FINAL_PDF_GENERADO','FINAL_REVISION','EXPEDIENTE_CERRADO'):
             self.assertIn(accion,eventos,accion)
-        self.assertNotIn('REPARACION_REVISION',eventos)
+        for ausente in ('REPARACION_REVISION','CAL_PRELIMINAR','CAL_DECISION','CAL_ENVIADA'): self.assertNotIn(ausente,eventos,ausente)
         # Cerrado: lectura para todos los roles; TALLER solo puede iniciar un nuevo mantenimiento.
         for user in (self.taller,self.oficina,self.admin): enlaces(user,flujo)
         self.assertEqual(s.resumen(self.exp,self.taller)['accion']['texto'],'Registrar nuevo mantenimiento')
@@ -645,13 +636,10 @@ class OficinaGestionTests(OficinaFixture,TestCase):
 
     @override_settings(DEBUG=False,MASISCAM_CALIBRACION_LOCAL=True,MASISCAM_CIERRE_LOCAL=True)
     def test_recorrido_con_observaciones_de_calibracion_e_informe_corrige_y_cierra(self):
-        """Ramas de corrección: calibración observada → corrección autorizada por ADMINISTRADOR → informe observado → nueva versión → cierre."""
-        from unittest.mock import patch
-        from django.core.files.uploadedfile import SimpleUploadedFile
-        from . import calibracion_services as c, cierre_services as cs, test_calibracion as cq
-        from .models import Calibracion, InformeFinal, CierreExpediente
+        """Ramas de corrección: informe observado → nueva versión del informe → observado otra vez → TALLER corrige la hoja → versión final → cierre."""
+        from . import calibracion_services as c
+        from .models import Calibracion, DecisionCalibracion, InformeFinal, CierreExpediente
         from .test_plano import foto_pieza
-        from .test_tecnica import usuario as _usuario
         self._con_conceptos(); ids=[x['id'] for x in self.sol.snapshot['conceptos']]; self.pieza=self.diag.piezas.get()
         prop=self.cotizar(archivo=None,cotizacion=dict(moneda='USD',lineas=[dict(concepto=i,precio_unitario=p) for i,p in zip(ids,('100.00','250.00','4.00'))]))
         s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
@@ -663,62 +651,57 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         flujo=reverse('masiscam:flujo_detalle',args=[self.exp.pk]); url_c=reverse('masiscam:calibracion_expediente',args=[self.exp.pk])
         url_f=reverse('masiscam:cierre_detalle',args=[self.exp.pk])
         def como(user): self.client.force_login(user); return self.client
-        definicion=cq.definicion_qa(); definicion['aplicacion'].update(marca=self.exp.registro.equipo.marca,modelo=self.exp.registro.equipo.modelo)
-        protocolo=c.crear_plantilla(usuario=self.admin,empresa=self.empresa,clave=uuid.uuid4(),archivo=cq.protocolo_pdf(),
-            datos=dict(codigo='OBS-QA',titulo='PROTOCOLO FICTICIO QA',tipo_equipo=self.exp.registro.equipo.tipo_producto,definicion=definicion,proyecto_id=self.exp.registro.equipo.proyecto_id))
-        c.aplicar_plantilla(usuario=self.admin,empresa=self.empresa,plantilla_id=protocolo.pk,equipo_id=self.exp.registro.equipo_id,
-            clave=uuid.uuid4(),fundamento='Solo QA',version_equipo=definicion['aplicacion']['version_equipo'])
-        with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[cq.anchor_qa(protocolo)]):
-            cq.validar_qa(self.empresa,_usuario(self.empresa,'validador-obs-qa','ADMIN'),protocolo)
-            cal1=cq.completar(self.empresa,self.taller,c.iniciar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,plantilla_id=protocolo.pk,clave=uuid.uuid4()))
-            c.enviar(usuario=self.taller,empresa=self.empresa,calibracion_id=cal1.pk,version=cal1.version_edicion,clave=uuid.uuid4())
-            hoja1=reverse('masiscam:calibracion_revision',args=[cal1.pk])
-            # ADMINISTRADOR observa la calibración: queda registrado, TALLER ve quién debe actuar y no puede reabrirla por su cuenta.
-            observar=dict(op='decision',decision='OBSERVADA',motivo='Repetir mediciones 3 y 4',**{f'eval_{i}':'PENDIENTE' for i in range(16)})
-            self.assertEqual(como(self.admin).post(hoja1,dict(observar,clave=uuid.uuid4())).status_code,302)
-            cal1.refresh_from_db(); self.assertEqual(cal1.estado,'OBSERVADA')
-            r=s.resumen(self.exp,self.taller)
-            self.assertIn('observó la calibración',r['mensaje']); self.assertEqual([(e['texto'],e['estado']) for e in r['secuencia']][1],('Registrar calibración','En proceso'))
-            self.assertTrue(r['secuencia'][1]['responsables'])
-            accion=s.resumen(self.exp,self.admin)['accion']; self.assertEqual((accion['texto'],accion['url']),('Habilitar corrección',url_c+'?flujo=1'))
-            corregir=dict(plantilla_id=protocolo.pk,motivo='Corrección autorizada tras la observación')
-            self.assertEqual(como(self.taller).post(url_c,dict(corregir,clave=uuid.uuid4())).status_code,403)
-            clave_c=uuid.uuid4()
-            self.assertEqual(como(self.admin).post(url_c+'?flujo=1',dict(corregir,clave=clave_c)).status_code,302)
-            self.assertEqual(self.client.post(url_c+'?flujo=1',dict(corregir,clave=clave_c)).status_code,302)   # idempotente
-            self.assertEqual(Calibracion.objects.filter(expediente=self.exp).count(),2)
-            cal2=Calibracion.objects.get(revision=2); self.assertEqual((cal2.sustituye_id,cal2.tecnico_id,cal2.estado),(cal1.pk,self.taller.pk,'NO_INICIADA'))
-            self.assertIn('Registrar calibración',s.resumen(self.exp,self.taller)['accion']['texto'])
-            hoja2=reverse('masiscam:calibracion_revision',args=[cal2.pk])
-            datos=dict(op='formato',accion='informe',clave=uuid.uuid4(),version=cal2.version_edicion,fecha='2026-11-21T10:00',instrumentos='INSTRUMENTO FICTICIO QA',
-                resultados='Registro corregido QA',observaciones='Mediciones repetidas',param_0='1.5',motivo_sin_evidencia='Prueba sin fotografías',
-                **{f'medicion_{i}':str(i) for i in range(16)})
-            with patch('masiscam.calibracion_tasks.generar_informe_calibracion.apply_async'):
-                self.assertEqual(como(self.taller).post(hoja2,datos).status_code,302)
-            cal2.refresh_from_db(); self.assertEqual(cal2.estado,'PENDIENTE_REVISION')
-            aprobar=dict(op='decision',decision='APROBADA',motivo='Corrección conforme QA',**{f'eval_{i}':'CONFORME' for i in range(16)})
-            with self.captureOnCommitCallbacks(execute=True):
-                self.assertEqual(como(self.admin).post(hoja2,dict(aprobar,clave=uuid.uuid4())).status_code,302)
-            cal2.refresh_from_db(); self.assertEqual(cal2.estado,'APROBADA')
-            informe1=InformeFinal.objects.get(expediente=self.exp,version=1); self.assertTrue(informe1.documento_id)
-            # ADMINISTRADOR observa el informe final: TALLER prepara una nueva versión (la anterior se conserva) y se cierra.
-            self.assertEqual(como(self.admin).post(url_f,dict(op='revisar',informe=informe1.pk,decision='OBSERVADO',motivo='Aclarar el alcance',clave=uuid.uuid4())).status_code,302)
-            informe1.refresh_from_db(); self.assertEqual(informe1.estado,'OBSERVADO')
-            self.assertEqual(como(self.taller).post(url_f,dict(op='reservar',clave=uuid.uuid4(),nueva_version='on',motivo='x')).status_code,403)   # la ventana de cierre es de consulta para TALLER
-            r=s.resumen(self.exp,self.taller); self.assertIn('Aclarar el alcance',r['mensaje'])
-            self.assertEqual((r['accion']['texto'],r['accion']['op']),('Preparar nueva versión del informe','final'))
-            self.assertEqual([(e['texto'],e['estado']) for e in r['secuencia']][2],('Generar informe final','En proceso'))
-            clave_v=uuid.uuid4()
-            self.assertEqual(como(self.taller).post(flujo,dict(op='final',clave=clave_v)).status_code,302)
-            self.assertEqual(self.client.post(flujo,dict(op='final',clave=uuid.uuid4())).status_code,302)   # reintento: no duplica la versión
-            informe2=InformeFinal.objects.get(expediente=self.exp,version=2); informe2.refresh_from_db()
-            self.assertEqual(InformeFinal.objects.filter(expediente=self.exp).count(),2); self.assertIn('Aclarar el alcance',informe2.motivo)
-            self.assertTrue(informe2.documento_id); self.assertEqual((informe1.version,InformeFinal.objects.filter(expediente=self.exp).count()),(1,2))
-            self.assertEqual(como(self.admin).post(url_f,dict(op='revisar',informe=informe2.pk,decision='APROBADO',motivo='Informe conforme QA',clave=uuid.uuid4())).status_code,302)
-            self.assertEqual(como(self.admin_cierre).post(url_f,dict(op='cerrar',informe=informe2.pk,motivo='Cierre administrativo QA',clave=uuid.uuid4())).status_code,302)
-            informe2.refresh_from_db(); self.assertEqual(informe2.estado,'FINALIZADO'); self.assertEqual(CierreExpediente.objects.filter(expediente=self.exp,informe=informe2).count(),1)
+        cal1=self.hoja_generada(); hoja1=reverse('masiscam:calibracion_revision',args=[cal1.pk])
+        informe1=InformeFinal.objects.get(expediente=self.exp); self.assertEqual((informe1.version,informe1.estado),(1,'PENDIENTE_REVISION'))
+        # Con el informe en revisión la hoja no se reabre por la libre; la pantalla lo explica y el servidor lo impide.
+        self.assertNotIn('data-abrir-hoja',como(self.taller).get(url_c).content.decode())
+        self.assertEqual(self.client.post(url_c,dict(op='hoja',clave=uuid.uuid4(),motivo='Repetir mediciones 3 y 4')).status_code,400)
+        self.assertEqual(Calibracion.objects.filter(expediente=self.exp).count(),1)
+        # 1. ADMINISTRADOR observa el informe: TALLER prepara una versión nueva (la observada se conserva).
+        self.assertEqual(como(self.admin).post(url_f,dict(op='revisar',informe=informe1.pk,decision='OBSERVADO',motivo='Aclarar el alcance',clave=uuid.uuid4())).status_code,302)
+        informe1.refresh_from_db(); self.assertEqual(informe1.estado,'OBSERVADO')
+        r=s.resumen(self.exp,self.taller); self.assertIn('Aclarar el alcance',r['mensaje'])
+        self.assertEqual((r['accion']['texto'],r['accion']['op']),('Preparar nueva versión del informe','final'))
+        self.assertEqual([(e['texto'],e['estado']) for e in r['secuencia']][2],('Generar informe final','En proceso'))
+        self.assertEqual(como(self.taller).post(url_f,dict(op='reservar',clave=uuid.uuid4(),nueva_version='on',motivo='x')).status_code,403)   # la ventana de cierre es de consulta
+        self.assertEqual(como(self.taller).post(flujo,dict(op='final',clave=uuid.uuid4())).status_code,302)
+        self.assertEqual(self.client.post(flujo,dict(op='final',clave=uuid.uuid4())).status_code,302)   # reintento: no duplica la versión
+        informe2=InformeFinal.objects.get(expediente=self.exp,version=2); self.assertEqual(InformeFinal.objects.filter(expediente=self.exp).count(),2)
+        self.assertIn('Aclarar el alcance',informe2.motivo); self.assertEqual(informe2.calibracion_id,cal1.pk)
+        # 2. ADMINISTRADOR observa también la v2: ahora TALLER corrige la hoja (nueva revisión con motivo; la anterior se conserva).
+        self.assertEqual(como(self.admin).post(url_f,dict(op='revisar',informe=informe2.pk,decision='OBSERVADO',motivo='Repetir mediciones 3 y 4',clave=uuid.uuid4())).status_code,302)
+        html=como(self.taller).get(url_c).content.decode(); self.assertIn('data-abrir-hoja',html); self.assertIn('Nueva revisión de la hoja',html)
+        self.assertEqual(self.client.post(url_c,dict(op='hoja',clave=uuid.uuid4())).status_code,400)   # sin motivo no hay revisión
+        self.assertEqual(como(self.admin).post(url_c,dict(op='hoja',clave=uuid.uuid4(),motivo='x')).status_code,403)   # solo TALLER abre la hoja
+        clave_r=uuid.uuid4(); motivo=dict(op='hoja',clave=clave_r,motivo='Repetir mediciones 3 y 4')
+        self.assertEqual(como(self.taller).post(url_c+'?flujo=1',motivo).status_code,302)
+        self.assertEqual(self.client.post(url_c+'?flujo=1',motivo).status_code,302)   # idempotente
+        self.assertEqual(Calibracion.objects.filter(expediente=self.exp).count(),2)
+        cal2=Calibracion.objects.get(revision=2); self.assertEqual((cal2.sustituye_id,cal2.tecnico_id,cal2.estado,cal2.plantilla_id),(cal1.pk,self.taller.pk,'NO_INICIADA',cal1.plantilla_id))
+        self.assertEqual(s.resumen(self.exp,self.taller)['accion']['texto'],'Registrar calibración')
+        self.assertEqual(s.resumen(self.exp,self.taller)['secuencia'][1]['estado'],'En proceso')
+        hoja2=reverse('masiscam:calibracion_revision',args=[cal2.pk])
+        html=como(self.taller).get(hoja2).content.decode()
+        self.assertIn('Repetir mediciones 3 y 4',html); self.assertIn('data-precargados',html)   # unidades y referencias de la hoja anterior, para verificarlas
+        self.assertEqual(self.client.get(hoja2).context['forms']['formato']['unidad_presion'].value(),'psi')
+        datos=self.datos_hoja(cal2,medicion_2='0.99',medicion_3='0.98',observaciones='Mediciones 3 y 4 repetidas')
+        with self.captureOnCommitCallbacks(execute=True):
+            self.assertEqual(como(self.taller).post(hoja2,datos).status_code,302)
+        cal2.refresh_from_db(); cal1.refresh_from_db()
+        self.assertEqual((cal1.estado,cal2.estado),('FINALIZADA','FINALIZADA'))
+        self.assertEqual(cal1.mediciones.get(punto='MED-03').valor,Decimal('0.12')); self.assertEqual(cal2.mediciones.get(punto='MED-03').valor,Decimal('0.99'))
+        informe3=InformeFinal.objects.get(expediente=self.exp,version=3)
+        self.assertEqual((informe3.calibracion_id,informe3.sustituye_id,informe3.estado),(cal2.pk,informe2.pk,'PENDIENTE_REVISION')); self.assertTrue(informe3.documento_id)
+        self.assertEqual(InformeFinal.objects.filter(expediente=self.exp).count(),3)
+        self.assertIn('Calibración v1',[a['titulo'] for a in informe3.snapshot['anexos']])
+        self.assertEqual(self.client.get(hoja1).status_code,200)   # la revisión anterior sigue consultable
+        # 3. Aprobación del informe y cierre independiente.
+        self.assertEqual(como(self.admin).post(url_f,dict(op='revisar',informe=informe3.pk,decision='APROBADO',motivo='Informe conforme QA',clave=uuid.uuid4())).status_code,302)
+        self.assertEqual(como(self.admin_cierre).post(url_f,dict(op='cerrar',informe=informe3.pk,motivo='Cierre administrativo QA',clave=uuid.uuid4())).status_code,302)
+        informe3.refresh_from_db(); self.assertEqual(informe3.estado,'FINALIZADO'); self.assertEqual(CierreExpediente.objects.filter(expediente=self.exp,informe=informe3).count(),1)
         for user in (self.taller,self.oficina,self.admin): self.assertEqual(como(user).get(flujo).status_code,200)
         self.assertEqual(s.resumen(self.exp,self.taller)['accion']['texto'],'Registrar nuevo mantenimiento')
+        self.assertFalse(DecisionCalibracion.objects.exists())
 
     @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
     def test_idempotencia_guardar_avance_y_validar_sin_conflictos(self):
@@ -1183,29 +1166,62 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
         # Sin registrar repuestos, TALLER abre la pantalla única de mantenimiento (escritorio y móvil).
         self._mantenimiento_edge(pagina)
         # Mantenimiento finalizado: la calibración queda disponible de inmediato, sin otra aprobación de ADMINISTRADOR.
-        from . import calibracion_services as cal, test_calibracion as cq
-        from .test_tecnica import usuario as _usuario
         ver('Mantenimiento finalizado',botones=('Registrar calibración',),secuencia=('Finalizado','Disponible','No disponible'))
         calibracion_url=self.live_server_url+reverse('masiscam:calibracion_expediente',args=[self.exp.pk])+'?flujo=1'
-        ver('Falta protocolo de calibración aprobado',botones=('Guardar datos preliminares',),destino=calibracion_url)   # datos preliminares y requisito exacto
-        definicion=cq.definicion_qa(); definicion['aplicacion'].update(marca=self.exp.registro.equipo.marca,modelo=self.exp.registro.equipo.modelo)
-        protocolo=cal.crear_plantilla(usuario=self.admin,empresa=self.empresa,clave=uuid.uuid4(),archivo=cq.protocolo_pdf(),
-            datos=dict(codigo='EDGE-QA',titulo='PROTOCOLO FICTICIO QA',tipo_equipo=self.exp.registro.equipo.tipo_producto,definicion=definicion,proyecto_id=self.exp.registro.equipo.proyecto_id))
-        cal.aplicar_plantilla(usuario=self.admin,empresa=self.empresa,plantilla_id=protocolo.pk,equipo_id=self.exp.registro.equipo_id,
-            clave=uuid.uuid4(),fundamento='Solo QA',version_equipo=definicion['aplicacion']['version_equipo'])
-        with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[cq.anchor_qa(protocolo)]):
-            cq.validar_qa(self.empresa,_usuario(self.empresa,'validador-edge-qa','ADMIN'),protocolo)
-            ver('Protocolo aprobado aplicable',botones=('Iniciar calibración',),destino=calibracion_url)
-            hoja=cq.completar(self.empresa,self.taller,cal.iniciar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,plantilla_id=protocolo.pk,clave=uuid.uuid4()))
-            cal.enviar(usuario=self.taller,empresa=self.empresa,calibracion_id=hoja.pk,version=hoja.version_edicion,clave=uuid.uuid4())
-            ver('Calibración enviada',secuencia=('Finalizado','En proceso','No disponible'),responsables=True)
-            ver('Calibración enviada',botones=('Revisar calibración',),cookie=self._galleta(self.admin),destino=flujo_url)
-            # Revisión técnica independiente: al aprobar se genera el informe final (PDF) y ADMINISTRADOR recibe el acceso directo a revisarlo.
-            cal.decidir(usuario=self.admin,empresa=self.empresa,calibracion_id=hoja.pk,clave=uuid.uuid4(),decision='APROBADA',motivo='SIMULACIÓN QA',
-                evaluaciones={r['codigo']:'CONFORME' for r in protocolo.definicion['mediciones']})
-            ver('Generado',secuencia=('Finalizado','Finalizado','Finalizado'),responsables=True)
-            ver('Revisar informe final',botones=('Revisar informe final',),cookie=self._galleta(self.admin),destino=flujo_url)
-            ver('Informe final y cierre',cookie=self._galleta(self.admin),destino=self.live_server_url+reverse('masiscam:cierre_detalle',args=[self.exp.pk]))
+        ver('Sin tolerancia aprobada',botones=('Abrir hoja de calibración',),destino=calibracion_url)   # ficha por configuración; sin protocolo ni aprobación
+        # TALLER abre y completa la hoja con el navegador: avance en móvil (390 px), generación del tercer PDF en escritorio (1440 px).
+        from .models import Calibracion, InformeFinal, DecisionCalibracion
+        valores=self.VALORES_HOJA
+        def sin_desborde(page,ancho): self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),f'desborda a {ancho}px')
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                def abrir(ancho):
+                    context=browser.new_context(viewport=dict(width=ancho,height=1000,),accept_downloads=True)
+                    context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galleta,url=self.live_server_url)])
+                    return context,context.new_page()
+                context,page=abrir(390)
+                page.goto(calibracion_url); sin_desborde(page,390)
+                page.get_by_role('button',name='Abrir hoja de calibración').click()
+                expect(page.locator('[data-hoja-calibracion]')).to_be_visible(); expect(page.locator('[data-sin-tolerancia]')).to_be_visible()
+                hoja_url=page.url.split('?')[0]; self.assertIn('/calibracion/revisiones/',hoja_url)
+                expect(page.locator('body')).not_to_contain_text('protocolo aprobado'); sin_desborde(page,390)
+                titulos=[t_.inner_text() for t_ in page.locator('#calibracion-formato .mf-cal-sec > h2').all()]   # orden del formato físico
+                self.assertEqual(titulos,['A · Datos generales','B · Shims','C · Datos de calibración','D · Mediciones','E · Observaciones, fecha y técnico responsable'])
+                expect(page.locator('input[name^="medicion_"]')).to_have_count(16)
+                for nombre in ('Guardar avance','Generar hoja de calibración'): expect(page.get_by_role('button',name=nombre)).to_be_visible()
+                page.select_option('#id_unidad_longitud','mm'); page.select_option('#id_unidad_presion','psi')
+                for n,v in enumerate(valores): page.fill(f'#id_param_{n}',v)
+                for n in range(6): page.fill(f'#id_medicion_{n}',f'0.{n+10}')
+                sin_desborde(page,390)
+                page.get_by_role('button',name='Guardar avance').click()
+                expect(page.locator('body')).to_contain_text('Avance guardado'); sin_desborde(page,390)
+                self.assertEqual(page.input_value('#id_param_0'),'0.50'); self.assertEqual(page.input_value('#id_medicion_5'),'0.15')
+                page.get_by_role('button',name='Generar hoja de calibración').click()   # incompleta: guarda y dice qué falta; no genera nada
+                expect(page.locator('body')).to_contain_text('faltan'); expect(page.locator('body')).to_contain_text('Mediciones 7, 8, 9')
+                expect(page.locator('[data-estado-hoja]')).to_have_text('En proceso'); expect(page.locator('[data-pdf-hoja]')).to_have_count(0)
+                context.close()
+                context,page=abrir(1440)
+                page.goto(hoja_url+'?flujo=1'); sin_desborde(page,1440)
+                self.assertEqual(page.input_value('#id_medicion_5'),'0.15'); self.assertEqual(page.input_value('#id_unidad_presion'),'psi')
+                for n in range(6,16): page.fill(f'#id_medicion_{n}',f'0.{n+10}')
+                page.fill('#id_observaciones','Calibración realizada por TALLER en Edge')
+                page.get_by_role('button',name='Generar hoja de calibración').click()
+                expect(page.locator('[data-secuencia] li').nth(1)).to_have_attribute('data-estado','Finalizado')   # vuelve al trabajo con la hoja ya generada
+                page.goto(hoja_url); expect(page.locator('[data-estado-hoja]')).to_have_text('Finalizada'); sin_desborde(page,1440)
+                with page.expect_download() as descarga: page.get_by_role('link',name='Descargar hoja de calibración').click()
+                contenido=Path(descarga.value.path()).read_bytes(); self.assertTrue(contenido.startswith(b'%PDF'))
+                expect(page.locator('[data-informe-final]')).to_contain_text('generado con esta hoja como tercer documento')
+                context.close()
+            finally:
+                browser.close()
+        hoja=Calibracion.objects.get(); self.assertEqual((hoja.estado,hoja.mediciones.count(),hoja.emisiones.filter(estado='GENERADA').count()),('FINALIZADA',16,1))
+        self.assertFalse(DecisionCalibracion.objects.exists())   # sin decisión de ADMINISTRADOR
+        informe=InformeFinal.objects.get(expediente=self.exp); self.assertTrue(informe.documento_id)
+        self.assertIn('Calibración v1',[a['titulo'] for a in informe.snapshot['anexos']])   # el tercer documento entró solo al informe final
+        ver('Generado',secuencia=('Finalizado','Finalizado','Finalizado'),responsables=True)
+        ver('Revisar informe final',botones=('Revisar informe final',),cookie=self._galleta(self.admin),destino=flujo_url)
+        ver('Informe final y cierre',cookie=self._galleta(self.admin),destino=self.live_server_url+reverse('masiscam:cierre_detalle',args=[self.exp.pk]))
         from .models import ExpedienteMantenimiento
         self.assertEqual(ExpedienteMantenimiento.objects.filter(registro__equipo=self.exp.registro.equipo).count(),1)
 

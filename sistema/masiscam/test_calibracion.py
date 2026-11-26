@@ -25,9 +25,9 @@ from .test_operacion import aprobar_diagnostico,QA_POLICY,presupuesto_qa,verific
 FLAGS=dict(**PHASE4_FLAGS,MASISCAM_CALIBRACION_LOCAL=True,MASISCAM_POLITICA_COMERCIAL_LOCAL=QA_POLICY)
 
 
-def definicion_qa(criterios=True):
-    return dict(mediciones=[dict(codigo=f'QA-{n:02}',nombre=f'PUNTO FICTICIO QA {n}',unidad='unidad QA SIN USO INDUSTRIAL',
-        fuente='Fuente FICTICIA QA, no protocolo real',minimo='-1',maximo='1',tolerancia='NO INDUSTRIAL - solo maquetación',
+def definicion_qa(criterios=True,unidad='unidad QA SIN USO INDUSTRIAL',maximo='1'):
+    return dict(mediciones=[dict(codigo=f'QA-{n:02}',nombre=f'PUNTO FICTICIO QA {n}',unidad=unidad,
+        fuente='Fuente FICTICIA QA, no protocolo real',minimo='-1',maximo=maximo,tolerancia='NO INDUSTRIAL - solo maquetación',
         criterio='Criterio FICTICIO QA para prueba manual, no usar industrialmente' if criterios else '') for n in range(1,17)],
         parametros=[dict(codigo='QA-P',nombre='Parámetro FICTICIO QA',unidad='unidad QA',fuente='Fuente ficticia QA',
             tolerancia='SIN VALIDEZ INDUSTRIAL',criterio='Referencia solo para test',obligatorio=True)],
@@ -40,7 +40,7 @@ def protocolo_pdf():
     return SimpleUploadedFile('protocolo-ficticio-qa.pdf',stream.getvalue(),content_type='application/pdf')
 
 
-def preparar_calibracion(criterios=True):
+def preparar_calibracion(criterios=True,**rango):
     empresa,oficina,planta,tecnico,exp=preparar()
     revisor=usuario(empresa,'planta-cal-independiente','PLANTA')
     diag=aprobar_diagnostico(empresa,oficina,planta,tecnico,exp)
@@ -57,7 +57,7 @@ def preparar_calibracion(criterios=True):
     o.revisar_actividad(usuario=planta,empresa=empresa,resultado_id=res.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='Solo prueba de software QA')
     p=s.crear_plantilla(usuario=planta,empresa=empresa,clave=uuid.uuid4(),archivo=protocolo_pdf(),datos=dict(
         codigo='PROTOCOLO-FICTICIO-QA',titulo='SIN VALIDEZ INDUSTRIAL',tipo_equipo=exp.registro.equipo.tipo_producto,
-        definicion=definicion_qa(criterios),proyecto_id=exp.registro.equipo.proyecto_id))
+        definicion=definicion_qa(criterios,**rango),proyecto_id=exp.registro.equipo.proyecto_id))
     s.aplicar_plantilla(usuario=planta,empresa=empresa,plantilla_id=p.pk,equipo_id=exp.registro.equipo_id,clave=uuid.uuid4(),
         fundamento='Aplicabilidad solo sintética QA',version_equipo=p.definicion['aplicacion']['version_equipo'])
     return empresa,oficina,planta,tecnico,exp,revisor,p
@@ -434,3 +434,185 @@ class CalibracionConcurrencyTests(TransactionTestCase):
         rows=self.concurrent(lambda:s.decidir(usuario=self.planta,empresa=self.empresa,calibracion_id=c.pk,clave=key,decision='APROBADA',motivo='Decisión ficticia QA',
             evaluaciones={r['codigo']:'CONFORME' for r in self.p.definicion['mediciones']}).pk)
         self.assertEqual(rows[0],rows[1]);self.assertEqual(DecisionCalibracion.objects.count(),1)
+
+
+VALORES_HOJA=dict(zip(('SHIM-VS','SHIM-VI','SHIM-H','BACKLASH','TOLERANCIA','CAL-TOTAL','MINIMO','MAXIMO','PRES-V','PRES-H'),
+    ('0.50','0.55','0.60','0.12','0.05','0.10','0.05','0.20','35','40')))
+UNIDADES_QA=dict(longitud='mm',presion='psi')
+
+
+class HojaBase:
+    """Hoja de calibración de TALLER sobre la ficha técnica de la configuración: sin aprobación de ADMINISTRADOR ni protocolo validado."""
+    PROTOCOLO={}
+
+    def setUp(self):
+        self.empresa,self.oficina,self.planta,self.tecnico,self.exp,self.revisor,self.p=preparar_calibracion(**self.PROTOCOLO)   # el protocolo heredado no se valida: la hoja no lo necesita
+        self.base=dict(empresa=self.empresa,expediente_id=self.exp.pk)
+
+    def abrir(self,**extra):
+        return s.iniciar_hoja(usuario=self.tecnico,**self.base,clave=uuid.uuid4(),**extra)
+
+    def llenar(self,c,mediciones=16,parametros=None,usuario=None,**datos):
+        params=dict(VALORES_HOJA,_unidades=dict(UNIDADES_QA));params.update(parametros or {})
+        return s.guardar_formato(usuario=usuario or self.tecnico,empresa=self.empresa,calibracion_id=c.pk,version=c.version_edicion,clave=uuid.uuid4(),
+            datos=dict(fecha=timezone.now(),observaciones='Observación de TALLER',parametros=params,**datos),
+            mediciones={f'MED-{n:02}':Decimal('0.10')+Decimal(n)/100 for n in range(1,mediciones+1)})
+
+    def finalizar(self,c):
+        c.refresh_from_db()
+        return s.enviar(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,version=c.version_edicion,clave=uuid.uuid4())
+
+    def generar(self,c,**extra):
+        em=s.reservar_informe(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,clave=uuid.uuid4(),**extra)
+        s.generar_informe(em.pk);em.refresh_from_db();return em
+
+    def texto_pdf(self,em):
+        from pypdf import PdfReader
+        with em.documento.archivo.open('rb') as f:
+            return '\n'.join(p.extract_text() for p in PdfReader(BytesIO(f.read())).pages)
+
+
+@override_settings(**FLAGS)
+class HojaCalibracionTests(HojaBase,TestCase):
+    def test_ficha_por_configuracion_sin_validacion_ni_aprobacion(self):
+        c=self.abrir();p=c.plantilla
+        self.assertTrue(s.es_ficha(p));self.assertEqual((p.version,p.autor_id,p.tipo_equipo),(1,self.tecnico.pk,self.exp.registro.equipo.tipo_producto))
+        self.assertFalse(ValidacionPlantillaCalibracion.objects.filter(plantilla=p).exists());self.assertFalse(p.aplicabilidades.exists())
+        self.assertEqual(p.definicion['configuracion'],s.configuracion_equipo(self.exp.registro.equipo))
+        self.assertEqual([r['nombre'] for r in p.definicion['parametros']],['Shim vertical superior','Shim vertical inferior','Shim horizontal','Backlash','Tolerancia',
+            'Calibración total','Mínimo','Máximo','Presión eje vertical','Presión eje horizontal'])
+        self.assertEqual([r['nombre'] for r in p.definicion['mediciones']],[f'Medición {n}' for n in range(1,17)])
+        self.assertEqual(s.ficha_de(self.exp,self.tecnico).pk,p.pk)   # la misma ficha para la misma configuración
+        self.assertEqual(self.abrir().pk,c.pk)   # una hoja en curso se continúa, no se duplica
+        # Configuración distinta → ficha distinta; mayúsculas y espacios no cambian la configuración.
+        eq=self.exp.registro.equipo;base=s.codigo_ficha(self.empresa,eq);marca=eq.marca
+        eq.marca='  '+marca.upper()+'  ';self.assertEqual(s.codigo_ficha(self.empresa,eq),base);eq.marca=marca
+        for campo in ('ratio','rotacion','modelo','marca'):
+            anterior=getattr(eq,campo);setattr(eq,campo,(anterior or '')+' otra');self.assertNotEqual(s.codigo_ficha(self.empresa,eq),base,campo);setattr(eq,campo,anterior)
+        # El prefijo es exclusivo de TALLER: ADMINISTRADOR no puede registrar un protocolo que se haga pasar por ficha.
+        with self.assertRaises(ValidationError):
+            s.crear_plantilla(usuario=self.planta,empresa=self.empresa,clave=uuid.uuid4(),archivo=protocolo_pdf(),datos=dict(codigo='ficha-falsa',titulo='X',
+                tipo_equipo=eq.tipo_producto,definicion=definicion_qa(),proyecto_id=eq.proyecto_id))
+        self.assertEqual(PlantillaCalibracion.objects.filter(codigo__startswith='FICHA-').count(),1)
+
+    def test_taller_genera_la_hoja_sin_decision_de_administrador_y_sin_afirmar_conformidad(self):
+        c=self.llenar(self.abrir());self.assertEqual((c.estado,c.mediciones.count()),('EN_PROCESO',16))
+        c=self.finalizar(c)
+        self.assertEqual((c.estado,bool(c.enviado_en)),('FINALIZADA',True));self.assertFalse(DecisionCalibracion.objects.exists())
+        self.assertEqual(c.parametros['_equipo']['marca'],self.exp.registro.equipo.marca)   # datos del equipo congelados
+        self.assertFalse(s.pdf_generado(c))
+        em=self.generar(c);self.assertEqual((em.estado,em.version),('GENERADA',1));self.assertTrue(s.pdf_generado(c))
+        snap=em.snapshot
+        self.assertEqual((snap['plantilla'],snap['estado'],snap['decision']),('hoja-calibracion-v1','FINALIZADA',None))
+        self.assertEqual(snap['verificacion']['estado'],'SIN_TOLERANCIA_APROBADA');self.assertIn('No se afirma conformidad técnica',snap['verificacion']['texto'])
+        self.assertTrue(all(r['evaluacion']=='Sin tolerancia aprobada: no se evalúa' for r in snap['mediciones']))
+        self.assertEqual(snap['unidades'],UNIDADES_QA);self.assertEqual([r['valor'] for r in snap['parametros']][:3],['0.5','0.55','0.6'])
+        texto=self.texto_pdf(em)
+        for palabra in ('Datos generales','Shims','Presión eje horizontal','Sin tolerancia aprobada','No es certificado metrológico'): self.assertIn(palabra,texto,palabra)
+        for prohibido in ('Dentro del rango','Fuera del rango','CONFORME'): self.assertNotIn(prohibido,texto,prohibido)
+        # ADMINISTRADOR no decide sobre la hoja y la hoja finalizada no admite cambios.
+        with self.assertRaises(ValidationError):
+            s.decidir(usuario=self.planta,empresa=self.empresa,calibracion_id=c.pk,clave=uuid.uuid4(),decision='APROBADA',motivo='No aplica',evaluaciones={})
+        with self.assertRaises(PermissionDenied): self.llenar(c)
+        c.refresh_from_db()
+        with self.assertRaises(PermissionDenied),transaction.atomic(): c.parametros={};c.save()
+        with self.assertRaises(PermissionDenied),transaction.atomic(): c.mediciones.first().delete()   # el borrado queda prohibido
+        self.assertEqual(Calibracion.objects.count(),1)
+
+    def test_rangos_unidades_precision_y_campos_obligatorios(self):
+        c=self.abrir()
+        for parametros in (dict(BACKLASH='-0.1'),{'SHIM-H':'-1'},{'PRES-V':'-5'},dict(MINIMO='0.5',MAXIMO='0.1'),dict(_unidades=dict(longitud='cm',presion='psi')),
+                dict(_unidades=dict(longitud='mm',presion='atm')),dict(BACKLASH='0.1234567890123'),dict(BACKLASH='abc'),dict(DESCONOCIDO='1')):
+            with self.subTest(parametros=parametros),self.assertRaises(ValidationError):
+                self.llenar(c,parametros=parametros)
+        c.refresh_from_db();self.assertEqual((c.estado,c.parametros,c.mediciones.count()),('NO_INICIADA',{},0))   # nada inválido se guardó
+        for punto,valor in (('MED-17','1'),('MED-01','1.0000000000001'),('MED-01','x')):
+            with self.subTest(punto=punto,valor=valor),self.assertRaises(ValidationError):
+                s.medir(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,version=c.version_edicion,clave=uuid.uuid4(),punto=punto,valor=valor)
+        self.assertFalse(c.mediciones.exists())
+        # Mínimo y máximo negativos sí se admiten (referencias con signo), siempre que mínimo ≤ máximo.
+        c=self.llenar(c,mediciones=13,parametros=dict(MINIMO='-0.05',MAXIMO='0.2',**{'PRES-H':None}))
+        self.assertEqual((c.estado,c.mediciones.count()),('EN_PROCESO',13))
+        # «Guardar avance» admite una hoja parcial; generarla exige todo y dice exactamente qué falta.
+        with self.assertRaises(ValidationError) as error: self.finalizar(c)
+        mensaje=' '.join(error.exception.messages);self.assertIn('Presión eje horizontal',mensaje);self.assertIn('Mediciones 14, 15, 16',mensaje)
+        c.refresh_from_db();self.assertEqual((c.estado,c.enviado_en),('EN_PROCESO',None))
+        c=self.llenar(c,parametros=dict(_unidades=dict(longitud='mm',presion='')))
+        with self.assertRaisesMessage(ValidationError,'Unidad de presión'): self.finalizar(c)
+        c=self.llenar(c);self.assertEqual(Decimal(c.parametros['PRES-H']),Decimal('40'))
+        self.assertEqual(self.finalizar(c).estado,'FINALIZADA')
+
+    def test_autoria_idempotencia_versiones_y_guardas_de_base_de_datos(self):
+        from django.db import DatabaseError
+        otro=usuario(self.empresa,'otro-taller-qa','TALLER');c=self.abrir()
+        for intento in (lambda:self.llenar(c,usuario=otro),lambda:s.iniciar_hoja(usuario=otro,**self.base,clave=uuid.uuid4()),
+                lambda:s.iniciar_hoja(usuario=self.planta,**self.base,clave=uuid.uuid4())):
+            with self.assertRaises((PermissionDenied,ValidationError)): intento()
+        eventos=lambda:Auditoria.objects.filter(expediente=self.exp,accion__startswith='CAL_').count()
+        clave=uuid.uuid4();version=c.version_edicion
+        datos=dict(fecha=timezone.now(),observaciones='Obs',parametros=dict(VALORES_HOJA,_unidades=dict(UNIDADES_QA)))
+        medidas={f'MED-{n:02}':Decimal(n) for n in range(1,17)}
+        c1=s.guardar_formato(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,version=version,clave=clave,datos=datos,mediciones=medidas);n1=eventos()
+        c2=s.guardar_formato(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,version=version,clave=clave,datos=datos,mediciones=medidas)   # reintento de red
+        self.assertEqual((c1.pk,eventos(),c.mediciones.count()),(c2.pk,n1,16))
+        # Finalizar es idempotente y deja un único evento; la misma clave con otro contenido es un conflicto.
+        c=Calibracion.objects.get(pk=c.pk);clave_f=uuid.uuid4();v=c.version_edicion
+        f1=s.enviar(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,version=v,clave=clave_f);n2=eventos()
+        f2=s.enviar(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,version=v,clave=clave_f)
+        self.assertEqual((f1.pk,f1.estado,eventos()),(f2.pk,'FINALIZADA',n2));self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion='CAL_FINALIZADA').count(),1)
+        with self.assertRaises(ValidationError): s.enviar(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,version=v+7,clave=clave_f)
+        # PDF: una versión por contenido; una versión nueva solo con motivo y la anterior se conserva.
+        c=Calibracion.objects.get(pk=c.pk);em=self.generar(c)
+        self.assertEqual(s.reservar_informe(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,clave=uuid.uuid4()).pk,em.pk)
+        with self.assertRaises(ValidationError): s.reservar_informe(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,clave=uuid.uuid4(),nueva_version=True)
+        em2=s.reservar_informe(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,clave=uuid.uuid4(),nueva_version=True,motivo='Reimpresión solicitada')
+        self.assertEqual((em2.version,em.pk!=em2.pk,c.emisiones.count()),(2,True,2))
+        # Guardas de base de datos (también frente a SQL directo): estados fuera de lista.
+        with self.assertRaises(DatabaseError),transaction.atomic(): Calibracion.objects.filter(pk=c.pk).update(estado='OTRA')
+        # Un protocolo heredado sigue exigiendo su validación independiente: sin ella la base rechaza la calibración.
+        with self.assertRaises(DatabaseError),transaction.atomic():
+            Calibracion(expediente=self.exp,diagnostico=c.diagnostico,autorizacion=c.autorizacion,plantilla=self.p,reparacion_snapshot=c.reparacion_snapshot,
+                revision=9,tecnico=self.tecnico,clave=uuid.uuid4()).save()
+
+    def test_informe_final_exige_el_pdf_de_la_hoja_en_la_base_de_datos(self):
+        from django.db import DatabaseError
+        from .models import InformeFinal
+        c=self.finalizar(self.llenar(self.abrir()))
+        nuevo=lambda:InformeFinal(expediente=self.exp,calibracion=c,version=1,snapshot={},huella='a'*64,estado='BORRADOR',autor=self.tecnico)
+        with self.assertRaises(DatabaseError),transaction.atomic(): nuevo().save()   # hoja finalizada sin PDF generado
+        self.generar(c)
+        with transaction.atomic(): nuevo().save()   # con el tercer documento generado, la base lo acepta
+        self.assertEqual(InformeFinal.objects.filter(calibracion=c).count(),1)
+
+    def test_finalizada_exige_enviado_en_en_la_base_de_datos(self):
+        from django.db import DatabaseError
+        c=self.abrir()   # hoja en borrador: la base no admite FINALIZADA sin haber sido generada por TALLER
+        with self.assertRaises(DatabaseError),transaction.atomic(): Calibracion.objects.filter(pk=c.pk).update(estado='FINALIZADA')
+        c.refresh_from_db();self.assertEqual(c.estado,'NO_INICIADA')
+
+
+@override_settings(**FLAGS)
+class HojaToleranciasAprobadasTests(HojaBase,TestCase):
+    PROTOCOLO=dict(unidad='mm',maximo='0.20')
+
+    def test_tolerancias_aprobadas_verifican_las_mediciones_sin_declarar_conformidad(self):
+        empresa,tecnico,exp,revisor,p=self.empresa,self.tecnico,self.exp,self.revisor,self.p   # protocolo ficticio con unidad y rango numéricos (-1 a 0.20 mm)
+        self.assertIsNone(s.tolerancias_aprobadas(exp))   # sin validar ni anclar: no se usa
+        c=s.iniciar_hoja(usuario=tecnico,empresa=empresa,expediente_id=exp.pk,clave=uuid.uuid4())
+        c=s.guardar_formato(usuario=tecnico,empresa=empresa,calibracion_id=c.pk,version=c.version_edicion,clave=uuid.uuid4(),
+            datos=dict(fecha=timezone.now(),parametros=dict(VALORES_HOJA,_unidades=dict(UNIDADES_QA))),
+            mediciones={f'MED-{n:02}':Decimal('0.10')+Decimal(n)/100 for n in range(1,17)})
+        with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[anchor_qa(p)]):
+            validar_qa(empresa,revisor,p)
+            self.assertEqual(s.tolerancias_aprobadas(exp).pk,p.pk)
+            c=s.enviar(usuario=tecnico,empresa=empresa,calibracion_id=c.pk,version=c.version_edicion,clave=uuid.uuid4())
+            em=s.reservar_informe(usuario=tecnico,empresa=empresa,calibracion_id=c.pk,clave=uuid.uuid4());snap=em.snapshot
+        self.assertEqual(snap['verificacion']['estado'],'TOLERANCIA_APROBADA');self.assertEqual(snap['verificacion']['protocolo'],p.codigo)
+        evaluaciones=[r['evaluacion'] for r in snap['mediciones']]   # valores 0.11 … 0.26 frente a un rango aprobado de -1 a 0.20
+        self.assertEqual(evaluaciones[:10],['Dentro del rango aprobado']*10);self.assertEqual(evaluaciones[10:],['Fuera del rango aprobado']*6)
+        self.assertIn('no sustituye la valoración técnica',snap['verificacion']['texto'])
+        self.assertEqual(c.parametros['_tolerancias']['protocolo'],p.codigo)   # las tolerancias usadas quedan congeladas con la hoja
+        # La verificación solo es aritmética: otra unidad, o límites no numéricos, no se evalúan ni se inventan equivalencias.
+        self.assertEqual(s._evaluar('0.1',dict(minimo='0',maximo='1',unidad='in'),'mm'),'Unidad distinta a la aprobada: no se evalúa')
+        self.assertEqual(s._evaluar('0.1',dict(minimo='',maximo='1',unidad='mm'),'mm'),'Sin límites numéricos aprobados: no se evalúa')
+        self.assertEqual(s._evaluar('0.1',None,'mm'),'Sin tolerancia aprobada: no se evalúa')

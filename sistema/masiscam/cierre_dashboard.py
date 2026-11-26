@@ -67,9 +67,9 @@ def etapa(exp):
     if exp.calibracion_estado and exp.calibracion_diagnostico!=exp.diagnostico_actual: return 'CALIBRACION_OBSERVADA'
     if exp.calibracion_estado and getattr(exp,'fuente_reparacion_cambiada',False): return 'CALIBRACION_OBSERVADA'
     if exp.informe_estado and exp.informe_calibracion!=exp.calibracion_actual:
-        return 'INFORME_OBSERVADO' if exp.calibracion_estado=='APROBADA' else 'CALIBRACION_'+(exp.calibracion_estado or 'PENDIENTE')
+        return 'INFORME_OBSERVADO' if exp.calibracion_estado in {'APROBADA','FINALIZADA'} else 'CALIBRACION_'+(exp.calibracion_estado or 'PENDIENTE')
     if exp.informe_estado: return 'INFORME_'+exp.informe_estado
-    if exp.calibracion_estado=='APROBADA': return 'INFORME_PENDIENTE'
+    if exp.calibracion_estado in {'APROBADA','FINALIZADA'}: return 'INFORME_PENDIENTE'
     if exp.calibracion_estado: return 'CALIBRACION_'+exp.calibracion_estado
     if exp.tiene_actividad: return 'CALIBRACION_PENDIENTE' if getattr(exp,'reparacion_aprobada',False) else 'REPARACION'
     return 'REPARACION_PENDIENTE'

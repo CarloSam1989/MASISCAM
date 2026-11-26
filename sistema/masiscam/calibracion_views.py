@@ -13,8 +13,28 @@ from .access import masiscam_access_required
 from .models import PlantillaCalibracion,Calibracion,Documento,ExpedienteMantenimiento,DecisionCalibracion
 from . import calibracion_services as s
 from .calibracion_forms import (PlantillaForm,PuntosFormSet,InicioForm,DatosForm,MedicionForm,EvidenciaForm,
-    DecisionForm,InformeForm,ValidarForm,AplicarForm,FormatoCalibracionForm,PreliminarForm)
+    DecisionForm,InformeForm,ValidarForm,AplicarForm,FormatoCalibracionForm,HojaCalibracionForm,HojaInicioForm)
 from .tecnica_views import _error
+
+
+def _emitir(request,c,em):
+    """Genera el PDF de la calibración. La hoja de TALLER se genera en el acto (tercer documento del expediente); el protocolo heredado sigue en cola."""
+    from django.contrib import messages
+    if s.es_ficha(c.plantilla):
+        try:
+            s.generar_informe(em.pk)
+        except Exception:
+            from .models import EmisionCalibracion
+            EmisionCalibracion.objects.filter(pk=em.pk,documento__isnull=True).update(estado='ERROR',
+                error='No se pudo generar el PDF; la hoja quedó finalizada y puede reintentarse.')
+            messages.warning(request,'La hoja quedó finalizada, pero el PDF no se pudo generar. Reintenta la generación.')
+        else:
+            messages.success(request,'Hoja de calibración generada. Se incorpora automáticamente al informe final.')
+        return
+    from .calibracion_tasks import generar_informe_calibracion
+    try: generar_informe_calibracion.apply_async(args=[em.pk],retry=False)
+    except Exception:
+        messages.warning(request,'Reserva conservada. Cola no disponible; puede reintentar la misma emisión.')
 
 
 class _InformeNoGenerado(Exception):
@@ -102,19 +122,18 @@ def plantilla(request,pk):
 @masiscam_access_required
 def expediente(request,pk):
     exp=s.expediente(request.user,request.empresa_activa,pk)
-    preliminar_op=request.method=='POST' and request.POST.get('op')=='preliminar'
-    form=InicioForm(None if preliminar_op else (request.POST or None),exp=exp)
-    prelim=PreliminarForm(request.POST if preliminar_op else None)
-    if request.method=='POST' and preliminar_op:
-        if prelim.is_valid():
-            data=dict(prelim.cleaned_data);clave=data.pop('clave')
+    hoja_op=request.method=='POST' and request.POST.get('op')=='hoja'
+    hoja=HojaInicioForm(request.POST if hoja_op else None)
+    form=InicioForm(None if hoja_op else (request.POST or None),exp=exp)
+    if hoja_op:
+        if hoja.is_valid():
+            data=dict(hoja.cleaned_data)
             try:
-                s.guardar_preliminar(usuario=request.user,empresa=request.empresa_activa,expediente_id=pk,clave=clave,datos=data)
-            except (ValidationError,IntegrityError,OSError) as exc: _error(prelim,exc)
+                c=s.iniciar_hoja(usuario=request.user,empresa=request.empresa_activa,expediente_id=pk,clave=data.pop('clave'),motivo=data.get('motivo',''))
+            except (ValidationError,IntegrityError,OSError) as exc: _error(hoja,exc)
             else:
-                from django.contrib import messages
-                messages.success(request,'Datos preliminares guardados. No declaran conformidad ni generan un informe aprobado.')
-                return redirect(request.get_full_path())
+                url=reverse('masiscam:calibracion_revision',args=[c.pk])
+                return redirect(url+'?flujo=1' if request.GET.get('flujo') == '1' else url)
     elif request.method=='POST' and form.is_valid():
         data=dict(form.cleaned_data);data['plantilla_id']=data['plantilla_id'].pk
         try:
@@ -123,12 +142,21 @@ def expediente(request,pk):
         else:
             url=reverse('masiscam:calibracion_revision',args=[c.pk])
             return redirect(url+'?flujo=1' if request.GET.get('flujo') == '1' else url)
-    protocolo,faltan=s.protocolo_estado(exp);tiene=exp.calibraciones.exists()
+    protocolo=s.tolerancias_aprobadas(exp)
     rol=s.autorizar(request.user,request.empresa_activa).rol
-    return render(request,'masiscam/calibracion_expediente.html',dict(expediente=exp,form=form,preliminar=prelim,rol=rol,
-        estado_reparacion=s.o.estado(exp),plantillas_disponibles=form.fields['plantilla_id'].queryset.exists(),
-        protocolo_valido=protocolo,requisitos_faltantes=faltan,preliminares=s.preliminares(exp),
-        tiene_calibracion=tiene,puede_iniciar=(rol=='TALLER' and not tiene) or (rol=='ADMIN' and tiene)),status=400 if request.method=='POST' else 200)
+    ultima=exp.calibraciones.select_related('plantilla').order_by('-revision').first()
+    ultima_hoja=bool(ultima and s.es_ficha(ultima.plantilla))
+    finalizado=s.o.estado(exp)=='REPARACION_FINALIZADA'
+    ultimo_informe=exp.informes_finales.order_by('-version').first()
+    puede_abrir=rol=='TALLER' and finalizado and (not ultima or (ultima.enviado_en and ultima.estado in {'FINALIZADA','OBSERVADA','RECHAZADA'}
+        and (not ultimo_informe or ultimo_informe.estado=='OBSERVADO')))
+    return render(request,'masiscam/calibracion_expediente.html',dict(expediente=exp,form=form,hoja_form=hoja,rol=rol,
+        estado_reparacion=s.o.estado(exp),configuracion=s.configuracion_equipo(exp.registro.equipo),
+        protocolo_valido=protocolo,preliminares=s.preliminares(exp),ultima=ultima,ultima_hoja=ultima_hoja,
+        en_curso=bool(ultima and not ultima.enviado_en),puede_abrir=puede_abrir,
+        es_correccion=bool(ultima and ultima.enviado_en),
+        puede_corregir_protocolo=bool(rol=='ADMIN' and protocolo and ultima and not ultima_hoja and ultima.estado in {'OBSERVADA','RECHAZADA'}
+            and form.fields['plantilla_id'].queryset.exists())),status=400 if request.method=='POST' else 200)
 
 
 @require_http_methods(['GET','POST'])
@@ -140,7 +168,9 @@ def revision(request,pk):
     role=s.autorizar(request.user,request.empresa_activa,exp=exp).rol
     op=request.POST.get('op','datos')
     formato_post=op=='formato' and request.method=='POST'
-    forms=dict(formato=FormatoCalibracionForm(request.POST if formato_post else None,request.FILES if formato_post else None,calibracion=c),
+    ficha=s.es_ficha(c.plantilla)
+    FormaHoja=HojaCalibracionForm if ficha else FormatoCalibracionForm
+    forms=dict(formato=FormaHoja(request.POST if formato_post else None,request.FILES if formato_post else None,calibracion=c),
         datos=DatosForm(request.POST if op=='datos' and request.method=='POST' else None,calibracion=c),
         medir=MedicionForm(request.POST if op=='medir' and request.method=='POST' else None,calibracion=c),
         evidencia=EvidenciaForm(request.POST if op=='evidencia' and request.method=='POST' else None,request.FILES or None,initial={'version':c.version_edicion}),
@@ -156,25 +186,26 @@ def revision(request,pk):
                 from django.core.files.uploadedfile import UploadedFile
                 params={code:data.pop(name) for name,code in form.parametros}
                 puntos={code:data.pop(name) for name,code in form.puntos}
+                if ficha: params['_unidades']=dict(longitud=data.pop('unidad_longitud'),presion=data.pop('unidad_presion'))
                 clave=data.pop('clave');version=data.pop('version')
+                generar=request.POST.get('accion') in {'informe','generar'}
                 adjunto=dict(clase=data.pop('evidencia_clase') or 'FOTO',leyenda=data.pop('evidencia_leyenda'),archivo=data.pop('evidencia_archivo'))
                 s.guardar_formato(**common,clave=clave,version=version,datos=dict(**data,parametros=params),mediciones=puntos,adjunto=adjunto)
-                if request.POST.get('accion')=='informe':   # guardar + enviar a la revisión independiente + reservar el informe
+                if generar:   # hoja de TALLER: guardar + finalizar + PDF. Protocolo heredado: guardar + enviar a la revisión independiente + informe
                     try:
                         c.refresh_from_db()
                         if not c.enviado_en:
                             c=s.enviar(**common,version=c.version_edicion,clave=uuid.uuid5(clave,'enviar'))
                         em=s.reservar_informe(**common,clave=uuid.uuid5(clave,'informe'))
-                        from .calibracion_tasks import generar_informe_calibracion
-                        try: generar_informe_calibracion.apply_async(args=[em.pk],retry=False)
-                        except Exception:
-                            from django.contrib import messages
-                            messages.warning(request,'Reserva conservada. Cola no disponible; puede reintentar la misma emisión.')
+                        _emitir(request,c,em)
                     except (ValidationError,IntegrityError,OSError,ObjectDoesNotExist) as exc:
                         # Lo escrito ya quedó guardado: se muestra la hoja actualizada y el motivo por el que no se generó el informe.
                         c.refresh_from_db()
-                        form=forms['formato']=FormatoCalibracionForm(None,calibracion=c);form.cleaned_data={};_error(form,exc)
+                        form=forms['formato']=FormaHoja(None,calibracion=c);form.cleaned_data={};_error(form,exc)
                         raise _InformeNoGenerado from None
+                elif ficha:
+                    from django.contrib import messages
+                    messages.success(request,'Avance guardado. Completa los campos obligatorios y genera la hoja cuando esté lista.')
             elif op=='datos':
                 params={code:data.pop(name) for name,code in form.parametros}
                 s.guardar(**common,clave=data.pop('clave'),version=data.pop('version'),datos=dict(**data,parametros=params))
@@ -186,16 +217,12 @@ def revision(request,pk):
                 s.decidir(**common,evaluaciones=evaluations,**data)
             elif op=='informe':
                 em=s.reservar_informe(**common,**data)
-                from .calibracion_tasks import generar_informe_calibracion
-                try: generar_informe_calibracion.apply_async(args=[em.pk],retry=False)
-                except Exception:
-                    from django.contrib import messages
-                    messages.warning(request,'Reserva conservada. Cola no disponible; puede reintentar la misma emisión.')
+                _emitir(request,c,em)
         except _InformeNoGenerado: pass
         except (ValidationError,IntegrityError,OSError,ObjectDoesNotExist) as exc: _error(form,exc)
         else:
             if request.GET.get('flujo') == '1':
-                if op in {'enviar','decision'} or op=='formato' and request.POST.get('accion')=='informe':
+                if op in {'enviar','decision'} or op=='formato' and request.POST.get('accion') in {'informe','generar'}:
                     return redirect('masiscam:flujo_detalle',pk=exp.pk)
                 return redirect(reverse('masiscam:calibracion_revision',args=[pk])+'?flujo=1')
             if role == 'TALLER' and op == 'enviar':
@@ -207,9 +234,16 @@ def revision(request,pk):
         s._dependencias(c)
     except (ValidationError,PermissionDenied,OSError):
         operativa=False
-    return render(request,'masiscam/calibracion_revision.html',dict(calibracion=c,expediente=exp,rol=role,forms=forms,
-        filas=snap['mediciones'],vigente=s.vigente(c),operativa=operativa,
-        editable=operativa and role in s.t.OPERADORES and c.tecnico_id==request.user.pk and not c.enviado_en),status=400 if request.method=='POST' else 200)
+    vigente=s.vigente(c)
+    ultimo_informe=exp.informes_finales.order_by('-version').first()
+    editable=operativa and role in s.t.OPERADORES and c.tecnico_id==request.user.pk and not c.enviado_en
+    return render(request,'masiscam/calibracion_hoja.html' if ficha else 'masiscam/calibracion_revision.html',dict(calibracion=c,expediente=exp,rol=role,forms=forms,
+        filas=snap['mediciones'],vigente=vigente,operativa=operativa,editable=editable,ficha=ficha,hoja=snap if ficha else None,
+        configuracion=s.configuracion_equipo(exp.registro.equipo),equipo=exp.registro.equipo,
+        emision=c.emisiones.order_by('-version').first(),informe_final=ultimo_informe,
+        puede_corregir=bool(ficha and role=='TALLER' and c.tecnico_id==request.user.pk and c.estado=='FINALIZADA' and vigente
+            and (not ultimo_informe or ultimo_informe.estado=='OBSERVADO')),
+        hoja_form=HojaInicioForm()),status=400 if request.method=='POST' else 200)
 
 
 @require_GET

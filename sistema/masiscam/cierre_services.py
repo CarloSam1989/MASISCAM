@@ -48,7 +48,11 @@ def dependencias(exp):
     if not cal:
         raise ValidationError('Calibración/protocolo aplicable pendiente; no hay exención industrial aprobada.')
     c._dependencias(cal)
-    if cal.estado!='APROBADA' or not hasattr(cal,'decision') or cal.decision.decision!='APROBADA':
+    if cal.estado=='FINALIZADA' and c.es_ficha(cal.plantilla):
+        # Hoja elaborada y generada por TALLER: no requiere aprobación de ADMINISTRADOR, pero su PDF (tercer documento) debe existir.
+        if not c.pdf_generado(cal):
+            raise ValidationError('Genera el PDF de la hoja de calibración antes del informe final.')
+    elif cal.estado!='APROBADA' or not hasattr(cal,'decision') or cal.decision.decision!='APROBADA':
         raise ValidationError('Calibración vigente sin aprobación técnica independiente.')
     if cal.mediciones.filter(valor__isnull=False).count()!=16:
         raise ValidationError('Faltan mediciones verificables.')
@@ -89,7 +93,8 @@ def snapshot(exp):
         add(e.documento,'Calibración',e.leyenda,e.clase=='FOTO')
     annexes=[]
     confirmation=ConfirmacionRecepcion.objects.filter(recepcion__expediente=exp).first()
-    reports=[('Informe inicial',o.informe_propuesta(auth.propuesta).documento),('Protocolo',cal.plantilla.documento)]
+    reports=[('Informe inicial',o.informe_propuesta(auth.propuesta).documento),
+        ('Ficha técnica de calibración' if c.es_ficha(cal.plantilla) else 'Protocolo',cal.plantilla.documento)]
     if confirmation:
         reports.insert(0,('Guía de ingreso',confirmation.guia.documento))
     for em in EmisionCalibracion.objects.filter(calibracion=cal,estado='GENERADA').select_related('documento').order_by('version'):
@@ -111,7 +116,7 @@ def snapshot(exp):
         repuestos=[dict(id=r.pk,pieza=r.pieza_id,descripcion=r.descripcion,numero_parte=r.numero_parte,cantidad=str(r.cantidad),
             unidad=r.unidad,fecha=r.fecha.isoformat(),procedencia=r.procedencia,guia=r.guia,discrepancia=r.discrepancia) for r in RecepcionRepuesto.objects.filter(expediente=exp).order_by('pk')],
         reparaciones=activities,calibracion=c.snapshot(cal),evidencias=evidence,anexos=annexes,
-        fecha_finalizacion=cal.decision.creado_en.isoformat(),
+        fecha_finalizacion=(cal.decision.creado_en if hasattr(cal,'decision') else cal.enviado_en).isoformat(),
         aviso='Informe técnico privado. No sustituye autorizaciones comerciales ni acredita aceptación del cliente. No contiene firma certificada.')
 
     from .flujo_services import snapshot_final

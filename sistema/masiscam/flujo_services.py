@@ -503,8 +503,9 @@ def generar_final_automatico(calibracion_id, propagar=False, corregir=False):
                     clave=key,nueva_version=nueva,motivo='Fuentes aprobadas actualizadas tras revisión de calibración' if nueva else '')
             cierre.generar(em.pk)
             if not Auditoria.objects.filter(expediente=exp,accion='FINAL_GENERACION_AUTOMATICA',detalle__informe=em.pk).exists():
-                evento(exp,cal.decision.responsable,'FINAL_GENERACION_AUTOMATICA',informe=em.pk,
-                    calibracion=cal.pk,aprobacion=cal.decision.pk,responsable_datos=cal.tecnico_id,
+                decision=getattr(cal,'decision',None)
+                evento(exp,decision.responsable if decision else cal.tecnico,'FINAL_GENERACION_AUTOMATICA',informe=em.pk,
+                    calibracion=cal.pk,aprobacion=decision.pk if decision else None,responsable_datos=cal.tecnico_id,
                     automatica=True)
             return em
     except Exception as error:
@@ -594,28 +595,30 @@ def resumen(exp, usuario):
                         if estado=='OBSERVADO': mensaje='ADMINISTRADOR observó el mantenimiento. Corrígelo y finalízalo de nuevo.'
                         accion=action('Registrar mantenimiento',url=url_mant)
                 elif not settings.MASISCAM_CALIBRACION_LOCAL:
-                    mensaje='El responsable del sistema debe habilitar la calibración. Se mantiene la exigencia de un protocolo aprobado y revisión independiente.'
+                    mensaje='El responsable del sistema debe habilitar la calibración.'
                     bloqueo=True
                 elif not cal:
-                    mensaje='Mantenimiento finalizado. TALLER debe registrar la calibración.'
+                    mensaje='Mantenimiento finalizado. TALLER debe registrar la hoja de calibración; no requiere aprobación de ADMINISTRADOR.'
                     if role=='TALLER':
-                        mensaje='Mantenimiento finalizado. Registra la calibración.'
-                        faltan=c.protocolo_estado(exp)[1]
-                        if faltan: mensaje='Mantenimiento finalizado. Puedes guardar datos preliminares de la calibración. Falta: '+' '.join(faltan)
+                        mensaje='Mantenimiento finalizado. Registra la hoja de calibración: la generas tú, sin aprobación de ADMINISTRADOR.'
                         accion=action('Registrar calibración',url=reverse('masiscam:calibracion_expediente',args=[exp.pk])+'?flujo=1')
-                elif cal.estado!='APROBADA':
+                elif cal.estado not in {'APROBADA','FINALIZADA'} or (cal.estado=='FINALIZADA' and not c.pdf_generado(cal)):
                     if cal.estado=='PENDIENTE_REVISION':
-                        mensaje='Calibración enviada. ADMINISTRADOR debe hacer la revisión técnica independiente.'
+                        mensaje='Calibración con protocolo enviada. ADMINISTRADOR debe hacer su revisión técnica independiente.'
                         if role=='ADMIN': accion=action('Revisar calibración',url=reverse('masiscam:calibracion_revision',args=[cal.pk])+'?flujo=1')
                     elif cal.estado in {'OBSERVADA','RECHAZADA'}:
-                        mensaje='ADMINISTRADOR '+('observó' if cal.estado=='OBSERVADA' else 'rechazó')+' la calibración. Debe habilitar su corrección con el motivo.'
-                        if role=='ADMIN': accion=action('Habilitar corrección',url=reverse('masiscam:calibracion_expediente',args=[exp.pk])+'?flujo=1')
+                        mensaje='La calibración fue '+('observada' if cal.estado=='OBSERVADA' else 'rechazada')+'. TALLER abre una nueva revisión de la hoja.'
+                        if role=='TALLER': accion=action('Registrar calibración',url=reverse('masiscam:calibracion_expediente',args=[exp.pk])+'?flujo=1')
+                    elif cal.estado=='FINALIZADA':
+                        mensaje='La hoja de calibración está finalizada; falta generar su PDF (tercer documento del expediente).'
+                        if role=='TALLER': accion=action('Generar hoja de calibración',url=reverse('masiscam:calibracion_revision',args=[cal.pk])+'?flujo=1')
                     else:
-                        mensaje='Completa la hoja de calibración y envíala a la revisión independiente de ADMINISTRADOR.'
+                        mensaje='Completa la hoja de calibración y genera el PDF. No requiere aprobación de ADMINISTRADOR.'
                         if role=='TALLER': accion=action('Registrar calibración',url=reverse('masiscam:calibracion_revision',args=[cal.pk])+'?flujo=1')
                 else:
                     paso=5; pasos[3]['estado']='Listo'
-                    mensaje='El informe PDF se genera con las fuentes aprobadas y conserva su revisión final independiente.'
+                    mensaje=('La hoja de calibración está generada; el informe final la incorpora como tercer documento y se genera automáticamente.'
+                        if cal.estado=='FINALIZADA' else 'El informe PDF se genera con las fuentes aprobadas y conserva su revisión final independiente.')
                     if not settings.MASISCAM_CIERRE_LOCAL:
                         mensaje='El responsable del sistema debe habilitar la generación del informe final. Las fuentes y aprobaciones se conservan.'
                         bloqueo=True
@@ -669,7 +672,9 @@ def secuencia_taller(exp,prop,cal,informe):
     mant=o.estado(exp)
     hay_actividad=ActividadReparacion.objects.filter(expediente=exp).exists()
     mant_hecho=mant=='REPARACION_FINALIZADA'
-    cal_hecha=bool(cal and cal.estado=='APROBADA')
+    from . import calibracion_services as c
+    cal_hecha=bool(cal and (cal.estado=='APROBADA' or (cal.estado=='FINALIZADA' and c.pdf_generado(cal))))
+    cal_sin_pdf=bool(cal and cal.estado=='FINALIZADA' and not cal_hecha)
     cal_enviada=bool(cal and cal.enviado_en and cal.estado=='PENDIENTE_REVISION')
     cal_obs=bool(cal and cal.estado in {'OBSERVADA','RECHAZADA'})
     informe_hecho=bool(informe and informe.documento_id and informe.estado!='OBSERVADO')
@@ -680,24 +685,23 @@ def secuencia_taller(exp,prop,cal,informe):
     etapas=[dict(texto='Registrar mantenimiento',url=acceso_mant,
         estado='Finalizado' if mant_hecho else ('En proceso' if hay_actividad else 'Disponible'),
         detalle='Autorizado por ADMINISTRADOR; no requiere otra aprobación.' if mant_hecho else '')]
-    if cal_hecha: estado,detalle='Finalizado','Aprobada por la revisión técnica independiente.'
-    elif cal_enviada: estado,detalle='En proceso','Enviada: espera la revisión técnica independiente de ADMINISTRADOR.'
-    elif cal_obs: estado,detalle='En proceso','Observada: ADMINISTRADOR debe habilitar su corrección.'
-    elif cal: estado,detalle='En proceso','Completa la hoja y envíala a revisión.'
-    elif mant_hecho:
-        from . import calibracion_services as c
-        estado,detalle='Disponible',('Sin protocolo aprobado: puedes guardar datos preliminares.' if c.protocolo_estado(exp)[1] else '')
+    if cal_hecha: estado,detalle='Finalizado',('Hoja generada por TALLER: tercer documento del expediente.' if cal.estado=='FINALIZADA' else 'Aprobada por la revisión técnica independiente.')
+    elif cal_sin_pdf: estado,detalle='En proceso','Hoja finalizada: falta generar su PDF.'
+    elif cal_enviada: estado,detalle='En proceso','Calibración con protocolo enviada: espera la revisión técnica independiente de ADMINISTRADOR.'
+    elif cal_obs: estado,detalle='En proceso','Observada: abre una nueva revisión de la hoja.'
+    elif cal: estado,detalle='En proceso','Completa la hoja y genera el PDF; no requiere aprobación de ADMINISTRADOR.'
+    elif mant_hecho: estado,detalle='Disponible','La generas tú: no requiere aprobación de ADMINISTRADOR.'
     else: estado,detalle='No disponible','Se habilita al finalizar el mantenimiento.'
     etapas.append(dict(texto='Registrar calibración',url=acceso_cal,estado=estado,detalle=detalle,
-        espera_admin=cal_enviada or cal_obs))
+        espera_admin=cal_enviada))
     if informe_hecho:
         revision={'PENDIENTE_REVISION':'Generado: espera la revisión de ADMINISTRADOR.','APROBADO':'Generado y aprobado: espera el cierre administrativo.',
             'OBSERVADO':'Observado por ADMINISTRADOR.','FINALIZADO':'Cerrado.'}.get(informe.estado,'')
         etapas.append(dict(texto='Generar informe final',url=None,estado='Finalizado',detalle=revision,espera_admin=informe.estado in {'PENDIENTE_REVISION','APROBADO'}))
     elif informe and informe.estado=='OBSERVADO': etapas.append(dict(texto='Generar informe final',url=None,estado='En proceso',detalle='Observado por ADMINISTRADOR: prepara una nueva versión.'))
     elif informe: etapas.append(dict(texto='Generar informe final',url=None,estado='En proceso',detalle='Generación en curso; puedes reintentarla.'))
-    elif cal_hecha: etapas.append(dict(texto='Generar informe final',url=None,estado='Disponible',detalle='Se genera con diagnóstico, trabajos, fotografías y calibración.'))
-    else: etapas.append(dict(texto='Generar informe final',url=None,estado='No disponible',detalle='Se habilita con la calibración aprobada.'))
+    elif cal_hecha: etapas.append(dict(texto='Generar informe final',url=None,estado='Disponible',detalle='Se genera con diagnóstico, trabajos, fotografías y la hoja de calibración.'))
+    else: etapas.append(dict(texto='Generar informe final',url=None,estado='No disponible',detalle='Se habilita cuando la hoja de calibración está generada.'))
     clases={'Finalizado':'ok','En proceso':'proceso','Disponible':'disponible','No disponible':'pendiente'}
     contactos=None
     for n,e in enumerate(etapas,1):

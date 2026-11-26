@@ -1,12 +1,14 @@
 """Local calibration. No bypass of commercial or industrial approvals."""
 import copy
+import hashlib
+import json
 import re
 import uuid
 from decimal import Decimal, InvalidOperation
 from django.conf import settings
 from django.core.exceptions import PermissionDenied,ValidationError
 from django.core.files.base import ContentFile
-from django.db import transaction
+from django.db import IntegrityError,transaction
 from django.db.models import Max,Q,OuterRef,Subquery
 from django.utils import timezone
 from . import tecnica_services as t
@@ -168,6 +170,8 @@ def crear_plantilla(*,usuario,empresa,clave,datos,archivo):
     autorizar(usuario,empresa,{'ADMIN'})
     t._liblock(usuario,empresa)
     o._datos(datos,('codigo','titulo','tipo_equipo','definicion','proyecto_id','sustituye_id'))
+    if str(datos.get('codigo','')).strip().upper().startswith(PREFIJO_FICHA):
+        raise ValidationError('El prefijo FICHA- está reservado a las fichas de calibración de TALLER.')
     payload=dict(datos=datos,hash=_hash(archivo) if archivo else None)
     old=t._libretry(empresa,clave,'CAL_PLANTILLA',payload)
     if old:
@@ -248,7 +252,7 @@ def _dependencias(c):
     auth,rep=_reparacion(c.expediente)
     if auth.pk!=c.autorizacion_id or rep!=c.reparacion_snapshot or not vigente(c):
         raise ValidationError('La fuente comercial, reparación o calibración fue sustituida; requiere revisión nueva.')
-    if not plantilla_validada(c.plantilla,c.expediente.registro.equipo):
+    if not es_ficha(c.plantilla) and not plantilla_validada(c.plantilla,c.expediente.registro.equipo):
         raise ValidationError('Plantilla o aplicabilidad no validadas; operación bloqueada.')
     t.documento_valido(c.plantilla.documento,c.expediente.empresa)
 
@@ -258,33 +262,247 @@ def preliminares(exp):
     return list(Auditoria.objects.filter(expediente=exp,accion='CAL_PRELIMINAR').select_related('usuario').order_by('-pk'))
 
 
-@transaction.atomic
-def guardar_preliminar(*,usuario,empresa,expediente_id,clave,datos):
-    """TALLER conserva datos preliminares de la calibración mientras falta un protocolo aplicable y aprobado.
+PREFIJO_FICHA='FICHA-'
+FUENTE_HOJA='Hoja física de calibración (formato MASISCAM)'
+UNIDADES_HOJA={'longitud':('mm','µm','in','mil'),'presion':('psi','bar','kPa','MPa')}
+GRUPOS_HOJA={'longitud':'Unidad de longitud (shims, backlash, referencias y mediciones)','presion':'Unidad de presión'}
+# (código, nombre en la hoja física, grupo de unidad, no admite negativos)
+PARAMETROS_HOJA=(
+    ('SHIM-VS','Shim vertical superior','longitud',True),
+    ('SHIM-VI','Shim vertical inferior','longitud',True),
+    ('SHIM-H','Shim horizontal','longitud',True),
+    ('BACKLASH','Backlash','longitud',True),
+    ('TOLERANCIA','Tolerancia','longitud',True),
+    ('CAL-TOTAL','Calibración total','longitud',True),
+    ('MINIMO','Mínimo','longitud',False),
+    ('MAXIMO','Máximo','longitud',False),
+    ('PRES-V','Presión eje vertical','presion',True),
+    ('PRES-H','Presión eje horizontal','presion',True),
+)
+CAMPOS_REFERENCIA=('TOLERANCIA','MINIMO','MAXIMO')
 
-    No crea una calibración, no declara conformidad, no genera informe y no inventa puntos ni parámetros: solo texto libre
-    con trazabilidad. La hoja formal se inicia después con el protocolo aprobado."""
+
+def es_ficha(p):
+    """La hoja de calibración de TALLER usa una ficha técnica por configuración (código FICHA-…), no un protocolo de ADMINISTRADOR."""
+    return bool(p) and str(p.codigo).startswith(PREFIJO_FICHA)
+
+
+def configuracion_equipo(equipo):
+    return {k:' '.join(str(getattr(equipo,k,'') or '').split()) for k in ('marca','modelo','ratio','rotacion')}
+
+
+def codigo_ficha(empresa,equipo):
+    conf=configuracion_equipo(equipo)
+    huella=hashlib.sha256(json.dumps([empresa.pk,equipo.tipo_producto]+[conf[k].casefold() for k in ('marca','modelo','ratio','rotacion')],
+        ensure_ascii=False).encode()).hexdigest()
+    return PREFIJO_FICHA+huella[:16].upper()
+
+
+def definicion_ficha(conf):
+    return dict(formato='hoja-calibracion-v1',configuracion=conf,
+        parametros=[dict(codigo=c,nombre=n,grupo=g,unidad='',fuente=FUENTE_HOJA,obligatorio=True) for c,n,g,_ in PARAMETROS_HOJA],
+        mediciones=[dict(codigo=f'MED-{n:02}',nombre=f'Medición {n}',grupo='longitud',unidad='',fuente=FUENTE_HOJA) for n in range(1,17)])
+
+
+def datos_equipo(equipo):
+    return {k:str(getattr(equipo,k,'') or '') for k in ('nombre','marca','modelo','numero_serie','ratio','potencia_hp','rpm','rotacion','service_factor')}
+
+
+def ficha_de(exp,usuario):
+    """Ficha técnica de calibración de la configuración del reductor (marca, modelo, ratio y rotación): una por empresa y configuración."""
+    equipo=exp.registro.equipo
+    codigo=codigo_ficha(exp.empresa,equipo)
+    p=PlantillaCalibracion.objects.filter(empresa=exp.empresa,codigo=codigo).order_by('-version').first()
+    if p:
+        t.documento_valido(p.documento,exp.empresa)
+        return p
+    from .calibracion_pdf import construir_ficha
+    conf=configuracion_equipo(equipo);definicion=definicion_ficha(conf)
+    titulo='Ficha de calibración · '+' · '.join(f'{k} {conf[k] or "sin dato"}' for k in ('marca','modelo','ratio','rotacion'))
+    archivo=ContentFile(construir_ficha(conf,definicion,titulo),name=f'{codigo}.pdf');archivo.content_type='application/pdf'
+    doc=t.guardar_archivo(usuario=usuario,empresa=exp.empresa,proyecto=equipo.proyecto,equipo=equipo,archivo=archivo,categoria='MANUALES')
+    try:
+        with transaction.atomic():
+            p=t._save(PlantillaCalibracion(empresa=exp.empresa,codigo=codigo,version=1,tipo_equipo=equipo.tipo_producto,titulo=titulo[:200],
+                definicion=definicion,documento=doc,autor=usuario))
+    except (IntegrityError,ValidationError):
+        p=PlantillaCalibracion.objects.filter(empresa=exp.empresa,codigo=codigo).order_by('-version').first()
+        if not p: raise
+    if settings.GOOGLE_DRIVE_ENABLED:
+        transaction.on_commit(lambda:t._encolar_documento(doc.pk))
+    return p
+
+
+def valores_previos(c):
+    """Unidades y referencias (tolerancia, mínimo, máximo) de la última hoja finalizada de esta configuración: solo para precargar el formulario."""
+    previa=Calibracion.objects.filter(plantilla=c.plantilla,estado='FINALIZADA').exclude(pk=c.pk).order_by('-enviado_en').first()
+    if not previa: return {}
+    p=previa.parametros or {}
+    return dict(unidades=dict(p.get('_unidades',{})),origen=previa.pk,**{k:p.get(k) for k in CAMPOS_REFERENCIA})
+
+
+def tolerancias_aprobadas(exp):
+    """Protocolo con tolerancias aprobadas y aplicable al equipo, si existe (ADMINISTRADOR lo aprueba por separado; no condiciona la hoja)."""
+    return protocolo_estado(exp)[0]
+
+
+def _tolerancias_hoja(c):
+    p=tolerancias_aprobadas(c.expediente)
+    if not p: return None
+    return dict(protocolo=p.codigo,version=p.version,huella=huella_plantilla(p),
+        aprobacion=(aprobacion_plantilla(p) or {}).get('aprobacion_propietario',''),
+        filas=[dict(minimo=r.get('minimo'),maximo=r.get('maximo'),tolerancia=r.get('tolerancia',''),unidad=r.get('unidad','')) for r in p.definicion.get('mediciones',[])])
+
+
+def _evaluar(valor,fila,unidad):
+    """Verificación aritmética contra un rango aprobado. Sin criterio válido no se evalúa ni se afirma conformidad."""
+    if fila is None: return 'Sin tolerancia aprobada: no se evalúa'
+    if not unidad or str(fila.get('unidad','')).strip().casefold()!=unidad.strip().casefold(): return 'Unidad distinta a la aprobada: no se evalúa'
+    lo,hi=fila.get('minimo'),fila.get('maximo')
+    if lo in (None,'') or hi in (None,''): return 'Sin límites numéricos aprobados: no se evalúa'
+    try: n=Decimal(str(valor));return 'Dentro del rango aprobado' if Decimal(str(lo))<=n<=Decimal(str(hi)) else 'Fuera del rango aprobado'
+    except (InvalidOperation,ValueError): return 'Sin límites numéricos aprobados: no se evalúa'
+
+
+def _decimal_texto(value):
+    if value is None: return None
+    raw=format(value,'f')
+    return raw.rstrip('0').rstrip('.') if '.' in raw else raw
+
+
+def _validar_valores_hoja(parametros):
+    """Rangos de la hoja física: magnitudes sin signo negativo (shims, backlash, tolerancia, calibración total, presiones) y mínimo ≤ máximo."""
+    valores={}
+    for codigo,nombre,grupo,no_negativo in PARAMETROS_HOJA:
+        v=parametros.get(codigo)
+        if v in (None,''): continue
+        n=decimal_seguro(v)
+        if no_negativo and n<0: raise ValidationError(f'{nombre}: no puede ser negativo.')
+        valores[codigo]=n
+    if 'MINIMO' in valores and 'MAXIMO' in valores and valores['MINIMO']>valores['MAXIMO']:
+        raise ValidationError('El mínimo no puede ser mayor que el máximo.')
+
+
+def _parametros_hoja(v):
+    permitidos={c for c,*_ in PARAMETROS_HOJA}
+    if set(v)-permitidos-{'_unidades'}: raise ValidationError('Parámetros fuera de la hoja de calibración.')
+    salida={k:(str(decimal_seguro(x,True)) if x not in (None,'') else None) for k,x in v.items() if k!='_unidades'}
+    unidades=v.get('_unidades') or {}
+    if not isinstance(unidades,dict) or set(unidades)-set(UNIDADES_HOJA) or any(u not in (None,'') and u not in UNIDADES_HOJA[g] for g,u in unidades.items()):
+        raise ValidationError('Unidad no admitida: elige una de la lista.')
+    salida['_unidades']={g:u for g,u in unidades.items() if u}
+    _validar_valores_hoja(salida)
+    return salida
+
+
+def pdf_generado(c):
+    """El PDF de la calibración (tercer documento del expediente) ya existe."""
+    return c.emisiones.filter(estado='GENERADA').exists()
+
+
+def faltantes_hoja(c):
+    """Campos obligatorios de la hoja de calibración que aún no están completos (texto para el técnico)."""
+    p=c.parametros or {};unidades=p.get('_unidades',{});faltan=[]
+    if not c.fecha: faltan.append('Fecha')
+    faltan += [nombre for codigo,nombre,_,_ in PARAMETROS_HOJA if p.get(codigo) in (None,'')]
+    faltan += [etiqueta for grupo,etiqueta in GRUPOS_HOJA.items() if not unidades.get(grupo)]
+    medidas={m.punto:m.valor for m in c.mediciones.all()}
+    sin=[str(n) for n in range(1,17) if medidas.get(f'MED-{n:02}') is None]
+    if sin: faltan.append('Mediciones '+', '.join(sin))
+    return faltan
+
+
+def _finalizar_hoja(c,exp,usuario,clave,payload):
+    """TALLER genera la hoja: queda FINALIZADA sin pasar por ADMINISTRADOR. Se congelan los datos del equipo y las tolerancias aprobadas usadas."""
+    if c.sustituye_id and not c.motivo_revision.strip(): raise ValidationError('La revisión de la hoja necesita su motivo.')
+    faltan=faltantes_hoja(c)
+    if faltan: raise ValidationError('Para generar la hoja faltan: '+'; '.join(faltan)+'.')
+    _validar_valores_hoja(c.parametros)
+    for e in c.evidencias.all():
+        t.documento_valido(e.documento,exp.empresa)
+    parametros=dict(c.parametros)
+    parametros['_equipo']=datos_equipo(exp.registro.equipo)
+    parametros['_tolerancias']=_tolerancias_hoja(c)
+    c.parametros=parametros;c.enviado_en=timezone.now();c.estado='FINALIZADA';c.version_edicion+=1
+    c.save()
+    t._event(exp,usuario,clave,'CAL_FINALIZADA',payload,c.pk)
+    return c
+
+
+@transaction.atomic
+def iniciar_hoja(*,usuario,empresa,expediente_id,clave,motivo=''):
+    """TALLER abre la hoja de calibración sobre la ficha técnica de la configuración del equipo. No requiere protocolo ni aprobación de ADMINISTRADOR."""
     exp=expediente(usuario,empresa,expediente_id,{'TALLER'},True)
-    clean={}
-    o._datos(datos,('fecha','instrumentos','observaciones','resultados'))
-    for k,v in datos.items():
-        if k=='fecha':
-            if v is not None: o._fecha(v);v=v.isoformat()
-        elif not isinstance(v,str) or len(v)>20000:
-            raise ValidationError('Texto de calibración inválido o demasiado extenso.')
-        clean[k]=v
-    payload=dict(datos=clean)
-    old=t._retry(exp,clave,'CAL_PRELIMINAR',payload)
-    if old: return old
-    auth,_=_reparacion(exp)
-    if protocolo_estado(exp)[0]:
-        raise ValidationError('Ya existe un protocolo aprobado aplicable: inicie la hoja de calibración.')
-    if not any(v for v in clean.values()):
-        raise ValidationError('Escriba al menos un dato preliminar.')
-    version=Auditoria.objects.filter(expediente=exp,accion='CAL_PRELIMINAR').count()+1
-    evento(exp,usuario,'CAL_PRELIMINAR',clave=str(clave),huella=t._digest(payload),resultado=version,version=version,datos=clean,
-        autorizacion=auth.pk,aviso='Preliminar: sin protocolo aprobado; no declara conformidad ni genera informe aprobado.')
-    return version
+    payload=dict(hoja=True,motivo=motivo)
+    old=t._retry(exp,clave,'CAL_INICIADA',payload)
+    if old:
+        return Calibracion.objects.get(pk=old)
+    auth,rep=_reparacion(exp)
+    asignacion=exp.asignaciones_tecnicas.filter(fin__isnull=True).first()
+    if not asignacion:
+        raise ValidationError('Asigne un técnico principal activo.')
+    t.autorizar_tecnica(asignacion.tecnico,empresa,{'TALLER'},exp)
+    if asignacion.tecnico_id!=usuario.pk:
+        raise PermissionDenied('Solo el técnico principal asignado registra la calibración.')
+    anterior=Calibracion.objects.filter(expediente=exp).order_by('-revision').first()
+    if anterior:
+        if not anterior.enviado_en:
+            if es_ficha(anterior.plantilla): return anterior   # hoja en curso: se continúa, no se duplica
+            raise ValidationError('Hay una calibración con protocolo en curso: se continúa en su propia hoja.')
+        if anterior.estado not in {'FINALIZADA','OBSERVADA','RECHAZADA'}:
+            raise PermissionDenied('La calibración ya tiene su propia revisión; no se reabre desde TALLER.')
+        if not motivo.strip():
+            raise ValidationError('Indica el motivo de la nueva revisión de la hoja.')
+        ultimo=exp.informes_finales.order_by('-version').first()
+        if ultimo and ultimo.estado!='OBSERVADO':
+            raise ValidationError('El informe final ya fue generado: ADMINISTRADOR debe observarlo para corregir la hoja.')
+    ficha=ficha_de(exp,usuario)
+    c=t._save(Calibracion(expediente=exp,diagnostico=auth.propuesta.diagnostico,autorizacion=auth,plantilla=ficha,tecnico=asignacion.tecnico,
+        reparacion_snapshot=rep,revision=anterior.revision+1 if anterior else 1,sustituye=anterior,motivo_revision=motivo,clave=clave))
+    t._event(exp,usuario,clave,'CAL_INICIADA',payload,c.pk)
+    return c
+
+
+def _snapshot_hoja(c):
+    d=c.plantilla.definicion
+    ms={m.punto:m for m in c.mediciones.all()}
+    p=c.parametros or {}
+    unidades=dict(p.get('_unidades',{}))
+    fija=bool(c.enviado_en)
+    equipo=p.get('_equipo') if fija and p.get('_equipo') else datos_equipo(c.expediente.registro.equipo)
+    tol=p.get('_tolerancias') if fija else _tolerancias_hoja(c)
+    filas=(tol or {}).get('filas',[])
+    longitud=unidades.get('longitud','')
+    mediciones=[]
+    for n,r in enumerate(d['mediciones']):
+        m=ms.get(r['codigo']);valor=_decimal_texto(m.valor) if m else None
+        fila=filas[n] if n<len(filas) else None
+        mediciones.append(dict(codigo=r['codigo'],nombre=r['nombre'],unidad=longitud,valor=valor,
+            minimo=fila.get('minimo') if fila else None,maximo=fila.get('maximo') if fila else None,tolerancia=fila.get('tolerancia','') if fila else '',
+            fuente=FUENTE_HOJA,criterio='',observaciones=m.observaciones if m else '',
+            evaluacion=_evaluar(valor,fila,longitud) if valor is not None else 'Pendiente'))
+    parametros=[dict(codigo=r['codigo'],nombre=r['nombre'],grupo=r['grupo'],unidad=unidades.get(r['grupo'],''),fuente=FUENTE_HOJA,
+        valor=_decimal_texto(Decimal(p[r['codigo']])) if p.get(r['codigo']) not in (None,'') else None) for r in d['parametros']]
+    valores={r['codigo']:r['valor'] for r in parametros}
+    advertencias=[]
+    if all(valores.get(k) is not None for k in ('CAL-TOTAL','MINIMO','MAXIMO')):
+        total,minimo,maximo=(Decimal(valores[k]) for k in ('CAL-TOTAL','MINIMO','MAXIMO'))
+        if not minimo<=total<=maximo:
+            advertencias.append('La calibración total registrada está fuera del rango mínimo–máximo que registró TALLER.')
+    if tol:
+        verificacion=dict(estado='TOLERANCIA_APROBADA',protocolo=tol['protocolo'],version=tol['version'],huella=tol['huella'],aprobacion=tol['aprobacion'],
+            texto=f"Las mediciones se compararon con el rango aprobado del protocolo {tol['protocolo']} v{tol['version']}. La comparación es aritmética y no sustituye la valoración técnica.")
+    else:
+        verificacion=dict(estado='SIN_TOLERANCIA_APROBADA',
+            texto='Sin tolerancia aprobada: esta hoja registra mediciones. No se afirma conformidad técnica.')
+    return dict(plantilla='hoja-calibracion-v1',numero=c.expediente.numero,recepcion=c.expediente.recepcion.snapshot,
+        calibracion=c.pk,revision=c.revision,diagnostico=c.diagnostico_id,autorizacion=c.autorizacion_id,reparacion=c.reparacion_snapshot,
+        tipo_equipo=c.plantilla.tipo_equipo,protocolo=c.plantilla.codigo,protocolo_version=c.plantilla.version,protocolo_huella=huella_plantilla(c.plantilla),
+        tecnico=c.tecnico.username,tecnico_nombre=c.tecnico.get_full_name() or c.tecnico.username,fecha=c.fecha.isoformat() if c.fecha else '',
+        instrumentos='',resultados='',observaciones=c.observaciones,estado=c.estado,decision=None,motivo_revision=c.motivo_revision,
+        equipo=equipo,configuracion=d.get('configuracion',{}),unidades=unidades,parametros=parametros,mediciones=mediciones,
+        verificacion=verificacion,advertencias=advertencias,
+        evidencias=[dict(documento=e.documento_id,hash=e.documento.hash_sha256,clase=e.clase,leyenda=e.leyenda) for e in c.evidencias.select_related('documento').order_by('pk')])
 
 
 @transaction.atomic
@@ -351,10 +569,13 @@ def guardar(*,usuario,empresa,calibracion_id,version,clave,datos):
         elif k=='parametros':
             if not isinstance(v,dict):
                 raise ValidationError('Parámetros inválidos.')
-            allowed={r['codigo'] for r in c.plantilla.definicion.get('parametros',[])}
-            if set(v)-allowed:
-                raise ValidationError('Parámetros fuera de la plantilla aplicable.')
-            v={key:(str(decimal_seguro(value,True)) if value not in (None,'') else None) for key,value in v.items()}
+            if es_ficha(c.plantilla):
+                v=_parametros_hoja(v)
+            else:
+                allowed={r['codigo'] for r in c.plantilla.definicion.get('parametros',[])}
+                if set(v)-allowed:
+                    raise ValidationError('Parámetros fuera de la plantilla aplicable.')
+                v={key:(str(decimal_seguro(value,True)) if value not in (None,'') else None) for key,value in v.items()}
         elif k!='fecha' and (not isinstance(v,str) or len(v)>20000):
             raise ValidationError('Texto de calibración inválido o demasiado extenso.')
         setattr(c,k,v)
@@ -448,10 +669,13 @@ def enviar(*,usuario,empresa,calibracion_id,version,clave):
     c=Calibracion.objects.get(pk=calibracion_id)
     exp=expediente(usuario,empresa,c.expediente_id,{'TALLER'},True);c.refresh_from_db()
     payload=dict(calibracion=c.pk,version=version)
-    old=t._retry(exp,clave,'CAL_ENVIADA',payload)
+    ficha=es_ficha(c.plantilla)
+    old=t._retry(exp,clave,'CAL_FINALIZADA' if ficha else 'CAL_ENVIADA',payload)
     if old:
         return Calibracion.objects.get(pk=old)
     _editable(c,usuario,version)
+    if ficha:
+        return _finalizar_hoja(c,exp,usuario,clave,payload)
     if not c.fecha or not c.instrumentos.strip() or not c.resultados.strip():
         raise ValidationError('Complete fecha, identificación de instrumentos y resultados registrados.')
     definitions=c.plantilla.definicion
@@ -490,6 +714,8 @@ def decidir(*,usuario,empresa,calibracion_id,clave,decision,motivo,evaluaciones)
     old=t._retry(exp,clave,'CAL_DECISION',payload)
     if old:
         return DecisionCalibracion.objects.get(pk=old)
+    if es_ficha(c.plantilla):
+        raise ValidationError('La hoja de calibración la genera TALLER y no requiere decisión de ADMINISTRADOR.')
     _dependencias(c)
     if usuario.pk in _autores(c):
         raise PermissionDenied('No puede aprobar ni revisar trabajo propio o derivado, incluso cambiando de rol.')
@@ -519,6 +745,8 @@ def decidir(*,usuario,empresa,calibracion_id,clave,decision,motivo,evaluaciones)
 
 
 def snapshot(c):
+    if es_ficha(c.plantilla):
+        return _snapshot_hoja(c)
     dec=DecisionCalibracion.objects.filter(calibracion=c).first()
     ms={m.punto:m for m in c.mediciones.all()}
     refs=c.plantilla.definicion
@@ -599,4 +827,8 @@ def generar_informe(emision_id):
         evento(exp,em.autor,'CAL_PDF_GENERADO',emision=em.pk,revision=c.revision,version=em.version,hash=em.hash_sha256)
         if settings.GOOGLE_DRIVE_ENABLED:
             transaction.on_commit(lambda:t._encolar_documento(doc.pk))
+        if es_ficha(c.plantilla):
+            # Tercer documento del expediente: al quedar generado se incorpora solo al informe final.
+            from .flujo_services import generar_final_automatico
+            transaction.on_commit(lambda:generar_final_automatico(c.pk))
         return doc.pk

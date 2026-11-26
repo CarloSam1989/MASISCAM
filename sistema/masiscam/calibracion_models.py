@@ -4,7 +4,8 @@ from django.conf import settings
 from django.db import models
 
 P=models.PROTECT
-ESTADOS=[(s,s.replace('_',' ').capitalize()) for s in ('NO_INICIADA','EN_PROCESO','PENDIENTE_REVISION','OBSERVADA','APROBADA','RECHAZADA')]
+# FINALIZADA: hoja elaborada y generada por TALLER sin revisión de ADMINISTRADOR (ficha técnica por configuración).
+ESTADOS=[(s,s.replace('_',' ').capitalize()) for s in ('NO_INICIADA','EN_PROCESO','PENDIENTE_REVISION','OBSERVADA','APROBADA','RECHAZADA','FINALIZADA')]
 
 
 class PlantillaCalibracion(models.Model):
