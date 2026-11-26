@@ -480,13 +480,15 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         rep=snap['reparaciones'][0]
         self.assertIn('Mantenimiento preventivo del reductor',rep['trabajo']); self.assertEqual(rep['resultado'],'Reductor mantenido y probado sin fugas')
         self.assertEqual((rep['aprobacion']['responsable'],rep['usos']),(self.admin.username,[]))
-        self.assertTrue(any(e['seccion']=='Intervención / repuestos' and e['foto'] for e in snap['evidencias']))
+        # La fotografía del mantenimiento va en el informe una sola vez: si es el mismo archivo que una foto ya listada (aquí la del diagnóstico), se conserva esa y se indica el uso.
+        self.assertTrue(any(e['foto'] and e['origen']=='ACTUAL' and 'Mantenimiento' in [e['seccion'],*e['tambien_en']] for e in snap['evidencias']))
+        self.assertEqual(len({e['hash'] for e in snap['evidencias']}),len(snap['evidencias']))
         self.assertEqual((snap['calibracion']['estado'],snap['calibracion']['decision']),('FINALIZADA',None))   # hoja de TALLER, sin decisión de ADMINISTRADOR
         self.assertEqual(len(snap['calibracion']['mediciones']),16)
         self.assertTrue(snap['autorizacion']['responsable']); self.assertEqual(snap['tecnico']['piezas'][0]['cantidad'],str(self.pieza.cantidad))
         lector=PdfReader(BytesIO(em.documento.archivo.open('rb').read())); texto='\n'.join(p.extract_text() for p in lector.pages)
-        for palabra in ('INFORME FINAL','Diagnóstico',self.pieza.descripcion[:15],'Reparación y montaje','Mantenimiento preventivo del reductor','Reductor mantenido y probado sin fugas',
-                'Hoja de calibración (elaborada por TALLER)','Sin recepciones de repuestos registradas','no condicionó el mantenimiento'): self.assertIn(palabra,texto,palabra)
+        for palabra in ('INFORME FINAL','Diagnóstico',self.pieza.descripcion[:15],'MANTENIMIENTO REALIZADO','Mantenimiento preventivo del reductor','Reductor mantenido y probado sin fugas',
+                'Hoja de calibración (elaborada por TALLER)','no se registran recepciones de repuestos en esta intervención','no condicionó el mantenimiento'): self.assertIn(palabra,texto,palabra)
         self.assertGreaterEqual(sum(len(p.images) for p in lector.pages),1)   # la fotografía del mantenimiento va incrustada
         self.assertEqual(InformeFinal.objects.filter(expediente=self.exp).count(),1)
 
@@ -601,14 +603,14 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         descarga=como(self.taller).get(reverse('masiscam:calibracion_documento',args=[self.exp.pk,emision.documento_id]))
         self.assertEqual((descarga.status_code,descarga['Content-Type']),(200,'application/pdf'))
         lector=PdfReader(BytesIO(b''.join(descarga.streaming_content))); texto='\n'.join(p.extract_text() for p in lector.pages)
-        for palabra in ('HOJA DE CALIBRACIÓN','Datos generales','Shims','Backlash','Presión eje vertical','Mediciones (1 a 16)','Observaciones, fecha y técnico responsable',
+        for palabra in ('HOJA DE CALIBRACIÓN','DATOS GENERALES DE TRANSMISIÓN','DATOS DE SHIMS','Backlash','Presión eje vertical','Mediciones (1 a 16)','OBSERVACIONES','Firma del técnico responsable',
                 'No requiere aprobación de ADMINISTRADOR','Sin tolerancia aprobada','No se afirma conformidad técnica'): self.assertIn(palabra,texto,palabra)
         self.assertNotIn('Dentro del rango aprobado',texto)
         # 5. Informe final: PDF descargable por TALLER con diagnóstico, trabajos, fotografías y la hoja de calibración.
         descarga=como(self.taller).get(reverse('masiscam:cierre_documento',args=[self.exp.pk,informe.pk]))
         self.assertEqual((descarga.status_code,descarga['Content-Type']),(200,'application/pdf'))
         lector=PdfReader(BytesIO(b''.join(descarga.streaming_content))); texto='\n'.join(p.extract_text() for p in lector.pages)
-        for palabra in ('INFORME FINAL','Diagnóstico','Reductor mantenido y probado sin fugas','Hoja de calibración (elaborada por TALLER)','Sin recepciones de repuestos registradas'): self.assertIn(palabra,texto,palabra)
+        for palabra in ('INFORME FINAL','Diagnóstico','Reductor mantenido y probado sin fugas','Hoja de calibración (elaborada por TALLER)','no se registran recepciones de repuestos en esta intervención'): self.assertIn(palabra,texto,palabra)
         self.assertNotIn('Calibración y aprobación técnica',texto)
         self.assertGreaterEqual(sum(len(p.images) for p in lector.pages),2)   # fotografías del mantenimiento y de la calibración
         # 6. Revisión del informe por ADMINISTRADOR y cierre independiente.

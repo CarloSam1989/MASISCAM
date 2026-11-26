@@ -810,7 +810,7 @@ def generar_informe(emision_id):
         if item['clase']=='FOTO':
             with doc.archivo.open('rb') as f:
                 fotos.append((item,f.read()))
-    data=construir_informe(dict(em.snapshot,version=em.version),fotos)
+    data=construir_informe(dict(em.snapshot,version=em.version,huella=em.huella),fotos)
     with transaction.atomic():
         exp=ExpedienteMantenimiento.objects.select_for_update().get(pk=em.calibracion.expediente_id)
         em=EmisionCalibracion.objects.select_for_update().get(pk=emision_id)

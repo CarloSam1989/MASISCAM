@@ -508,7 +508,9 @@ class HojaCalibracionTests(HojaBase,TestCase):
         self.assertTrue(all(r['evaluacion']=='Sin tolerancia aprobada: no se evalúa' for r in snap['mediciones']))
         self.assertEqual(snap['unidades'],UNIDADES_QA);self.assertEqual([r['valor'] for r in snap['parametros']][:3],['0.5','0.55','0.6'])
         texto=self.texto_pdf(em)
-        for palabra in ('Datos generales','Shims','Presión eje horizontal','Sin tolerancia aprobada','No es certificado metrológico'): self.assertIn(palabra,texto,palabra)
+        for palabra in ('DATOS GENERALES DE TRANSMISIÓN','DATOS DE SHIMS','DATOS DE CALIBRACIÓN','Presión eje horizontal','Sin tolerancia aprobada','No es certificado metrológico',
+                'Anexos: ninguno registrado'): self.assertIn(palabra,texto,palabra)
+        self.assertNotIn('ANEXO 1',texto)   # sin evidencias no hay páginas de anexos
         for prohibido in ('Dentro del rango','Fuera del rango','CONFORME'): self.assertNotIn(prohibido,texto,prohibido)
         # ADMINISTRADOR no decide sobre la hoja y la hoja finalizada no admite cambios.
         with self.assertRaises(ValidationError):
@@ -518,6 +520,31 @@ class HojaCalibracionTests(HojaBase,TestCase):
         with self.assertRaises(PermissionDenied),transaction.atomic(): c.parametros={};c.save()
         with self.assertRaises(PermissionDenied),transaction.atomic(): c.mediciones.first().delete()   # el borrado queda prohibido
         self.assertEqual(Calibracion.objects.count(),1)
+
+    def test_pdf_principal_con_formato_fisico_y_anexos_numerados_al_final(self):
+        from pypdf import PdfReader
+        from .calibracion_pdf import construir_hoja
+        c=self.llenar(self.abrir())
+        s.evidencia(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,version=c.version_edicion,clave=uuid.uuid4(),clase='FOTO',leyenda='Vista general tras la calibración',archivo=foto())
+        c.refresh_from_db()
+        s.evidencia(usuario=self.tecnico,empresa=self.empresa,calibracion_id=c.pk,version=c.version_edicion,clave=uuid.uuid4(),clase='CERTIFICADO',leyenda='Certificado del comparador',archivo=pdf_plano())
+        c=self.finalizar(c);em=self.generar(c)
+        with em.documento.archivo.open('rb') as f: lector=PdfReader(BytesIO(f.read()))
+        paginas=[p.extract_text() for p in lector.pages];self.assertEqual(len(paginas),2)   # hoja principal + una página de anexos
+        principal,anexos=paginas
+        # 1ª parte: informe principal en el orden del formato físico, con firmas y QR al final
+        self.assertIn('HOJA DE CALIBRACIÓN',principal)   # encabezado con logo (se dibuja en una segunda pasada: no entra en el orden del cuerpo)
+        orden=['Día','Mes','Año','Hora','Cliente','DATOS GENERALES DE TRANSMISIÓN','DATOS DE SHIMS','DATOS DE CALIBRACIÓN','Mediciones (1 a 16)',
+            'OBSERVACIONES','Anexos: 2 adjunto(s)','Firma del técnico responsable','Código de verificación']
+        posiciones=[principal.index(x) for x in orden];self.assertEqual(posiciones,sorted(posiciones))
+        self.assertIn('Medición 16',principal);self.assertIn('Página 1 de 2',principal);self.assertNotIn('ANEXO 1',principal)
+        # 2ª parte: anexos numerados, con título, descripción y evidencia visual
+        for texto in ('ANEXOS','ANEXO 1','FOTOGRAFÍA','Vista general tras la calibración','ANEXO 2','RESPALDO DOCUMENTAL','Certificado del comparador','Página 2 de 2'): self.assertIn(texto,anexos,texto)
+        self.assertGreaterEqual(len(lector.pages[1].images),1)   # la fotografía va incrustada; el certificado se referencia por su huella
+        # Lo que falta se ve y no se inventa: un dato del equipo sin registrar aparece como «No registrado».
+        snap=dict(em.snapshot,version=em.version,huella=em.huella);snap['equipo']=dict(snap['equipo'],numero_serie='')
+        texto=chr(10).join(p.extract_text() for p in PdfReader(BytesIO(construir_hoja(snap,[]))).pages)
+        self.assertIn('No registrado',texto);self.assertIn('datos pendientes o no registrados',texto)
 
     def test_rangos_unidades_precision_y_campos_obligatorios(self):
         c=self.abrir()
@@ -612,6 +639,8 @@ class HojaToleranciasAprobadasTests(HojaBase,TestCase):
         self.assertEqual(evaluaciones[:10],['Dentro del rango aprobado']*10);self.assertEqual(evaluaciones[10:],['Fuera del rango aprobado']*6)
         self.assertIn('no sustituye la valoración técnica',snap['verificacion']['texto'])
         self.assertEqual(c.parametros['_tolerancias']['protocolo'],p.codigo)   # las tolerancias usadas quedan congeladas con la hoja
+        s.generar_informe(em.pk);em.refresh_from_db();texto=self.texto_pdf(em)   # el PDF muestra la verificación por medición con el criterio aprobado
+        self.assertEqual((texto.count('Dentro del rango aprobado'),texto.count('Fuera del rango aprobado')),(10,6));self.assertIn(p.codigo,texto)
         # La verificación solo es aritmética: otra unidad, o límites no numéricos, no se evalúan ni se inventan equivalencias.
         self.assertEqual(s._evaluar('0.1',dict(minimo='0',maximo='1',unidad='in'),'mm'),'Unidad distinta a la aprobada: no se evalúa')
         self.assertEqual(s._evaluar('0.1',dict(minimo='',maximo='1',unidad='mm'),'mm'),'Sin límites numéricos aprobados: no se evalúa')

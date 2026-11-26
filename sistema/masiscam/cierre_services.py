@@ -1,4 +1,5 @@
 """Local final review and administrative closure; no policy bypasses."""
+import hashlib
 from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.base import ContentFile
@@ -63,8 +64,16 @@ def dependencias(exp):
     return auth,cal
 
 
-def snapshot(exp):
+def formato(informe):
+    """Formato del snapshot con que se emitió un informe: los históricos (final-v1) se verifican y se dibujan como se emitieron."""
+    return 1 if (informe.snapshot or {}).get('plantilla','final-v1')=='final-v1' else 2
+
+
+def snapshot(exp,formato=2):
+    """formato=1 reproduce exactamente los informes históricos; formato=2 separa lo actual de lo histórico, evita duplicados e incorpora la hoja de calibración."""
+    v2=formato==2
     auth,cal=dependencias(exp)
+    ultima=EmisionCalibracion.objects.filter(calibracion=cal,estado='GENERADA').select_related('documento').order_by('-version').first() if v2 else None
     diag=auth.propuesta.diagnostico
     tech=t._snapshot_informe(diag)
     activities=[]
@@ -76,21 +85,37 @@ def snapshot(exp):
             aprobacion=(dict(id=r.revision.pk,responsable=r.revision.autor.username,fecha=r.revision.creado_en.isoformat(),motivo=r.revision.motivo) if hasattr(r,'revision')
                 else dict(id=auth.pk,responsable=auth.autor.username,fecha=auth.creado_en.isoformat(),motivo='Trabajo autorizado por la aprobación conjunta de ADMINISTRADOR; sin revisión adicional del mantenimiento.')),
             usos=[dict(recepcion=u.recepcion_id,cantidad=str(u.cantidad),unidad=u.recepcion.unidad) for u in a.usos.order_by('pk')]))
-    evidence=[]
-    def add(doc,section,caption,photo=False):
+    evidence=[];por_hash={}
+    def add(doc,section,caption,photo=False,origen='ACTUAL',incrustar=True):
         t.documento_valido(doc,exp.empresa)
-        evidence.append(dict(documento=doc.pk,hash=doc.hash_sha256,seccion=section,leyenda=caption,foto=photo))
+        if not v2:
+            evidence.append(dict(documento=doc.pk,hash=doc.hash_sha256,seccion=section,leyenda=caption,foto=photo));return
+        previo=por_hash.get(doc.hash_sha256)   # la misma fotografía o documento se conserva una sola vez
+        if previo:
+            if section!=previo['seccion'] and section not in previo['tambien_en']: previo['tambien_en'].append(section)
+            return
+        item=dict(documento=doc.pk,hash=doc.hash_sha256,seccion=section,leyenda=caption,foto=bool(photo and incrustar),origen=origen,tambien_en=[])
+        por_hash[doc.hash_sha256]=item;evidence.append(item)
     for e in exp.recepcion.evidencias.select_related('documento').order_by('pk'):
         add(e.documento,'Recepción',e.documento.titulo,e.tipo=='FOTO')
     for e in t._evidencias(diag):
-        add(e.documento,'Inspección / diagnóstico',e.leyenda,e.documento.tipo_mime.startswith('image/'))
+        add(e.documento,'Diagnóstico' if v2 else 'Inspección / diagnóstico',e.leyenda,e.documento.tipo_mime.startswith('image/'))
+    if v2:
+        for pieza in diag.piezas.all().order_by('pk'):
+            for e in pieza.fotografias.select_related('documento').order_by('pk'):
+                add(e.documento,'Diagnóstico',e.leyenda,e.documento.tipo_mime.startswith('image/'))
     for e in EvidenciaOperativa.objects.filter(expediente=exp).select_related('documento','actividad').order_by('pk'):
         # Commercial evidence remains an access-controlled reference, never
         # embedded in a technical report downloadable by the assigned technician.
-        if (e.actividad_id and e.actividad.autorizacion_id==auth.pk) or e.recepcion_id:
+        if v2:
+            if e.actividad_id and e.actividad.autorizacion_id==auth.pk:
+                add(e.documento,'Mantenimiento',e.leyenda,e.clase in {'FOTO','ANTES','DURANTE','DESPUES'})
+            elif e.recepcion_id:   # recepción de repuestos anterior al flujo simplificado: se lista como histórico, no como intervención actual
+                add(e.documento,'Histórico · recepción de repuestos',e.leyenda,False,origen='HISTORICO',incrustar=False)
+        elif (e.actividad_id and e.actividad.autorizacion_id==auth.pk) or e.recepcion_id:
             add(e.documento,'Intervención / repuestos',e.leyenda,e.clase in {'FOTO','ANTES','DURANTE','DESPUES'})
     for e in cal.evidencias.select_related('documento').order_by('pk'):
-        add(e.documento,'Calibración',e.leyenda,e.clase=='FOTO')
+        add(e.documento,'Calibración',e.leyenda,e.clase=='FOTO',incrustar=not ultima)   # con la hoja incorporada, sus fotos ya van en su PDF
     annexes=[]
     confirmation=ConfirmacionRecepcion.objects.filter(recepcion__expediente=exp).first()
     reports=[('Informe inicial',o.informe_propuesta(auth.propuesta).documento),
@@ -105,10 +130,17 @@ def snapshot(exp):
         revisions_match=(em.tipo!='REPARACION' or [(r['id'],r.get('version')) for r in em.snapshot.get('registros',[])]==[(a['id'],a['revision']) for a in activities])
         if ids==current and revisions_match and (em.tipo!='REPARACION' or em.snapshot.get('autorizacion')==auth.pk):
             reports.append((f'{em.tipo} v{em.version}',em.documento))
+    titulo_hoja=f'Calibración v{ultima.version}' if ultima else None
+    def agregar(lista,titulo,doc_id,hash_,historico=False):
+        if not v2:
+            lista.append(dict(titulo=titulo,documento=doc_id,hash=hash_));return
+        if any(a['documento']==doc_id for a in lista): return
+        lista.append(dict(titulo=titulo,documento=doc_id,hash=hash_,origen='HISTORICO' if historico else 'ACTUAL',incorporado=titulo==titulo_hoja))
     for title,doc in reports:
         t.documento_valido(doc,exp.empresa)
-        annexes.append(dict(titulo=title,documento=doc.pk,hash=doc.hash_sha256))
-    result = dict(plantilla='final-v1',numero=exp.numero,empresa=exp.empresa_id,recepcion=exp.recepcion.snapshot,
+        antigua=title.startswith('Calibración v') and title!=titulo_hoja
+        agregar(annexes,title,doc.pk,doc.hash_sha256,historico=v2 and (antigua or title.startswith('REPUESTOS')))
+    result = dict(plantilla='final-v2' if v2 else 'final-v1',numero=exp.numero,empresa=exp.empresa_id,recepcion=exp.recepcion.snapshot,
         confirmacion=dict(placa=confirmation.placa,motivo_sin_placa=confirmation.motivo_sin_placa,
             motivo_sin_guia=confirmation.motivo_sin_guia,responsable=confirmation.responsable.username,
             fecha=confirmation.confirmado_en.isoformat(),politica=confirmation.politica) if confirmation else dict(estado='Recepción provisional sin confirmar'),
@@ -119,6 +151,9 @@ def snapshot(exp):
         fecha_finalizacion=(cal.decision.creado_en if hasattr(cal,'decision') else cal.enviado_en).isoformat(),
         aviso='Informe técnico privado. No sustituye autorizaciones comerciales ni acredita aceptación del cliente. No contiene firma certificada.')
 
+    if v2:
+        result['calibracion_documento']=dict(documento=ultima.documento_id,hash=ultima.documento.hash_sha256,version=ultima.version,
+            revision=cal.revision) if ultima else None
     from .flujo_services import snapshot_final
     flujo = snapshot_final(exp)
     if flujo:
@@ -129,25 +164,24 @@ def snapshot(exp):
                 ref=pieza.parte.referencia
                 if ref.documento_id not in vistos:
                     t.documento_valido(ref.documento,exp.empresa)
-                    result['anexos'].append(dict(titulo=f'Plano utilizado {ref.codigo} r{ref.revision}',
-                        documento=ref.documento_id,hash=ref.documento.hash_sha256))
+                    agregar(result['anexos'],f'Plano utilizado {ref.codigo} r{ref.revision}',ref.documento_id,ref.documento.hash_sha256)
                     vistos.add(ref.documento_id)
         result['cotizacion'] = dict(referencia=auth.propuesta.snapshot.get('presupuesto_referencia',''),
             alcance=auth.propuesta.alcance, version=auth.propuesta.version, decision=auth.decision,
             fecha_cliente=auth.fecha_cliente.isoformat(), responsable=auth.autor.username)
         for evidencia in auth.propuesta.evidencias.all():
             t.documento_valido(evidencia.documento,exp.empresa)
-            result['anexos'].append(dict(titulo='Presupuesto documentado',documento=evidencia.documento_id,hash=evidencia.documento.hash_sha256))
+            agregar(result['anexos'],'Presupuesto documentado',evidencia.documento_id,evidencia.documento.hash_sha256)
         for evidencia in auth.evidencias.all():
             t.documento_valido(evidencia.documento,exp.empresa)
-            result['anexos'].append(dict(titulo='Respaldo de la aceptaci?n',documento=evidencia.documento_id,hash=evidencia.documento.hash_sha256))
+            agregar(result['anexos'],'Respaldo de la aceptación' if v2 else 'Respaldo de la aceptaci?n',evidencia.documento_id,evidencia.documento.hash_sha256)
     return result
 
 
 def vigente(informe):
     if InformeFinal.objects.filter(expediente=informe.expediente,version__gt=informe.version).exists():
         raise ValidationError('Informe sustituido por una versión posterior.')
-    if t._digest(snapshot(informe.expediente))!=informe.huella:
+    if t._digest(snapshot(informe.expediente,formato(informe)))!=informe.huella:
         raise ValidationError('Fuentes modificadas o aprobaciones retiradas; requiere nueva versión y revisión.')
 
 
@@ -187,7 +221,14 @@ def generar(informe_id):
         if doc.hash_sha256!=item['hash']: raise ValidationError('Evidencia alterada.')
         if item['foto']:
             with doc.archivo.open('rb') as f: photos.append((item,f.read()))
-    data=construir_informe(dict(em.snapshot,version=em.version),photos)
+    hoja=None
+    origen=em.snapshot.get('calibracion_documento')
+    if origen:   # tercer documento: el PDF original de la hoja se incorpora sin cambios y se verifica contra su SHA-256
+        doc=Documento.objects.get(pk=origen['documento'])
+        t.documento_valido(doc,em.expediente.empresa);verificar_copia_persistente(doc)
+        with doc.archivo.open('rb') as f: hoja=f.read()
+        if doc.hash_sha256!=origen['hash'] or hashlib.sha256(hoja).hexdigest()!=origen['hash']: raise ValidationError('Hoja de calibración alterada.')
+    data=construir_informe(dict(em.snapshot,version=em.version),photos,documento_calibracion=hoja)
     with transaction.atomic():
         exp=ExpedienteMantenimiento.objects.select_for_update().get(pk=em.expediente_id)
         em=InformeFinal.objects.select_for_update().get(pk=informe_id)

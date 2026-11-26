@@ -4,7 +4,15 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 
-def construir_informe(s,fotografias=()):
+def construir_informe(s,fotografias=(),documento_calibracion=None):
+    """final-v1: informes históricos, se dibujan exactamente como se emitieron. final-v2: informe actual (cierre_pdf_v2)."""
+    if s.get('plantilla')=='final-v2':
+        from .cierre_pdf_v2 import construir_informe as actual
+        return actual(s,fotografias,documento_calibracion)
+    return _informe_v1(s,fotografias)
+
+
+def _informe_v1(s,fotografias=()):
     if s.get('plantilla')!='final-v1': raise ValueError('Plantilla final desconocida.')
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4

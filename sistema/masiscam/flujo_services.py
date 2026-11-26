@@ -498,7 +498,7 @@ def generar_final_automatico(calibracion_id, propagar=False, corregir=False):
                         motivo='Corrección tras la observación de ADMINISTRADOR: '+previo.revision.motivo)
             elif not em:
                 prev=exp.informes_finales.order_by('-version').first()
-                nueva=bool(prev and prev.huella!=t._digest(cierre.snapshot(exp)))
+                nueva=bool(prev and prev.huella!=t._digest(cierre.snapshot(exp,cierre.formato(prev))))   # un informe histórico se compara en su propio formato
                 em=cierre.reservar(usuario=cal.tecnico,empresa=exp.empresa,expediente_id=exp.pk,
                     clave=key,nueva_version=nueva,motivo='Fuentes aprobadas actualizadas tras revisión de calibración' if nueva else '')
             cierre.generar(em.pk)
