@@ -72,8 +72,20 @@ def operar(request,pk,op):
         raise Http404
     exp=svc.expediente(request.user,request.empresa_activa,pk,AREAS[op])
     form=OperacionForm(request.POST or None,request.FILES or None,op=op,exp=exp,politica=svc.politica())
+    sin_actividades=False
     if 'actividad_id' in form.fields:
-        form.fields['actividad_id'].queryset=form.fields['actividad_id'].queryset.filter(autor=request.user)
+        propias=form.fields['actividad_id'].queryset.filter(autor=request.user)
+        if op in {'uso','foto'}:   # solo actividades abiertas: sin resultado enviado o con resultado observado
+            abiertas=[]
+            for actividad in propias:
+                try: svc._abierta(actividad)
+                except ValidationError: continue
+                abiertas.append(actividad.pk)
+            propias=propias.filter(pk__in=abiertas)
+        form.fields['actividad_id'].queryset=propias
+        form.fields['actividad_id'].label='Actividad'
+        sin_actividades=op in {'uso','foto'} and not propias.exists()
+        if propias.count()==1 and request.method!='POST': form.fields['actividad_id'].initial=propias.first().pk   # única opción: ya seleccionada
     if request.method=='POST' and form.is_valid():
         data={k:(v.pk if hasattr(v,'pk') else v) for k,v in form.cleaned_data.items()}
         key=data.pop('clave')
@@ -118,7 +130,7 @@ def operar(request,pk,op):
                 return redirect(reverse('masiscam:taller_equipo', args=[exp.registro.equipo_id]) + f'?expediente={exp.pk}')
             return redirect('masiscam:operacion_detalle',pk=pk)
     auth=svc.autorizacion_vigente(exp)
-    return render(request,'masiscam/operacion_form.html',dict(form=form,operacion=LABELS[op],expediente=exp,politica=svc.politica(),
+    return render(request,'masiscam/operacion_form.html',dict(form=form,operacion=LABELS[op],expediente=exp,politica=svc.politica(),op=op,sin_actividades=sin_actividades,
         alcance_autorizado=auth.propuesta.alcance if auth else None),
         status=400 if request.method=='POST' else 200)
 

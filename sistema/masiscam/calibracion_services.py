@@ -13,7 +13,7 @@ from . import tecnica_services as t
 from . import operacion_services as o
 from .models import (PlantillaCalibracion,ValidacionPlantillaCalibracion,AplicabilidadCalibracion,
     Calibracion,MedicionCalibracion,EvidenciaCalibracion,DecisionCalibracion,EmisionCalibracion,
-    ActividadReparacion,ResultadoReparacion,ExpedienteMantenimiento,Documento,Proyecto,Equipo)
+    ActividadReparacion,ResultadoReparacion,ExpedienteMantenimiento,Documento,Proyecto,Equipo,Auditoria)
 from .recepcion_services import _hash,validar_fotografias,verificar_copia_persistente,evento
 
 
@@ -301,6 +301,31 @@ def guardar(*,usuario,empresa,calibracion_id,version,clave,datos):
     _bump(c)
     t._event(exp,usuario,clave,'CAL_GUARDADA',payload,c.pk)
     return c
+
+
+def guardar_formato(*,usuario,empresa,calibracion_id,version,clave,datos,mediciones,adjunto=None):
+    """Guarda de una vez la hoja de calibración: datos y parámetros, las mediciones modificadas y, si se adjunta, una evidencia.
+
+    Reutiliza guardar/medir/evidencia (permisos, versión de edición, validaciones y auditoría intactos). Las claves de cada
+    paso derivan de la clave de la hoja y todo se confirma o se revierte junto; repetir el envío no duplica registros."""
+    base=uuid.UUID(str(clave))
+    with transaction.atomic():
+        c=Calibracion.objects.get(pk=calibracion_id)
+        exp=expediente(usuario,empresa,c.expediente_id,{'TALLER'},True)
+        repetida=Auditoria.objects.filter(expediente=exp,detalle__clave=str(uuid.uuid5(base,'datos'))).exists()
+        c=guardar(usuario=usuario,empresa=empresa,calibracion_id=c.pk,version=version,clave=uuid.uuid5(base,'datos'),datos=datos)
+        if repetida:
+            return c
+        paso=int(version)+1
+        actuales={m.punto:m.valor for m in c.mediciones.all()}
+        for punto,valor in mediciones.items():
+            if valor is None and punto not in actuales or valor is not None and punto in actuales and actuales[punto]==valor:
+                continue
+            medir(usuario=usuario,empresa=empresa,calibracion_id=c.pk,version=paso,clave=uuid.uuid5(base,f'medicion:{punto}'),punto=punto,valor=valor)
+            paso+=1
+        if adjunto and adjunto.get('archivo'):
+            evidencia(usuario=usuario,empresa=empresa,calibracion_id=c.pk,version=paso,clave=uuid.uuid5(base,'evidencia'),**adjunto)
+        return Calibracion.objects.get(pk=c.pk)
 
 
 @transaction.atomic

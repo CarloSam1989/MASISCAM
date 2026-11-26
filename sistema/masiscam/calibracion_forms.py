@@ -68,6 +68,48 @@ class DatosForm(BaseForm):
                 initial=calibracion.parametros.get(r['codigo']),label=f"{r['nombre']} ({r.get('unidad','unidad pendiente')})",widget=forms.NumberInput(attrs={'class':'form-control','step':'any'}))
 
 
+class FormatoCalibracionForm(BaseForm):
+    """Hoja única de calibración (datos, shims, mediciones y cierre) sobre el protocolo aprobado de la plantilla.
+
+    Los datos generales del equipo no se piden: se leen del registro de TALLER. Los campos de shims y datos de calibración
+    son los parámetros del protocolo; no se crean valores ni puntos que el protocolo no defina."""
+    version=forms.IntegerField(min_value=1,widget=forms.HiddenInput)
+    fecha=forms.DateTimeField(required=False,label='Fecha',widget=forms.DateTimeInput(format='%Y-%m-%dT%H:%M',attrs={'type':'datetime-local'}))
+    instrumentos=forms.CharField(required=False,widget=forms.Textarea,label='Instrumentos utilizados')
+    resultados=forms.CharField(required=False,widget=forms.Textarea,label='Resultado de la calibración')
+    observaciones=forms.CharField(required=False,widget=forms.Textarea,label='Observaciones finales')
+    motivo_sin_evidencia=forms.CharField(required=False,widget=forms.Textarea,label='Motivo si no hay evidencias')
+    evidencia_clase=forms.ChoiceField(required=False,choices=[('FOTO','Fotografía'),('CERTIFICADO','Documento del instrumento')],label='Tipo de evidencia')
+    evidencia_leyenda=forms.CharField(required=False,max_length=500,label='Descripción de la evidencia')
+    evidencia_archivo=forms.FileField(required=False,label='Archivo de evidencia')
+
+    def __init__(self,*args,calibracion,**kwargs):
+        initial={f:getattr(calibracion,f) for f in ('fecha','instrumentos','observaciones','resultados','motivo_sin_evidencia')}
+        initial['version']=calibracion.version_edicion
+        super().__init__(*args,initial=initial,**kwargs)
+        self.parametros=[];self.puntos=[];shims=[];datos=[];medidas=[]
+        definicion=calibracion.plantilla.definicion
+        for n,r in enumerate(definicion.get('parametros',[])):
+            name=f'param_{n}';self.parametros.append((name,r['codigo']))
+            self.fields[name]=DecimalFlexible(required=False,max_digits=30,decimal_places=12,initial=calibracion.parametros.get(r['codigo']),
+                label=f"{r['nombre']} ({r.get('unidad') or 'unidad pendiente'})",widget=forms.NumberInput(attrs={'class':'form-control','step':'any'}))
+            (shims if 'shim' in f"{r['nombre']} {r['codigo']}".lower() else datos).append(name)
+        valores={m.punto:m.valor for m in calibracion.mediciones.all()}
+        for n,r in enumerate(definicion['mediciones']):
+            name=f'medicion_{n}';self.puntos.append((name,r['codigo']))
+            self.fields[name]=DecimalFlexible(required=False,max_digits=30,decimal_places=12,initial=valores.get(r['codigo']),
+                label=f"{r['nombre']} ({r.get('unidad') or 'unidad pendiente'})",widget=forms.NumberInput(attrs={'class':'form-control','step':'any'}))
+            medidas.append((n+1,name))
+        self.bf_shims=[self[x] for x in shims];self.bf_datos=[self[x] for x in datos]
+        self.bf_mediciones=[(n,self[x]) for n,x in medidas]
+
+    def clean(self):
+        data=super().clean()
+        if data.get('evidencia_archivo') and not (data.get('evidencia_leyenda') or '').strip():
+            self.add_error('evidencia_leyenda','Describa la evidencia que adjunta.')
+        return data
+
+
 class MedicionForm(BaseForm):
     version=forms.IntegerField(min_value=1,widget=forms.HiddenInput)
     punto=forms.ChoiceField(label='Punto definido por plantilla')

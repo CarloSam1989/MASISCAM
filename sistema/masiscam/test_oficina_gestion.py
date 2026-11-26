@@ -223,6 +223,9 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertTrue(s.aprobacion_conjunta_vigente(prop)); self.assertEqual(Diagnostico.objects.get(pk=self.diag.pk).estado,'FINALIZADO')
         # La aprobación de ADMINISTRADOR es la única condición comercial: no se pide aceptación del cliente ni política JSON.
         r=taller(); self.assertEqual(r['accion']['texto'],'Registrar repuestos del cliente'); self.assertNotIn('aceptación del cliente',r['mensaje'].lower())
+        self.assertEqual([(e['texto'],e['estado']) for e in r['secuencia']],[('Registrar repuestos del cliente','Ahora'),('Iniciar reparación','Pendiente'),
+            ('Registrar calibración','Pendiente'),('Generar informe final','Pendiente')])
+        self.assertEqual(s.resumen(self.exp,self.admin)['secuencia'],[]); self.assertEqual(s.resumen(self.exp,self.oficina)['secuencia'],[])   # solo guía a TALLER
         self.assertIn('Aprobado por ADMINISTRADOR',lista()); self.assertNotContains(detalle_taller(),'Pendiente de aceptación del cliente')
         # Una sola fuente de estado: TALLER, OFICINA y ADMINISTRADOR ven el mismo stepper (paso 3 aprobado, paso 4 accesible).
         def estados(usuario): return [(p['nombre'],p['estado'],p['clase']) for p in s.resumen(self.exp,usuario)['pasos']]
@@ -250,6 +253,8 @@ class OficinaGestionTests(OficinaFixture,TestCase):
             datos=dict(pieza_id=self.pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=self.pieza.numero_parte,
                 descripcion=self.pieza.descripcion,cantidad=str(self.pieza.cantidad),unidad=self.pieza.unidad,fecha=timezone.now(),guia='',discrepancia=''))
         r=taller(); self.assertEqual((r['paso'],r['accion']['texto']),(4,'Iniciar reparación')); self.assertIn('Registra la reparación',r['mensaje'])
+        self.assertEqual([e['estado'] for e in r['secuencia']],['Listo','Ahora','Pendiente','Pendiente'])
+        self.assertEqual([e['clase'] for e in r['secuencia']],['ok','proceso','pendiente','pendiente'])
         act=o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
             datos=dict(trabajo='Mantenimiento del reductor',componentes='Pieza QA',inicio=timezone.now()))
         o.usar_repuesto(usuario=self.taller,empresa=self.empresa,actividad_id=act.pk,recepcion_id=rec.pk,cantidad=str(self.pieza.cantidad),observaciones='QA',clave=uuid.uuid4())
@@ -268,6 +273,10 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         # Calibración: sin protocolo aprobado se bloquea con un mensaje claro; con protocolo validado TALLER genera el informe.
         self.assertEqual(r['mensaje'],'Falta protocolo de calibración aprobado para continuar.'); self.assertTrue(r['bloqueo']); self.assertIsNone(r['accion'])
         from . import calibracion_services as c, test_calibracion as cq
+        # La pantalla de inicio de calibración no depende de la política comercial JSON: sin protocolo avisa; con protocolo ofrece iniciar.
+        self.client.force_login(self.taller); url_cal=reverse('masiscam:calibracion_expediente',args=[self.exp.pk])+'?flujo=1'
+        html=self.client.get(url_cal).content.decode()
+        self.assertIn('data-sin-protocolo',html); self.assertIn('Falta protocolo de calibración aprobado para continuar.',html); self.assertNotIn('No hay acciones de inicio disponibles',html)
         definicion=cq.definicion_qa(); definicion['aplicacion'].update(marca=self.exp.registro.equipo.marca,modelo=self.exp.registro.equipo.modelo)
         protocolo=c.crear_plantilla(usuario=self.admin,empresa=self.empresa,clave=uuid.uuid4(),archivo=cq.protocolo_pdf(),
             datos=dict(codigo='OG-QA',titulo='PROTOCOLO FICTICIO QA',tipo_equipo=self.exp.registro.equipo.tipo_producto,definicion=definicion,proyecto_id=self.exp.registro.equipo.proyecto_id))
@@ -277,6 +286,8 @@ class OficinaGestionTests(OficinaFixture,TestCase):
             from .test_tecnica import usuario as _usuario
             cq.validar_qa(self.empresa,_usuario(self.empresa,'validador-og-qa','ADMIN'),protocolo)
             r=taller(); self.assertEqual(r['accion']['texto'],'Generar informe de calibración'); self.assertFalse(r['bloqueo'])
+            html=self.client.get(url_cal).content.decode()
+            self.assertIn('Solicitar inicio validado',html); self.assertNotIn('data-sin-protocolo',html); self.assertNotIn('No hay acciones de inicio disponibles',html)
             self.client.force_login(self.taller)
             html=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk])).content.decode()
             self.assertIn('Generar informe de calibración',html); self.assertIn('data-aprobado-admin',html); self.assertIn('is-ok',html)
@@ -285,6 +296,43 @@ class OficinaGestionTests(OficinaFixture,TestCase):
             self.assertNotEqual(s.resumen(self.exp,self.oficina)['accion'] and s.resumen(self.exp,self.oficina)['accion']['texto'],'Generar informe de calibración')
         self.assertEqual(ExpedienteMantenimiento.objects.filter(registro__equipo=self.exp.registro.equipo).count(),1)
         self.assertEqual((EnvioRepuestos.objects.count(),AdquisicionRepuesto.objects.count()),(0,0))
+
+    def test_formularios_de_reparacion_y_repuesto_utilizado_usan_lo_aprobado_por_administrador(self):
+        from .models import ActividadReparacion
+        self._con_conceptos(); ids=[c['id'] for c in self.sol.snapshot['conceptos']]
+        prop=self.cotizar(archivo=None,cotizacion=dict(moneda='USD',lineas=[dict(concepto=i,precio_unitario=p) for i,p in zip(ids,('100.00','250.00','4.00'))]))
+        s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
+            propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
+        pieza=self.diag.piezas.get()
+        self.client.force_login(self.taller)
+        url_act=reverse('masiscam:operacion_operar',args=[self.exp.pk,'actividad']); url_uso=reverse('masiscam:operacion_operar',args=[self.exp.pk,'uso'])
+        # Reparación: actividades = conceptos técnicos aprobados (el consumible no es una actividad) y componentes = piezas del expediente.
+        html=self.client.get(url_act).content.decode()
+        for esperado in ('Mantenimiento preventivo del reductor','Reparación de eje y rodamientos'): self.assertIn(f'<option value="{esperado}"',html)
+        self.assertNotIn('<option value="Cambio de aceite"',html); self.assertNotIn('<option value="Aceite ISO VG 220"',html)
+        self.assertNotIn('<textarea name="componentes"',html); self.assertEqual(html.count('type="checkbox" name="componentes"'),1)
+        self.assertIn('Fecha y hora de inicio',html); self.assertIn('Observaciones',html); self.assertNotIn('Identifique los componentes',html)
+        # Repuesto utilizado sin actividades registradas: mensaje claro y sin formulario.
+        html=self.client.get(url_uso).content.decode()
+        self.assertIn('Primero registre actividades técnicas antes de usar repuestos.',html); self.assertNotIn('Registrar repuesto utilizado',html)
+        o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
+            datos=dict(pieza_id=pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=pieza.numero_parte,
+                descripcion=pieza.descripcion,cantidad=str(pieza.cantidad),unidad=pieza.unidad,fecha=timezone.now(),guia='',discrepancia=''))
+        inicio=(timezone.localtime()-timezone.timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M')
+        datos=dict(clave=uuid.uuid4(),trabajo='Reparación de eje y rodamientos',componentes=[str(pieza.pk)],inicio=inicio,observaciones='')
+        # Una actividad ajena a la lista aprobada o un componente que no es del expediente se rechaza.
+        for malo in (dict(datos,clave=uuid.uuid4(),trabajo='Trabajo inventado'),dict(datos,clave=uuid.uuid4(),componentes=['999999']),dict(datos,clave=uuid.uuid4(),componentes=[])):
+            self.assertEqual(self.client.post(url_act,malo).status_code,400)
+        self.assertFalse(ActividadReparacion.objects.exists())
+        self.assertEqual(self.client.post(url_act,datos).status_code,302)
+        act=ActividadReparacion.objects.get()
+        self.assertEqual(act.trabajo,'Reparación de eje y rodamientos'); self.assertIn(pieza.descripcion[:20],act.componentes)
+        self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion='REPARACION_INICIADA').count(),1)
+        # Con una sola actividad abierta, el campo «Actividad» ya llega seleccionado.
+        html=self.client.get(url_uso).content.decode()
+        self.assertNotIn('Primero registre actividades',html); self.assertIn(f'<option value="{act.pk}" selected>',html); self.assertIn('Registrar repuesto utilizado',html)
+        # Otros roles no registran repuestos utilizados.
+        self.client.force_login(self.oficina); self.assertEqual(self.client.get(url_uso).status_code,403)
 
     @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
     def test_idempotencia_guardar_avance_y_validar_sin_conflictos(self):
@@ -655,7 +703,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
         galleta=self._galleta(self.taller)
         pagina=self.live_server_url+reverse('masiscam:taller_equipo',args=[self.exp.registro.equipo_id])+f'?expediente={self.exp.pk}'
         flujo_url=self.live_server_url+reverse('masiscam:flujo_detalle',args=[self.exp.pk])
-        def ver(texto,botones=(),paso3=None,cookie=None,destino=None):
+        def ver(texto,botones=(),paso3=None,cookie=None,destino=None,secuencia=None,dx=False):
             with sync_playwright() as pw:
                 browser=pw.chromium.launch(channel='msedge',headless=True)
                 try:
@@ -665,9 +713,24 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                         page=context.new_page(); page.goto(destino or pagina)
                         expect(page.locator('body')).to_contain_text(texto)
                         for boton in botones: expect(page.get_by_role('link',name=boton).or_(page.get_by_role('button',name=boton)).first).to_be_visible()
+                        if secuencia:   # TALLER: Registrar repuestos → Iniciar reparación → Registrar calibración → Generar informe final
+                            lista=page.locator('[data-secuencia] li')
+                            expect(lista).to_have_count(4)
+                            expect(page.locator('[data-secuencia] li[data-estado="Ahora"]')).to_contain_text(secuencia)
+                            for i,texto_paso in enumerate(('Registrar repuestos del cliente','Iniciar reparación','Registrar calibración','Generar informe final')):
+                                expect(lista.nth(i)).to_contain_text(texto_paso)
+                            ys=[lista.nth(i).bounding_box()['y'] for i in range(4)]
+                            self.assertTrue(max(ys)-min(ys)<5 if ancho==1440 else ys==sorted(ys) and len(set(ys))==4,f'secuencia mal distribuida a {ancho}px')
                         self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),f'desborda a {ancho}px')
                         if paso3:   # stepper de 5 etapas con chips de estado y color consistente
                             page.goto(flujo_url)
+                            if dx:   # resumen del diagnóstico: dos columnas en escritorio, una en móvil; mismo diseño en todos los roles
+                                items=page.locator('#diagnostico-resumen .mf-dx-item')
+                                expect(items).to_have_count(8)
+                                for i,etiqueta in enumerate(('Fallas','Causas','Componentes afectados','Recomendaciones','Conclusiones','Repuestos requeridos','Fecha','Observaciones')):
+                                    expect(items.nth(i)).to_contain_text(etiqueta)
+                                x0,x3=items.nth(0).bounding_box()['x'],items.nth(3).bounding_box()['x']
+                                self.assertTrue(x3-x0>200 if ancho==1440 else abs(x3-x0)<5,f'columnas del diagnóstico a {ancho}px')
                             expect(page.locator('.mf-steps > li')).to_have_count(5)
                             tercero=page.locator('.mf-steps > li').nth(2)
                             expect(tercero).to_have_attribute('data-estado',paso3[0]); expect(tercero).to_have_class(re.compile(paso3[1]))
@@ -685,15 +748,15 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
         ver('Tu diagnóstico está en revisión',paso3=('Bloqueado','is-bloqueado'))
         s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
             propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
-        ver('Aprobado por ADMINISTRADOR',botones=('Registrar repuestos del cliente',),paso3=('Aprobado','is-ok'))
+        ver('Aprobado por ADMINISTRADOR',botones=('Registrar repuestos del cliente',),paso3=('Aprobado','is-ok'),secuencia='Registrar repuestos del cliente')
         # ADMINISTRADOR y OFICINA ven el mismo stepper y los mismos chips que TALLER.
-        ver('Aprobado por ADMINISTRADOR',paso3=('Aprobado','is-ok'),cookie=self._galleta(self.admin),destino=flujo_url)
-        ver('Aprobado por ADMINISTRADOR',paso3=('Aprobado','is-ok'),cookie=self._galleta(self.oficina),destino=flujo_url)   # sin aceptación del cliente ni política JSON
+        ver('Aprobado por ADMINISTRADOR',paso3=('Aprobado','is-ok'),cookie=self._galleta(self.admin),destino=flujo_url,dx=True)
+        ver('Aprobado por ADMINISTRADOR',paso3=('Aprobado','is-ok'),cookie=self._galleta(self.oficina),destino=flujo_url,dx=True)   # sin aceptación del cliente ni política JSON
         pieza=self.diag.piezas.get()
         o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
             datos=dict(pieza_id=pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=pieza.numero_parte,
                 descripcion=pieza.descripcion,cantidad=str(pieza.cantidad),unidad=pieza.unidad,fecha=timezone.now(),guia='',discrepancia=''))
-        ver('Registra la reparación',botones=('Iniciar reparación',))
+        ver('Registra la reparación',botones=('Iniciar reparación',),secuencia='Iniciar reparación')
         from .models import ExpedienteMantenimiento
         self.assertEqual(ExpedienteMantenimiento.objects.filter(registro__equipo=self.exp.registro.equipo).count(),1)
 

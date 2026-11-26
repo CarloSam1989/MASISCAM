@@ -1,0 +1,9 @@
+<section class="mf-card mf-dx" id="diagnostico-resumen" aria-labelledby="dx-titulo"><h2 id="dx-titulo">Diagnóstico de TALLER{% if diagnostico %} · Revisión {{ diagnostico.revision }}{% endif %}</h2>
+{% if diagnostico %}<p class="mf-dx-meta">Responsable: {{ diagnostico.tecnico }} <span class="mf-chip">{{ diagnostico.get_estado_display }}</span></p>
+<div class="mf-dx-grid">
+  <div class="mf-dx-col"><article class="mf-dx-item"><h3>Fallas</h3><p>{{ diagnostico.fallas|default:'Sin registrar' }}</p></article><article class="mf-dx-item"><h3>Causas</h3><p>{{ diagnostico.causas|default:'Sin registrar' }}</p></article><article class="mf-dx-item"><h3>Componentes afectados</h3><p>{{ diagnostico.componentes_afectados|default:'Sin registrar' }}</p></article></div>
+  <div class="mf-dx-col"><article class="mf-dx-item"><h3>Recomendaciones</h3><p>{{ diagnostico.recomendaciones|default:'Sin registrar' }}</p></article><article class="mf-dx-item"><h3>Conclusiones</h3><p>{{ diagnostico.conclusiones|default:'Sin registrar' }}</p></article><article class="mf-dx-item"><h3>Repuestos requeridos</h3><p>{{ diagnostico.get_repuestos_display }}{% if piezas %} · {{ piezas|length }} pieza{{ piezas|length|pluralize }}{% endif %}</p></article></div>
+  <div class="mf-dx-foot"><article class="mf-dx-item"><h3>Fecha</h3><p>{% if diagnostico.fecha %}{{ diagnostico.fecha|date:'d/m/Y' }}{% else %}Sin registrar{% endif %}</p></article><article class="mf-dx-item"><h3>Observaciones</h3><p>{{ diagnostico.observaciones|default:'Sin observaciones' }}</p></article></div>
+</div>
+{% if not diagnostico.enviado_en %}<p role="status">TALLER debe completar y enviar el diagnóstico para su aprobación técnica.</p>{% endif %}{% else %}<p>Falta el diagnóstico de TALLER.</p>{% endif %}
+</section>

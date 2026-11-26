@@ -1,4 +1,5 @@
 from .access import paginar_listado
+import uuid
 from django.urls import reverse
 from functools import wraps
 from django.conf import settings
@@ -12,8 +13,12 @@ from .access import masiscam_access_required
 from .models import PlantillaCalibracion,Calibracion,Documento,ExpedienteMantenimiento,DecisionCalibracion
 from . import calibracion_services as s
 from .calibracion_forms import (PlantillaForm,PuntosFormSet,InicioForm,DatosForm,MedicionForm,EvidenciaForm,
-    DecisionForm,InformeForm,ValidarForm,AplicarForm)
+    DecisionForm,InformeForm,ValidarForm,AplicarForm,FormatoCalibracionForm)
 from .tecnica_views import _error
+
+
+class _InformeNoGenerado(Exception):
+    """Señal interna: la hoja se guardó pero el informe no pudo reservarse; ya se preparó el formulario con el motivo."""
 
 
 def local(view):
@@ -107,7 +112,7 @@ def expediente(request,pk):
             url=reverse('masiscam:calibracion_revision',args=[c.pk])
             return redirect(url+'?flujo=1' if request.GET.get('flujo') == '1' else url)
     return render(request,'masiscam/calibracion_expediente.html',dict(expediente=exp,form=form,rol=s.autorizar(request.user,request.empresa_activa).rol,
-        estado_reparacion=s.o.estado(exp),politica_comercial=s.o.politica()),status=400 if request.method=='POST' else 200)
+        estado_reparacion=s.o.estado(exp),plantillas_disponibles=form.fields['plantilla_id'].queryset.exists()),status=400 if request.method=='POST' else 200)
 
 
 @require_http_methods(['GET','POST'])
@@ -118,7 +123,9 @@ def revision(request,pk):
     exp=s.expediente(request.user,request.empresa_activa,c.expediente_id)
     role=s.autorizar(request.user,request.empresa_activa,exp=exp).rol
     op=request.POST.get('op','datos')
-    forms=dict(datos=DatosForm(request.POST if op=='datos' and request.method=='POST' else None,calibracion=c),
+    formato_post=op=='formato' and request.method=='POST'
+    forms=dict(formato=FormatoCalibracionForm(request.POST if formato_post else None,request.FILES if formato_post else None,calibracion=c),
+        datos=DatosForm(request.POST if op=='datos' and request.method=='POST' else None,calibracion=c),
         medir=MedicionForm(request.POST if op=='medir' and request.method=='POST' else None,calibracion=c),
         evidencia=EvidenciaForm(request.POST if op=='evidencia' and request.method=='POST' else None,request.FILES or None,initial={'version':c.version_edicion}),
         decision=DecisionForm(request.POST if op=='decision' and request.method=='POST' else None,calibracion=c),
@@ -129,7 +136,30 @@ def revision(request,pk):
     if request.method=='POST' and form and form.is_valid():
         data=dict(form.cleaned_data);common=dict(usuario=request.user,empresa=request.empresa_activa,calibracion_id=c.pk)
         try:
-            if op=='datos':
+            if op=='formato':
+                from django.core.files.uploadedfile import UploadedFile
+                params={code:data.pop(name) for name,code in form.parametros}
+                puntos={code:data.pop(name) for name,code in form.puntos}
+                clave=data.pop('clave');version=data.pop('version')
+                adjunto=dict(clase=data.pop('evidencia_clase') or 'FOTO',leyenda=data.pop('evidencia_leyenda'),archivo=data.pop('evidencia_archivo'))
+                s.guardar_formato(**common,clave=clave,version=version,datos=dict(**data,parametros=params),mediciones=puntos,adjunto=adjunto)
+                if request.POST.get('accion')=='informe':   # guardar + enviar a la revisión independiente + reservar el informe
+                    try:
+                        c.refresh_from_db()
+                        if not c.enviado_en:
+                            c=s.enviar(**common,version=c.version_edicion,clave=uuid.uuid5(clave,'enviar'))
+                        em=s.reservar_informe(**common,clave=uuid.uuid5(clave,'informe'))
+                        from .calibracion_tasks import generar_informe_calibracion
+                        try: generar_informe_calibracion.apply_async(args=[em.pk],retry=False)
+                        except Exception:
+                            from django.contrib import messages
+                            messages.warning(request,'Reserva conservada. Cola no disponible; puede reintentar la misma emisión.')
+                    except (ValidationError,IntegrityError,OSError,ObjectDoesNotExist) as exc:
+                        # Lo escrito ya quedó guardado: se muestra la hoja actualizada y el motivo por el que no se generó el informe.
+                        c.refresh_from_db()
+                        form=forms['formato']=FormatoCalibracionForm(None,calibracion=c);form.cleaned_data={};_error(form,exc)
+                        raise _InformeNoGenerado from None
+            elif op=='datos':
                 params={code:data.pop(name) for name,code in form.parametros}
                 s.guardar(**common,clave=data.pop('clave'),version=data.pop('version'),datos=dict(**data,parametros=params))
             elif op=='medir': s.medir(**common,**data)
@@ -145,10 +175,11 @@ def revision(request,pk):
                 except Exception:
                     from django.contrib import messages
                     messages.warning(request,'Reserva conservada. Cola no disponible; puede reintentar la misma emisión.')
+        except _InformeNoGenerado: pass
         except (ValidationError,IntegrityError,OSError,ObjectDoesNotExist) as exc: _error(form,exc)
         else:
             if request.GET.get('flujo') == '1':
-                if op in {'enviar','decision'}:
+                if op in {'enviar','decision'} or op=='formato' and request.POST.get('accion')=='informe':
                     return redirect('masiscam:flujo_detalle',pk=exp.pk)
                 return redirect(reverse('masiscam:calibracion_revision',args=[pk])+'?flujo=1')
             if role == 'TALLER' and op == 'enviar':

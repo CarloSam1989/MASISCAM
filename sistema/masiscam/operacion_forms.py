@@ -14,6 +14,24 @@ LABELS={'propuesta':'Propuesta comercial','decision':'Decisión del cliente','re
     'respaldo':'Adjuntar respaldo comercial','foto_repuesto':'Fotografía de repuesto recibido'}
 
 
+ACTIVIDADES_BASE=('Mantenimiento','Reparación','Cambio de aceite','Calibración')
+SIN_ACTIVIDADES='Primero registre actividades técnicas antes de usar repuestos.'
+
+
+def actividades_aprobadas(exp):
+    """Actividades ofrecidas al iniciar la reparación: los conceptos técnicos de TALLER aprobados por ADMINISTRADOR en el
+    diagnóstico vigente; si no hay conceptos específicos, las actividades base."""
+    from . import operacion_services as svc
+    try: auth=svc.autorizacion_vigente(exp)
+    except Exception: auth=None
+    diag=auth.propuesta.diagnostico if auth else None
+    conceptos=[]
+    if diag:
+        for c in diag.conceptos.filter(tipo__in=['MANTENIMIENTO','REPARACION','SERVICIO']).order_by('pk'):
+            if c.descripcion not in conceptos: conceptos.append(c.descripcion)
+    return (conceptos or list(ACTIVIDADES_BASE)),(diag.piezas.order_by('pk') if diag else PiezaRequerida.objects.none())
+
+
 class OperacionForm(BaseForm):
     def __init__(self,*args,op,exp,politica=None,**kwargs):
         super().__init__(*args,**kwargs)
@@ -77,9 +95,14 @@ class OperacionForm(BaseForm):
                 text(name,False)
             qty(); date('fecha'); file('archivo'); file('fotografia')
         elif op=='actividad':
-            text('trabajo'); text('componentes'); date('inicio'); text('observaciones',False)
-            F['trabajo'].help_text='Describa las operaciones efectuadas, como prensado, armado, pintura, acople o rectificaci\u00f3n, y el aceite y litros utilizados cuando corresponda.'
-            F['componentes'].help_text='Identifique los componentes intervenidos; registre los repuestos utilizados en el formulario correspondiente.'
+            opciones,piezas=actividades_aprobadas(exp)
+            F['trabajo']=forms.ChoiceField(choices=[('','Seleccione la actividad')]+[(x,x) for x in opciones],label='Actividad o trabajo realizado')
+            if len(opciones)==1: F['trabajo'].initial=opciones[0]
+            self._piezas={str(p.pk):f'{p.numero_parte or "Sin N.º de parte"} · {p.descripcion[:120]}' for p in piezas}
+            F['componentes']=forms.MultipleChoiceField(choices=list(self._piezas.items()),widget=forms.CheckboxSelectMultiple,
+                label='Componentes intervenidos',help_text='Piezas registradas en el expediente.' if self._piezas else 'No hay piezas registradas en el expediente.')
+            if len(self._piezas)==1: F['componentes'].initial=list(self._piezas)
+            date('inicio'); text('observaciones',False)
         elif op in {'uso','foto','resultado'}:
             choice('actividad_id',ActividadReparacion.objects.filter(expediente=exp))
             if op=='uso':
@@ -97,6 +120,7 @@ class OperacionForm(BaseForm):
             F['nueva_version']=forms.BooleanField(required=False)
             text('motivo',False)
         for f in F.values():
+            if isinstance(f.widget,forms.CheckboxSelectMultiple): continue
             f.widget.attrs.setdefault('class','form-select' if isinstance(f.widget,forms.Select) else 'form-control')
             if isinstance(f.widget,forms.Textarea):
                 f.widget.attrs['rows']=3
@@ -107,3 +131,7 @@ class OperacionForm(BaseForm):
         for name,label in labels.items():
             if name in F:
                 F[name].label=label
+
+    def clean_componentes(self):
+        valores=self.cleaned_data['componentes']
+        return chr(10).join(self._piezas[v] for v in valores if v in self._piezas)

@@ -506,6 +506,12 @@ def generar_final_automatico(calibracion_id, propagar=False):
         logging.getLogger(__name__).exception('Informe automático pendiente de reintento, calibración %s',cal.pk)
 
 
+def _faltan_repuestos(exp,diag):
+    """True mientras falten repuestos del cliente por registrar (misma regla que habilita iniciar la reparación)."""
+    return bool(diag) and any((o.RecepcionRepuesto.objects.filter(expediente=exp,pieza=p,numero_parte=p.numero_parte,unidad=p.unidad)
+        .aggregate(n=Sum('cantidad'))['n'] or 0)<p.cantidad for p in diag.piezas.all())
+
+
 def decorar(pasos):
     """Color único por estado para todos los steppers (TALLER, OFICINA y ADMINISTRADOR)."""
     clases={'Listo':'ok','Aprobado':'ok','En proceso':'proceso','Pendiente':'pendiente','Bloqueado':'bloqueado'}
@@ -568,7 +574,7 @@ def resumen(exp, usuario):
             mensaje='OFICINA prepara la cotización a partir de las piezas solicitadas, sin reescribirlas.'
             if role=='OFICINA': accion=action('Preparar cotización',op='cotizar')
         elif not mensaje and not o._propuesta_vigente(prop):
-            mensaje='ADMINISTRADOR debe revisar conjuntamente el diagnóstico y la cotización PDF antes de la aceptación comercial.'
+            mensaje='ADMINISTRADOR debe revisar conjuntamente el diagnóstico y la cotización.'
             bloqueo=True
             if role=='ADMIN':accion=action('Revisar expediente',url=reverse('masiscam:flujo_detalle',args=[exp.pk])+'#decision-administrativa')
         elif not mensaje:
@@ -578,12 +584,12 @@ def resumen(exp, usuario):
                 bloqueo=True   # la autorización comercial es la aprobación conjunta de ADMINISTRADOR; no se pide otra al cliente
             else:
                 pendientes=sol.envios.filter(confirmacion__isnull=True).order_by('pk')
-                faltan=any((o.RecepcionRepuesto.objects.filter(expediente=exp,pieza=p,numero_parte=p.numero_parte,unidad=p.unidad).aggregate(n=Sum('cantidad'))['n'] or 0)<p.cantidad for p in diag.piezas.all())
+                faltan=_faltan_repuestos(exp,diag)
                 if pendientes.exists():
-                    mensaje='Existe un envío histórico sin confirmar. TALLER debe confirmar las cantidades realmente recibidas.'
+                    mensaje='Confirma las cantidades del envío histórico.'
                     if role=='TALLER': accion=action('Confirmar repuestos recibidos',op='recibir')
                 elif faltan:
-                    mensaje='Aprobado por ADMINISTRADOR. Registra los repuestos del cliente para iniciar la reparación.'
+                    mensaje='Aprobado por ADMINISTRADOR. Registra los repuestos del cliente.'
                     if role in {'TALLER','OFICINA'}: accion=action('Registrar repuestos del cliente',url=reverse('masiscam:operacion_operar',args=[exp.pk,'repuesto'])+'?flujo=1')
                 else:
                     paso=4; pasos[2]['estado']='Listo'
@@ -591,7 +597,7 @@ def resumen(exp, usuario):
                     if estado!='REPARACION_FINALIZADA':
                         pendientes_revision=ActividadReparacion.objects.filter(expediente=exp,autorizacion__propuesta=prop).order_by('pk')
                         sin_resultado=any(not a.resultados.exists() for a in pendientes_revision)
-                        mensaje='Registra la reparación, el montaje, las fotografías y los repuestos utilizados.'
+                        mensaje='Registra la reparación y los repuestos utilizados.'
                         if role=='TALLER':
                             op='resultado' if sin_resultado else 'actividad'
                             if pendientes_revision.exists() and not sin_resultado: mensaje='ADMINISTRADOR debe revisar las actividades terminadas.'
@@ -626,22 +632,26 @@ def resumen(exp, usuario):
     # Aprobación conjunta de ADMINISTRADOR vigente: único requisito comercial; habilita las etapas de TALLER.
     try: aprobado=bool(sol and o.autorizacion_vigente(exp))
     except ValidationError: aprobado=False
-    despues=''
+    despues=''; secuencia=[]
     if aprobado:
         pasos[2]['estado']='Aprobado'
         if o.estado(exp)=='REPARACION_FINALIZADA': pasos[3]['estado']='Aprobado'
         elif settings.MASISCAM_OPERACION_LOCAL:   # ya se puede (o se está) reparando: la etapa 4 es la accesible
             paso=max(paso,4)
             if pasos[3]['estado'] not in {'Listo','Aprobado'}: pasos[3]['estado']='En proceso'
-        if role=='TALLER' and pasos[3]['estado']!='Aprobado':
-            despues='Después: generar informe de calibración (requiere reparación revisada por ADMINISTRADOR y protocolo aprobado).'
+        if role=='TALLER':
+            hechos=[not _faltan_repuestos(exp,diag), o.estado(exp)=='REPARACION_FINALIZADA', bool(cal and cal.estado=='APROBADA'), bool(informe and informe.documento_id)]
+            primero=next((i for i,h in enumerate(hechos) if not h),None)
+            for i,(texto,hecho) in enumerate(zip(('Registrar repuestos del cliente','Iniciar reparación','Registrar calibración','Generar informe final'),hechos)):
+                secuencia.append(dict(texto=texto,numero=i+1,clase='ok' if hecho else ('proceso' if i==primero else 'pendiente'),
+                    estado='Listo' if hecho else ('Ahora' if i==primero else 'Pendiente')))
     cerrado=CierreExpediente.objects.filter(expediente_id=exp.pk).first()
     if cerrado:
         accion=action('Registrar nuevo mantenimiento',url=reverse('masiscam:recepcion_crear')+f'?equipo={exp.registro.equipo_id}') if role=='TALLER' else action('Descargar informe final',url=reverse('masiscam:cierre_documento',args=[exp.pk,cerrado.informe_id]))
         mensaje='Mantenimiento cerrado. Consulta de documentos e historial.'
         for p in pasos: p['estado']='Listo'
-        despues=''
+        despues=''; secuencia=[]
     decorar(pasos)
     return dict(pasos=pasos,paso=paso,accion=accion,mensaje=mensaje,bloqueo=bloqueo,
         inspeccion=ins,diagnostico=diag,solicitud=sol,propuesta=prop,calibracion=cal,informe=informe,rol=role,
-        aprobado_admin=aprobado,despues=despues)
+        aprobado_admin=aprobado,despues=despues,secuencia=secuencia)

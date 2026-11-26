@@ -54,3 +54,32 @@
 .mf-next .mf-after{font-size:.85rem;color:#526a7f}
 .mf-next .mf-main-action{min-width:240px;padding:12px 22px;font-size:1.02rem;font-weight:600;border-radius:12px}
 @media(max-width:991px){.mf-steps .mf-step::after{display:none}.mf-steps .mf-step{flex-direction:row;align-items:center}.mf-steps .mf-step>div{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:1}.mf-steps small.mf-chip{margin-top:0}.mf-next .mf-main-action{width:100%}}
+
+/* Secuencia de TALLER en «Siguiente paso» */
+.mf-secuencia{list-style:none;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.mf-secuencia li{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:10px;border:1px solid #d8e3ee;border-radius:12px;background:#fff;font-size:.86rem;font-weight:600}
+.mf-secuencia li.is-ok{border-color:#9bd0ae;background:#f3faf5}.mf-secuencia li.is-proceso{border-color:#8db4dd;background:#f2f7fd;box-shadow:0 0 0 1px #8db4dd}
+.mf-secuencia li.is-ok .mf-number{background:#2f8f55;color:#fff}.mf-secuencia li.is-proceso .mf-number{background:#2c6fb5;color:#fff}
+.mf-secuencia .mf-number{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#e8eef5;color:#31577b;font-size:.78rem}
+.mf-secuencia .mf-chip{margin:0}.mf-secuencia li.is-ok .mf-chip{background:#dff3e6;color:#1d6b3c}.mf-secuencia li.is-proceso .mf-chip{background:#dcebfb;color:#1d4f86}
+.mf-next:has(.mf-secuencia){display:block}.mf-next:has(.mf-secuencia) .mf-main-action{margin-top:14px}
+@media(max-width:767px){.mf-secuencia{grid-template-columns:1fr}.mf-secuencia li{flex-direction:row;align-items:center;justify-content:space-between}}
+/* Resumen de diagnóstico: dos columnas y fila inferior */
+.mf-dx-meta{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 12px;color:#3d556b}.mf-dx-meta .mf-chip{margin:0}
+.mf-dx-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
+.mf-dx-col{display:grid;gap:12px;align-content:start}
+.mf-dx-item{background:#f7fafd;border:1px solid #e1eaf2;border-radius:12px;padding:12px 14px}
+.mf-dx-item h3{font-size:.78rem;letter-spacing:.04em;text-transform:uppercase;color:#526a7f;margin:0 0 6px;font-weight:700}
+.mf-dx-item p{margin:0;white-space:pre-wrap;font-size:.94rem}
+.mf-dx-foot{grid-column:1/-1;display:grid;grid-template-columns:minmax(180px,1fr) 2fr;gap:12px 16px}
+@media(max-width:767px){.mf-dx-grid,.mf-dx-foot{grid-template-columns:1fr}}
+/* Formularios operativos */
+.mf-card ul:has(input[type=checkbox]){list-style:none;margin:0;padding:0;display:grid;gap:6px}.mf-card ul li label{display:flex;align-items:flex-start;gap:8px;font-weight:400}
+/* Calibración: formato por secciones */
+.mf-cal-sec{margin-bottom:18px}.mf-cal-sec h2{font-size:1.1rem;margin-bottom:12px}
+.mf-cal-dl{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.mf-cal-dl div{background:#f7fafd;border:1px solid #e1eaf2;border-radius:10px;padding:8px 12px}
+.mf-cal-dl dt{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color:#526a7f}.mf-cal-dl dd{margin:0;font-weight:600}
+.mf-cal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.mf-cal-med{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.mf-cal-med label{font-size:.82rem}.mf-cal-med .mf-n{display:inline-block;min-width:1.6em;font-weight:700;color:#31577b}
+@media(max-width:991px){.mf-cal-dl,.mf-cal-med{grid-template-columns:repeat(2,minmax(0,1fr))}.mf-cal-grid{grid-template-columns:1fr}}
+@media(max-width:575px){.mf-cal-dl,.mf-cal-med{grid-template-columns:1fr}}

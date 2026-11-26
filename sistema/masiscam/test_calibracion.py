@@ -106,6 +106,54 @@ class CalibracionTests(TestCase):
             with self.assertRaises(ValidationError): self.iniciar()
         self.assertFalse(Calibracion.objects.exists())
 
+    def _hoja(self,c,accion,mediciones=16,**extra):
+        client=Client();client.force_login(extra.pop('usuario',self.tecnico))
+        data=dict(op='formato',accion=accion,clave=extra.pop('clave',uuid.uuid4()),version=extra.pop('version',c.version_edicion),
+            fecha='2026-11-20T10:00',instrumentos='INSTRUMENTO FICTICIO QA',resultados='Registro ficticio QA',observaciones='Observaciones finales QA',
+            motivo_sin_evidencia='Prueba sin fotografías',param_0='1.5',**{f'medicion_{n}':str(n) for n in range(mediciones)})
+        data.update(extra)
+        return client.post(reverse('masiscam:calibracion_revision',args=[c.pk]),data)
+
+    def test_hoja_de_calibracion_por_secciones_guarda_y_genera_informe_una_sola_vez(self):
+        c=self.iniciar();client=Client();client.force_login(self.tecnico)
+        html=client.get(reverse('masiscam:calibracion_revision',args=[c.pk])).content.decode()
+        for marca in ('A · Datos generales','B · Shims','C · Datos de calibración','D · Cierre','Técnico responsable','Guardar calibración','Generar informe de calibración',
+                'Marca','Modelo','Serie','Ratio','Potencia','RPM','Rotación','Factor de servicio'):
+            self.assertIn(marca,html,marca)
+        self.assertEqual(html.count('name="medicion_'),16)
+        self.assertNotIn('Guardar borrador',html); self.assertNotIn('Guardar valor registrado',html)
+        # Guardar parcial: conserva lo escrito sin enviar ni generar nada.
+        r=self._hoja(c,'guardar',mediciones=3)
+        self.assertEqual(r.status_code,302);c.refresh_from_db()
+        self.assertEqual(c.mediciones.count(),3);self.assertIsNone(c.enviado_en);self.assertEqual(Decimal(c.parametros['QA-P']),Decimal('1.5'))
+        self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion='CAL_MEDICION').count(),3)
+        # Generar informe con la hoja incompleta: se guarda lo escrito, pero las validaciones de calibración siguen bloqueando.
+        r=self._hoja(c,'informe',mediciones=5)
+        self.assertEqual(r.status_code,400);self.assertContains(r,'16 mediciones',status_code=400)
+        c.refresh_from_db();self.assertEqual(c.mediciones.count(),5);self.assertIsNone(c.enviado_en);self.assertFalse(c.emisiones.exists())
+        # Hoja completa: guarda, envía a la revisión independiente y reserva el informe. Reintentar el mismo envío no duplica.
+        clave=uuid.uuid4();version=c.version_edicion
+        with patch('masiscam.calibracion_tasks.generar_informe_calibracion.apply_async') as tarea:
+            r=self._hoja(c,'informe',clave=clave,version=version)
+            self.assertEqual(r.status_code,302);c.refresh_from_db()
+            self.assertEqual((c.estado,c.mediciones.count(),c.emisiones.count()),('PENDIENTE_REVISION',16,1));self.assertEqual(tarea.call_count,1)
+            eventos=Auditoria.objects.filter(expediente=self.exp,accion__startswith='CAL_').count()
+            r=self._hoja(c,'informe',clave=clave,version=version)   # reintento de red o doble clic
+            self.assertEqual(r.status_code,302);c.refresh_from_db()
+            self.assertEqual(c.emisiones.count(),1);self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion__startswith='CAL_').count(),eventos)
+        # La hoja enviada deja de ser editable.
+        self.assertNotIn('name="medicion_',client.get(reverse('masiscam:calibracion_revision',args=[c.pk])).content.decode())
+
+    def test_hoja_de_calibracion_no_la_edita_otro_rol_ni_rompe_el_protocolo(self):
+        c=self.iniciar()
+        for rol in (self.planta,self.oficina):
+            self.assertIn(self._hoja(c,'guardar',usuario=rol).status_code,(400,403,404))
+        self.assertFalse(c.mediciones.exists())
+        # Un valor fuera de la plantilla no crea posiciones arbitrarias.
+        r=self._hoja(c,'guardar',medicion_99='1');c.refresh_from_db()
+        self.assertEqual(c.mediciones.count(),16)
+        self.assertEqual(set(c.mediciones.values_list('punto',flat=True)),{x['codigo'] for x in c.plantilla.definicion['mediciones']})
+
     def test_reparacion_debe_estar_finalizada(self):
         o.iniciar_actividad(usuario=self.tecnico,**self.base,clave=uuid.uuid4(),datos=dict(trabajo='QA adicional',componentes='QA',inicio=timezone.now()))
         with self.assertRaises(ValidationError): self.iniciar()

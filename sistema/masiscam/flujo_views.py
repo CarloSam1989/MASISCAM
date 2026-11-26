@@ -233,7 +233,7 @@ MENSAJES_TALLER = {
         'Tu diagnóstico y las piezas ya fueron enviados. El siguiente paso se habilita cuando corresponda.',
     'Repuestos enviados. Confirma las cantidades físicas; la reparación seguirá exigiendo autorización comercial vigente.':
         'Repuestos enviados. Confirma las cantidades recibidas físicamente.',
-    'ADMINISTRADOR debe revisar conjuntamente el diagnóstico y la cotización PDF antes de la aceptación comercial.':
+    'ADMINISTRADOR debe revisar conjuntamente el diagnóstico y la cotización.':
         'Tu diagnóstico está en revisión. Continúa cuando se habilite el siguiente paso.',
     'ADMINISTRADOR debe revisar las actividades terminadas.': 'Hay actividades terminadas pendientes de revisión.',
     'El responsable del sistema debe habilitar la calibración. Se mantiene la exigencia de un protocolo aprobado y revisión independiente.':
