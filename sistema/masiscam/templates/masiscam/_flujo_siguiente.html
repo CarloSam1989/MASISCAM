@@ -1,0 +1,2 @@
+<div><p class="mf-eyebrow">SIGUIENTE PASO</p><h2 id="siguiente">{% if accion %}{{ accion.texto }}{% else %}Esperando el siguiente responsable{% endif %}</h2><p role="status">{{ mensaje }}</p>{% if despues %}<p class="mf-after" data-despues>{{ despues }}</p>{% endif %}{% if bloqueo and rol != 'TALLER' %}<span class="mf-badge">Bloqueado · se mantienen los requisitos de aprobación</span>{% endif %}</div>
+{% if accion.url %}<a class="btn btn-primary mf-main-action" href="{{ accion.url }}">{{ accion.texto }}</a>{% endif %}

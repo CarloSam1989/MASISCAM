@@ -94,6 +94,8 @@ def _detalle(request, exp, form=None, status=200):
     pasos=[dict(nombre=n,estado='Listo' if i==0 else 'Pendiente') for i,n in enumerate(
         ['Registrar equipo','Seleccionar piezas','Oficina cotiza y envía','Taller repara','Generar informe'])]
     paso=2
+    from .flujo_services import decorar
+    decorar(pasos)
     if settings.MASISCAM_TECNICA_LOCAL and request.rol_masiscam.rol in {'TALLER', 'OFICINA', 'ADMIN'}:
         from .flujo_services import resumen
         try: estado=resumen(exp,request.user)

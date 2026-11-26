@@ -213,6 +213,8 @@ class OficinaGestionTests(OficinaFixture,TestCase):
             self.client.force_login(self.taller)
             return self.client.get(reverse('masiscam:taller_equipo',args=[self.exp.registro.equipo_id])+f'?expediente={self.exp.pk}')
         # 1) Cotizada: TALLER ve que falta la aprobación de ADMINISTRADOR (no la del cliente).
+        self.client.force_login(self.admin); previo=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk])).content.decode()
+        for marca in ('class="mf-steps"','class="mf-next"','mf-main-action','Revisar expediente'): self.assertIn(marca,previo,marca)
         self.assertIn('revisar conjuntamente',taller()['mensaje']); self.assertIn('Pendiente de revisión de ADMINISTRADOR',lista())
         # 2) Aprobación administrativa persistida; TALLER la ve, y NO se confunde con la aceptación del cliente.
         s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
@@ -222,6 +224,21 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         # La aprobación de ADMINISTRADOR es la única condición comercial: no se pide aceptación del cliente ni política JSON.
         r=taller(); self.assertEqual(r['accion']['texto'],'Registrar repuestos del cliente'); self.assertNotIn('aceptación del cliente',r['mensaje'].lower())
         self.assertIn('Aprobado por ADMINISTRADOR',lista()); self.assertNotContains(detalle_taller(),'Pendiente de aceptación del cliente')
+        # Una sola fuente de estado: TALLER, OFICINA y ADMINISTRADOR ven el mismo stepper (paso 3 aprobado, paso 4 accesible).
+        def estados(usuario): return [(p['nombre'],p['estado'],p['clase']) for p in s.resumen(self.exp,usuario)['pasos']]
+        self.assertEqual(estados(self.taller),estados(self.oficina)); self.assertEqual(estados(self.taller),estados(self.admin))
+        pasos=s.resumen(self.exp,self.taller)['pasos']
+        self.assertEqual([p['estado'] for p in pasos],['Listo','Listo','Aprobado','En proceso','Pendiente'])
+        self.assertEqual([p['clase'] for p in pasos],['ok','ok','ok','proceso','pendiente']); self.assertEqual(s.resumen(self.exp,self.taller)['paso'],4)
+        # ADMINISTRADOR usa los mismos componentes visuales que TALLER (stepper, chips, bloque de aprobación y «Siguiente paso»).
+        self.client.force_login(self.admin)
+        html_admin=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk])).content.decode()
+        self.client.force_login(self.taller)
+        html_taller=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk])).content.decode()
+        for marca in ('class="mf-steps"','mf-step is-ok','mf-step is-proceso','mf-chip','data-aprobado-admin','class="mf-next"','id="siguiente"'):
+            self.assertIn(marca,html_admin,marca); self.assertIn(marca,html_taller,marca)
+        self.assertIn('mf-main-action',html_taller)   # TALLER: botón principal «Registrar repuestos del cliente»
+        self.assertNotIn('no sustituye la aceptación',html_admin); self.assertNotIn('Pendiente de aceptación del cliente',html_admin)
         self.assertNotIn('Registrar respuesta del cliente',str(s.resumen(self.exp,self.oficina)['accion']))
         self.assertFalse(DecisionComercial.objects.filter(expediente=self.exp).exists())   # sin aprobaciones inventadas hasta usarla
         with self.assertRaises(ValidationError):    # sin repuestos del cliente registrados no se repara
@@ -638,14 +655,14 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
         galleta=self._galleta(self.taller)
         pagina=self.live_server_url+reverse('masiscam:taller_equipo',args=[self.exp.registro.equipo_id])+f'?expediente={self.exp.pk}'
         flujo_url=self.live_server_url+reverse('masiscam:flujo_detalle',args=[self.exp.pk])
-        def ver(texto,botones=(),paso3=None):
+        def ver(texto,botones=(),paso3=None,cookie=None,destino=None):
             with sync_playwright() as pw:
                 browser=pw.chromium.launch(channel='msedge',headless=True)
                 try:
                     for ancho in (1440,390):
                         context=browser.new_context(viewport=dict(width=ancho,height=1000))
-                        context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galleta,url=self.live_server_url)])
-                        page=context.new_page(); page.goto(pagina)
+                        context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=cookie or galleta,url=self.live_server_url)])
+                        page=context.new_page(); page.goto(destino or pagina)
                         expect(page.locator('body')).to_contain_text(texto)
                         for boton in botones: expect(page.get_by_role('link',name=boton).or_(page.get_by_role('button',name=boton)).first).to_be_visible()
                         self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),f'desborda a {ancho}px')
@@ -668,7 +685,10 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
         ver('Tu diagnóstico está en revisión',paso3=('Bloqueado','is-bloqueado'))
         s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
             propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
-        ver('Aprobado por ADMINISTRADOR',botones=('Registrar repuestos del cliente',),paso3=('Aprobado','is-ok'))   # sin aceptación del cliente ni política JSON
+        ver('Aprobado por ADMINISTRADOR',botones=('Registrar repuestos del cliente',),paso3=('Aprobado','is-ok'))
+        # ADMINISTRADOR y OFICINA ven el mismo stepper y los mismos chips que TALLER.
+        ver('Aprobado por ADMINISTRADOR',paso3=('Aprobado','is-ok'),cookie=self._galleta(self.admin),destino=flujo_url)
+        ver('Aprobado por ADMINISTRADOR',paso3=('Aprobado','is-ok'),cookie=self._galleta(self.oficina),destino=flujo_url)   # sin aceptación del cliente ni política JSON
         pieza=self.diag.piezas.get()
         o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
             datos=dict(pieza_id=pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=pieza.numero_parte,

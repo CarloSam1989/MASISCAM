@@ -119,8 +119,9 @@ def taller_equipo(request, pk):
         elif not settings.MASISCAM_TECNICA_LOCAL:
             mensaje=('Fase técnica deshabilitada: el responsable de configuración debe activar '
                 'MASISCAM_TECNICA_ENABLED para habilitar inspección y selección de piezas.')
+    from .flujo_services import decorar
     return render(request,'masiscam/taller_equipo.html',dict(equipo=equipo,expediente=exp,mantenimientos=mantenimientos,
-        pasos=pasos,paso=2,mensaje=mensaje,accion=accion,planos_compatibles=planos,plano_acceso_expediente=asignado))
+        pasos=decorar(pasos),paso=2,mensaje=mensaje,accion=accion,planos_compatibles=planos,plano_acceso_expediente=asignado))
 
 
 @require_POST

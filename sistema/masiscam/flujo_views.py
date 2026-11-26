@@ -51,23 +51,6 @@ def bandeja(request):
 def contexto(request,exp,errores=None):
     from django.conf import settings
     context=s.resumen(exp,request.user)
-    if context['rol']=='OFICINA':
-        comercial=context['propuesta'] if context['solicitud'] and context['propuesta'] and context['propuesta'].diagnostico_id==context['solicitud'].diagnostico_id else None
-        context['pasos']=[dict(nombre=n,estado='Pendiente') for n in
-            ('Solicitud de taller','Cotización','Aceptación del cliente','Repuestos del cliente','Servicio autorizado')]
-        context['paso']=1
-        if context['solicitud']: context['pasos'][0]['estado']='Listo';context['paso']=2
-        if comercial: context['pasos'][1]['estado']='Listo';context['paso']=3
-        if comercial and hasattr(comercial,'decision'):
-            context['pasos'][2]['estado']=comercial.decision.get_decision_display()
-            if comercial.decision.decision=='APROBADO': context['paso']=4
-        if context['solicitud'] and context['solicitud'].envios.exists():
-            context['pasos'][3]['estado']='Enviado';context['paso']=5
-        context['pasos'][context['paso']-1]['estado']='En proceso'
-        if comercial and hasattr(comercial,'decision') and comercial.decision.decision=='RECHAZADO':
-            context['pasos'][2]['estado']='Rechazado'
-        if context['solicitud'] and context['solicitud'].envios.exists() and not context['solicitud'].envios.filter(confirmacion__isnull=True).exists():
-            context['pasos'][4]['estado']='Listo'
     context['historial_disponible']=all(getattr(settings,'MASISCAM_'+fase+'_LOCAL',False)
         for fase in ('OPERACION','CALIBRACION','CIERRE'))
     historica=False

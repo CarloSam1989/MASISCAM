@@ -506,6 +506,13 @@ def generar_final_automatico(calibracion_id, propagar=False):
         logging.getLogger(__name__).exception('Informe automático pendiente de reintento, calibración %s',cal.pk)
 
 
+def decorar(pasos):
+    """Color único por estado para todos los steppers (TALLER, OFICINA y ADMINISTRADOR)."""
+    clases={'Listo':'ok','Aprobado':'ok','En proceso':'proceso','Pendiente':'pendiente','Bloqueado':'bloqueado'}
+    for p in pasos: p['clase']=clases.get(p['estado'],'pendiente')
+    return pasos
+
+
 def resumen(exp, usuario):
     """Five visible steps and one next action; all writes still reauthorize."""
     from django.urls import reverse
@@ -563,7 +570,7 @@ def resumen(exp, usuario):
         elif not mensaje and not o._propuesta_vigente(prop):
             mensaje='ADMINISTRADOR debe revisar conjuntamente el diagnóstico y la cotización PDF antes de la aceptación comercial.'
             bloqueo=True
-            if role=='ADMIN':accion=action('Revisar expediente',url=reverse('masiscam:flujo_detalle',args=[exp.pk]))
+            if role=='ADMIN':accion=action('Revisar expediente',url=reverse('masiscam:flujo_detalle',args=[exp.pk])+'#decision-administrativa')
         elif not mensaje:
             try: autorizacion(sol); auth=True
             except ValidationError as error: auth=False; mensaje='; '.join(error.messages)
@@ -623,15 +630,18 @@ def resumen(exp, usuario):
     if aprobado:
         pasos[2]['estado']='Aprobado'
         if o.estado(exp)=='REPARACION_FINALIZADA': pasos[3]['estado']='Aprobado'
-        elif role=='TALLER':
+        elif settings.MASISCAM_OPERACION_LOCAL:   # ya se puede (o se está) reparando: la etapa 4 es la accesible
+            paso=max(paso,4)
+            if pasos[3]['estado'] not in {'Listo','Aprobado'}: pasos[3]['estado']='En proceso'
+        if role=='TALLER' and pasos[3]['estado']!='Aprobado':
             despues='Después: generar informe de calibración (requiere reparación revisada por ADMINISTRADOR y protocolo aprobado).'
-    clases={'Listo':'ok','Aprobado':'ok','En proceso':'proceso','Pendiente':'pendiente','Bloqueado':'bloqueado'}
-    for p in pasos: p['clase']=clases.get(p['estado'],'pendiente')
     cerrado=CierreExpediente.objects.filter(expediente_id=exp.pk).first()
     if cerrado:
         accion=action('Registrar nuevo mantenimiento',url=reverse('masiscam:recepcion_crear')+f'?equipo={exp.registro.equipo_id}') if role=='TALLER' else action('Descargar informe final',url=reverse('masiscam:cierre_documento',args=[exp.pk,cerrado.informe_id]))
         mensaje='Mantenimiento cerrado. Consulta de documentos e historial.'
         for p in pasos: p['estado']='Listo'
+        despues=''
+    decorar(pasos)
     return dict(pasos=pasos,paso=paso,accion=accion,mensaje=mensaje,bloqueo=bloqueo,
         inspeccion=ins,diagnostico=diag,solicitud=sol,propuesta=prop,calibracion=cal,informe=informe,rol=role,
         aprobado_admin=aprobado,despues=despues)
