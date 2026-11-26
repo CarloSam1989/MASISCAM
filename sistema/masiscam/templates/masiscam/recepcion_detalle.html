@@ -1,6 +1,6 @@
-{% extends 'masiscam/base.html' %}{% load static %}
+{% extends 'masiscam/base.html' %}{% load static masiscam_assets %}
 {% block title %}Recepción · {{ expediente.numero }}{% endblock %}
-{% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/flujo.css' %}">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static_v 'masiscam/css/flujo.css' %}">{% endblock %}
 {% block content %}<div class="container mf-app">
 <header class="mf-heading"><div><p class="mf-eyebrow">{{ expediente.numero }} · RECEPCIÓN</p><h1>{{ equipo.nombre }}</h1><p>{{ snapshot.cliente }} · RUC {{ snapshot.ruc }}</p><p>Serie {{ snapshot.serie|default:'Pendiente de identificación' }} · {{ equipo.marca }} {{ equipo.modelo }}</p></div><span class="mf-badge">{% if confirmacion %}Recepción confirmada{% else %}Recepción por completar{% endif %}</span></header>
 {% if not es_oficina %}{% include 'masiscam/_flujo_pasos.html' %}{% endif %}

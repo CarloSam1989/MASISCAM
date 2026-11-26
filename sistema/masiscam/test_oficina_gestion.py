@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from pathlib import Path
 from decimal import Decimal
@@ -244,7 +245,27 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertEqual((dec.politica['tipo'],dec.politica['revision']),('ADMINISTRATIVA',RevisionAdministrativa.objects.get(expediente=self.exp).pk))
         self.assertEqual(Auditoria.objects.filter(expediente=self.exp,accion='AUTORIZACION_ADMINISTRATIVA').count(),1)
         self.assertIn('Reparación y mantenimiento',lista())
-        self.assertIn('protocolo',taller()['mensaje'])   # siguiente etapa: calibración, que sigue exigiendo un protocolo exacto validado
+        r=taller()
+        self.assertTrue(r['aprobado_admin']); self.assertEqual([p['estado'] for p in r['pasos']][2],'Aprobado'); self.assertEqual(r['pasos'][2]['clase'],'ok')
+        self.assertIn('clase',r['pasos'][0]); self.assertNotIn('Pendiente de aceptación del cliente',r['mensaje'])
+        # Calibración: sin protocolo aprobado se bloquea con un mensaje claro; con protocolo validado TALLER genera el informe.
+        self.assertEqual(r['mensaje'],'Falta protocolo de calibración aprobado para continuar.'); self.assertTrue(r['bloqueo']); self.assertIsNone(r['accion'])
+        from . import calibracion_services as c, test_calibracion as cq
+        definicion=cq.definicion_qa(); definicion['aplicacion'].update(marca=self.exp.registro.equipo.marca,modelo=self.exp.registro.equipo.modelo)
+        protocolo=c.crear_plantilla(usuario=self.admin,empresa=self.empresa,clave=uuid.uuid4(),archivo=cq.protocolo_pdf(),
+            datos=dict(codigo='OG-QA',titulo='PROTOCOLO FICTICIO QA',tipo_equipo=self.exp.registro.equipo.tipo_producto,definicion=definicion,proyecto_id=self.exp.registro.equipo.proyecto_id))
+        c.aplicar_plantilla(usuario=self.admin,empresa=self.empresa,plantilla_id=protocolo.pk,equipo_id=self.exp.registro.equipo_id,
+            clave=uuid.uuid4(),fundamento='Solo QA',version_equipo=definicion['aplicacion']['version_equipo'])
+        with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[cq.anchor_qa(protocolo)]):
+            from .test_tecnica import usuario as _usuario
+            cq.validar_qa(self.empresa,_usuario(self.empresa,'validador-og-qa','ADMIN'),protocolo)
+            r=taller(); self.assertEqual(r['accion']['texto'],'Generar informe de calibración'); self.assertFalse(r['bloqueo'])
+            self.client.force_login(self.taller)
+            html=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk])).content.decode()
+            self.assertIn('Generar informe de calibración',html); self.assertIn('data-aprobado-admin',html); self.assertIn('is-ok',html)
+            self.assertNotIn('Registrar respuesta del cliente',html); self.assertNotIn('MASISCAM_POLITICA_COMERCIAL',html)
+            self.client.force_login(self.oficina)
+            self.assertNotEqual(s.resumen(self.exp,self.oficina)['accion'] and s.resumen(self.exp,self.oficina)['accion']['texto'],'Generar informe de calibración')
         self.assertEqual(ExpedienteMantenimiento.objects.filter(registro__equipo=self.exp.registro.equipo).count(),1)
         self.assertEqual((EnvioRepuestos.objects.count(),AdquisicionRepuesto.objects.count()),(0,0))
 
@@ -616,7 +637,8 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
         prop=OficinaGestionTests.cotizar(self,archivo=None)
         galleta=self._galleta(self.taller)
         pagina=self.live_server_url+reverse('masiscam:taller_equipo',args=[self.exp.registro.equipo_id])+f'?expediente={self.exp.pk}'
-        def ver(texto,botones=()):
+        flujo_url=self.live_server_url+reverse('masiscam:flujo_detalle',args=[self.exp.pk])
+        def ver(texto,botones=(),paso3=None):
             with sync_playwright() as pw:
                 browser=pw.chromium.launch(channel='msedge',headless=True)
                 try:
@@ -627,13 +649,26 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                         expect(page.locator('body')).to_contain_text(texto)
                         for boton in botones: expect(page.get_by_role('link',name=boton).or_(page.get_by_role('button',name=boton)).first).to_be_visible()
                         self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),f'desborda a {ancho}px')
+                        if paso3:   # stepper de 5 etapas con chips de estado y color consistente
+                            page.goto(flujo_url)
+                            expect(page.locator('.mf-steps > li')).to_have_count(5)
+                            tercero=page.locator('.mf-steps > li').nth(2)
+                            expect(tercero).to_have_attribute('data-estado',paso3[0]); expect(tercero).to_have_class(re.compile(paso3[1]))
+                            expect(tercero.locator('.mf-chip')).to_have_text(paso3[0])
+                            if paso3[0]=='Aprobado':
+                                expect(page.locator('[data-aprobado-admin]')).to_contain_text('Aprobado por ADMINISTRADOR')
+                                expect(page.locator('body')).not_to_contain_text('aceptación del cliente')
+                                color=tercero.locator('.mf-number').evaluate('e=>getComputedStyle(e).backgroundColor')
+                                self.assertEqual(color,'rgb(47, 143, 85)')   # verde = aprobado
+                            expect(page.locator('.mf-next .mf-main-action').first).to_be_visible() if page.locator('.mf-next .mf-main-action').count() else None
+                            self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),f'desborda a {ancho}px (flujo)')
                         context.close()
                 finally:
                     browser.close()
-        ver('Tu diagnóstico está en revisión')
+        ver('Tu diagnóstico está en revisión',paso3=('Bloqueado','is-bloqueado'))
         s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
             propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
-        ver('Aprobado por ADMINISTRADOR',botones=('Registrar repuestos del cliente',))   # sin aceptación del cliente ni política JSON
+        ver('Aprobado por ADMINISTRADOR',botones=('Registrar repuestos del cliente',),paso3=('Aprobado','is-ok'))   # sin aceptación del cliente ni política JSON
         pieza=self.diag.piezas.get()
         o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
             datos=dict(pieza_id=pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=pieza.numero_parte,

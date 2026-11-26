@@ -255,8 +255,6 @@ MENSAJES_TALLER = {
     'ADMINISTRADOR debe revisar las actividades terminadas.': 'Hay actividades terminadas pendientes de revisión.',
     'El responsable del sistema debe habilitar la calibración. Se mantiene la exigencia de un protocolo aprobado y revisión independiente.':
         'La calibración se habilitará cuando corresponda.',
-    'La reparación está aprobada. Inicia la calibración con un protocolo exacto autorizado; no se presume una exención.':
-        'Inicia la calibración con el protocolo indicado para este equipo.',
     'Completa las mediciones y envía la calibración a la revisión independiente de ADMINISTRADOR.':
         'Completa las mediciones y envía la calibración.',
     'El informe PDF se genera con las fuentes aprobadas y conserva su revisión final independiente.':

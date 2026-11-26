@@ -32,3 +32,25 @@
 .mf-form-tecnico .tiene-error textarea,.mf-form-tecnico .tiene-error select{border-color:#c0392b}.mf-form-tecnico .mf-error{color:#b3261e;font-size:.82rem}
 .mf-acciones-form{display:flex;flex-wrap:nowrap;align-items:center;gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid #e3ebf2}.mf-acciones-form .btn{white-space:nowrap}
 @media(max-width:575px){.mf-acciones-form{flex-wrap:wrap}.mf-acciones-form .btn{flex:1 1 100%;white-space:normal}}
+
+/* Stepper horizontal con estados (Listo/Aprobado, En proceso, Pendiente, Bloqueado) */
+.mf-steps{counter-reset:paso;position:relative;gap:10px}
+.mf-steps .mf-step{position:relative;flex-direction:column;align-items:flex-start;gap:8px;padding:14px 12px;border-radius:14px;background:#fff;border:1px solid #d8e3ee;transition:box-shadow .15s}
+.mf-steps .mf-step::after{content:"";position:absolute;top:26px;left:calc(100% + 1px);width:10px;height:2px;background:#cbd8e4}
+.mf-steps .mf-step:last-child::after{display:none}
+.mf-steps .mf-number{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:#e8eef5;color:#31577b;font-weight:700;font-size:.82rem}
+.mf-chip{display:inline-block;margin-top:6px;padding:3px 10px;border-radius:30px;font-size:.72rem;font-weight:600;background:#fff4cf;color:#7a5a00}
+.mf-step.is-ok{border-color:#9bd0ae}.mf-step.is-ok .mf-number{background:#2f8f55;color:#fff}.mf-step.is-ok .mf-chip,.mf-chip.is-ok{background:#dff3e6;color:#1d6b3c}
+.mf-step.is-proceso{border-color:#8db4dd}.mf-step.is-proceso .mf-number{background:#2c6fb5;color:#fff}.mf-step.is-proceso .mf-chip{background:#dcebfb;color:#1d4f86}
+.mf-step.is-pendiente .mf-chip{background:#fff4cf;color:#7a5a00}
+.mf-step.is-bloqueado{background:#f6f7f9;border-color:#d5d9de}.mf-step.is-bloqueado .mf-number{background:#9aa3ad;color:#fff}.mf-step.is-bloqueado .mf-chip{background:#e8ebee;color:#4a5560}
+.mf-steps .mf-step[aria-current]{box-shadow:0 0 0 2px #365c7e}
+.mf-steps small.mf-chip{margin-top:6px;text-align:left}
+.mf-decision{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 20px;padding:12px 16px;background:#eef8f1;border:1px solid #bfe3cb;border-radius:14px}.mf-decision p{margin:0;font-size:.9rem}
+/* Tarjetas y «Siguiente paso» */
+.mf-card,.mf-next{border-radius:16px;border:1px solid #d9e4ee;box-shadow:0 4px 14px #18304a0a}
+.mf-next{border-left:6px solid #2c6fb5;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}
+.mf-next h2{font-size:1.4rem;margin-bottom:6px}.mf-next p{margin:0 0 6px;color:#3d556b}
+.mf-next .mf-after{font-size:.85rem;color:#526a7f}
+.mf-next .mf-main-action{min-width:240px;padding:12px 22px;font-size:1.02rem;font-weight:600;border-radius:12px}
+@media(max-width:991px){.mf-steps .mf-step::after{display:none}.mf-steps .mf-step{flex-direction:row;align-items:center}.mf-steps .mf-step>div{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:1}.mf-steps small.mf-chip{margin-top:0}.mf-next .mf-main-action{width:100%}}

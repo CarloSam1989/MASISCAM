@@ -1,6 +1,6 @@
 {% extends 'masiscam/base.html' %}{% load static l10n masiscam_assets %}
 {% block title %}{{ expediente.numero }} · Revisión de expediente{% endblock %}
-{% block extra_css %}<link rel="stylesheet" href="{% static 'masiscam/css/flujo.css' %}?v=20261115-revision">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static_v 'masiscam/css/flujo.css' %}">{% endblock %}
 {% block content %}<div class="container mf-app" id="revision-expediente">
   <header class="mf-heading"><div><p class="mf-eyebrow">ADMINISTRADOR · {{ expediente.numero }}</p><h1>Revisión del expediente</h1><p>{{ equipo.nombre }} · {{ equipo.marca }} {{ equipo.modelo }} · Serie {{ equipo.numero_serie }}</p><p>{{ expediente.cliente_contractual.nombre_comercial }} · RUC {{ expediente.cliente_contractual.ruc }}</p></div><strong role="status">{% if revision_vigente %}Expediente aprobado{% elif revision_administrativa.decision == 'DEVUELTO' %}Devuelto para corrección{% else %}Pendiente de revisión conjunta{% endif %}</strong></header>
   {% if errores_generales %}<div class="alert alert-danger" role="alert"{% if request.POST.op == "aprobar_expediente" %} data-masiscam-message="error"{% endif %}>{% for error in errores_generales %}{% if error != "TALLER debe completar y enviar el diagnóstico para revisión." or not revision_faltantes %}<p>{{ error }}</p>{% endif %}{% endfor %}{% if request.POST.op == "aprobar_expediente" %}{% for faltante in revision_faltantes %}<p>{{ faltante }}</p>{% endfor %}{% endif %}</div>{% endif %}
