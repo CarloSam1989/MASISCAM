@@ -56,7 +56,7 @@
 @media(max-width:991px){.mf-steps .mf-step::after{display:none}.mf-steps .mf-step{flex-direction:row;align-items:center}.mf-steps .mf-step>div{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:1}.mf-steps small.mf-chip{margin-top:0}.mf-next .mf-main-action{width:100%}}
 
 /* Secuencia de TALLER en «Siguiente paso» */
-.mf-secuencia{list-style:none;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.mf-secuencia{list-style:none;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .mf-secuencia li{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:10px;border:1px solid #d8e3ee;border-radius:12px;background:#fff;font-size:.86rem;font-weight:600}
 .mf-secuencia li.is-ok{border-color:#9bd0ae;background:#f3faf5}.mf-secuencia li.is-proceso{border-color:#8db4dd;background:#f2f7fd;box-shadow:0 0 0 1px #8db4dd}
 .mf-secuencia li.is-ok .mf-number{background:#2f8f55;color:#fff}.mf-secuencia li.is-proceso .mf-number{background:#2c6fb5;color:#fff}
@@ -83,3 +83,5 @@
 .mf-cal-med label{font-size:.82rem}.mf-cal-med .mf-n{display:inline-block;min-width:1.6em;font-weight:700;color:#31577b}
 @media(max-width:991px){.mf-cal-dl,.mf-cal-med{grid-template-columns:repeat(2,minmax(0,1fr))}.mf-cal-grid{grid-template-columns:1fr}}
 @media(max-width:575px){.mf-cal-dl,.mf-cal-med{grid-template-columns:1fr}}
+.mf-trabajos{margin:8px 0 0;padding-left:1.2rem}.mf-trabajos li{margin-bottom:4px}[data-mantenimiento] .form-control[type=file]{padding:8px}
+.mf-chip.is-bloqueado{background:#fde8e6;color:#9b2c20}

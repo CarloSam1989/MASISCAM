@@ -1,17 +1,35 @@
 from .campos import DecimalFlexible
 from django import forms
+from django.utils import timezone
 from decimal import Decimal
 from .tecnica_forms import BaseForm
 from .models import (Diagnostico,PropuestaComercial,RecepcionRepuesto,PiezaRequerida,
     ActividadReparacion,ResultadoReparacion)
 
-AREAS={'propuesta':{'OFICINA'},'decision':{'OFICINA'},'repuesto':{'OFICINA', 'ADMIN', 'TALLER'},
+AREAS={'mantenimiento':{'TALLER'},'propuesta':{'OFICINA'},'decision':{'OFICINA'},'repuesto':{'OFICINA', 'ADMIN', 'TALLER'},
     'actividad':{'TALLER'},'uso':{'TALLER'},'foto':{'TALLER'},'resultado':{'TALLER'},
     'revision':{'ADMIN'},'documento':{'OFICINA', 'ADMIN'},'respaldo':{'OFICINA'},'foto_repuesto':{'OFICINA', 'ADMIN', 'TALLER'}}
-LABELS={'propuesta':'Propuesta comercial','decision':'Decisión del cliente','repuesto':'Registrar repuestos del cliente',
+LABELS={'mantenimiento':'Registrar mantenimiento','propuesta':'Propuesta comercial','decision':'Decisión del cliente','repuesto':'Registrar repuestos del cliente',
     'actividad':'Iniciar actividad','uso':'Repuesto utilizado','foto':'Fotografía de actividad',
     'resultado':'Resultado de actividad','revision':'Revisión de ADMINISTRADOR','documento':'Emitir documento interno',
     'respaldo':'Adjuntar respaldo comercial','foto_repuesto':'Fotografía de repuesto recibido'}
+
+
+class MantenimientoForm(BaseForm):
+    """Pantalla única de mantenimiento: componentes precargados, observaciones y resultado; las fotografías van aparte."""
+    inicio = forms.DateTimeField(widget=forms.HiddenInput,initial=timezone.now)
+    componentes = forms.MultipleChoiceField(required=False,widget=forms.CheckboxSelectMultiple,label='Componentes intervenidos')
+    observaciones = forms.CharField(required=False,max_length=20000,widget=forms.Textarea,label='Observaciones')
+    resultado = forms.CharField(required=False,max_length=20000,widget=forms.Textarea,label='Resultado del mantenimiento')
+
+    def __init__(self,*args,exp,**kwargs):
+        from . import operacion_services as svc
+        super().__init__(*args,**kwargs)
+        piezas = svc.componentes_autorizados(exp)
+        self.fields['componentes'].choices = [(str(p['pk']),p['texto']) for p in piezas]
+        self.fields['componentes'].initial = [str(p['pk']) for p in piezas]
+        self.fields['componentes'].widget.attrs.pop('class',None)
+        for nombre in ('observaciones','resultado'): self.fields[nombre].widget.attrs['rows']=3
 
 
 ACTIVIDADES_BASE=('Mantenimiento','Reparación','Cambio de aceite','Calibración')

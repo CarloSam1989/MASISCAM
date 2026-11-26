@@ -55,14 +55,7 @@ def dependencias(exp):
     diag=auth.propuesta.diagnostico
     if not t._aprobado(diag):
         raise ValidationError('Diagnóstico aprobado no vigente.')
-    # Parts are physical receipts, not an inventory allocation. Require the
-    # exact diagnosis/part/unit coverage already used by the repair service.
-    from django.db.models import Sum
-    quantities={(r['pieza_id'],r['numero_parte'],r['unidad']):r['n'] for r in RecepcionRepuesto.objects.filter(expediente=exp).values('pieza_id','numero_parte','unidad').annotate(n=Sum('cantidad'))}
-    for p in diag.piezas.all():
-        qty=quantities.get((p.pk,p.numero_parte,p.unidad),0)
-        if not p.unidad or qty<p.cantidad:
-            raise ValidationError('Repuestos aplicables pendientes; no se admite una excepción implícita.')
+    # Las piezas del diagnóstico son informativas: el informe las consolida sin exigir recepciones de repuestos.
     return auth,cal
 
 

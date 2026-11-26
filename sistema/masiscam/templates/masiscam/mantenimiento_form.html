@@ -1,0 +1,26 @@
+{% extends 'masiscam/base.html' %}{% load masiscam_assets %}{% block extra_css %}<link rel="stylesheet" href="{% static_v 'masiscam/css/flujo.css' %}">{% endblock %}{% block content %}<div class="container mf-app" style="overflow-wrap:anywhere" data-mantenimiento>
+<header class="mf-heading"><div><p class="mf-eyebrow">{{ expediente.numero }}</p><h1>Registrar mantenimiento</h1><p>{{ expediente.registro.equipo }}</p></div><a class="btn btn-outline-secondary" href="{% url 'masiscam:flujo_detalle' expediente.pk %}">Volver al expediente</a></header>
+{% if sin_autorizacion %}<section class="mf-next" role="status" data-sin-autorizacion><div><p class="mf-eyebrow">SIGUIENTE PASO</p><h2>Esperando la aprobación de ADMINISTRADOR</h2><p>El mantenimiento se habilita cuando ADMINISTRADOR aprueba conjuntamente el informe técnico y la cotización.</p></div></section>
+{% else %}
+<section class="mf-decision" aria-label="Trabajos autorizados"><span class="mf-chip is-ok">Aprobado por ADMINISTRADOR</span><h2>Trabajos autorizados</h2>
+{% if trabajos %}<ul class="mf-trabajos" data-trabajos>{% for t in trabajos %}<li>{{ t.descripcion }}{% if t.cantidad %} <small>· {{ t.cantidad }} {{ t.unidad }}</small>{% endif %}</li>{% endfor %}</ul>{% else %}<p>{{ alcance_autorizado|linebreaksbr }}</p>{% endif %}</section>
+{% if actividad and not abierta %}<section class="mf-card p-3 mb-3" data-mantenimiento-enviado><h2>Mantenimiento {% if revision.decision == 'APROBADO' %}aprobado{% else %}enviado a revisión{% endif %}</h2>
+<p><strong>Resultado:</strong> {{ resultado.resultado|linebreaksbr }}</p>{% if resultado.observaciones %}<p><strong>Observaciones:</strong> {{ resultado.observaciones|linebreaksbr }}</p>{% endif %}
+<p><strong>Componentes intervenidos:</strong><br>{{ actividad.componentes|linebreaksbr }}</p>
+<p class="mf-frozen">{% if revision.decision == 'APROBADO' %}Revisado por ADMINISTRADOR.{% else %}ADMINISTRADOR debe revisarlo antes de pasar a la calibración.{% endif %}</p></section>
+{% else %}
+{% if revision.decision == 'OBSERVADO' %}<section class="mf-decision" role="status" data-observado><span class="mf-chip is-bloqueado">Observado</span><p>{{ revision.motivo|linebreaksbr }}</p></section>{% endif %}
+<form method="post" enctype="multipart/form-data" class="mf-card row g-3" data-form-mantenimiento>{% csrf_token %}
+{{ form.clave }}{{ form.inicio }}
+{% if form.non_field_errors %}<div class="col-12 alert alert-danger" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+<div class="col-12"><fieldset class="mf-grupo"><legend>Componentes intervenidos</legend>
+{% if form.componentes.field.choices %}<div data-componentes>{{ form.componentes }}</div>{% else %}<p>El diagnóstico aprobado no seleccionó piezas: el mantenimiento se registra sobre los trabajos autorizados.</p>{% endif %}{{ form.componentes.errors }}</fieldset></div>
+<div class="col-12 col-lg-6"><label class="form-label" for="{{ form.observaciones.id_for_label }}">Observaciones</label>{{ form.observaciones }}{{ form.observaciones.errors }}</div>
+<div class="col-12 col-lg-6"><label class="form-label" for="id_fotografias">Fotografías del mantenimiento</label><input class="form-control" type="file" id="id_fotografias" name="fotografias" accept="image/jpeg,image/png,image/webp" multiple capture="environment"><p class="form-text">Puedes adjuntar varias; se conservan en el expediente y en el informe final.</p></div>
+{% if fotos %}<div class="col-12" data-fotos><p class="mf-eyebrow">FOTOGRAFÍAS GUARDADAS ({{ fotos|length }})</p><ul>{% for f in fotos %}<li>{{ f.documento.nombre_original }} · {{ f.leyenda }}</li>{% endfor %}</ul></div>{% endif %}
+<div class="col-12"><label class="form-label" for="{{ form.resultado.id_for_label }}">Resultado del mantenimiento <small>(obligatorio para finalizar)</small></label>{{ form.resultado }}{{ form.resultado.errors }}</div>
+<div class="col-12 d-flex flex-wrap gap-2"><button class="btn btn-outline-primary" name="accion" value="avance" data-guardar-avance>Guardar avance</button><button class="btn btn-primary mf-main-action" name="accion" value="finalizar" data-finalizar-mantenimiento>Finalizar mantenimiento</button></div>
+</form>
+{% endif %}
+{% endif %}
+</div>{% endblock %}

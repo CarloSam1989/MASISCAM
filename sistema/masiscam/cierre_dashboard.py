@@ -71,7 +71,6 @@ def etapa(exp):
     if exp.informe_estado: return 'INFORME_'+exp.informe_estado
     if exp.calibracion_estado=='APROBADA': return 'INFORME_PENDIENTE'
     if exp.calibracion_estado: return 'CALIBRACION_'+exp.calibracion_estado
-    if getattr(exp,'piezas_pendientes',exp.requiere_piezas and not exp.tiene_recepcion): return 'REPUESTOS_PENDIENTES'
     if exp.tiene_actividad: return 'CALIBRACION_PENDIENTE' if getattr(exp,'reparacion_aprobada',False) else 'REPARACION'
     return 'REPARACION_PENDIENTE'
 
@@ -90,17 +89,10 @@ def resumen(user,empresa,filters=None,limite=100):
         key=(a['expediente_id'],a['autorizacion__propuesta_id'])
         repairs.setdefault(key,[]).append(a['revision_actual'])
         sources.setdefault(key,[]).append(dict(actividad=a['pk'],resultado=a['resultado_actual']))
-    requirements={};received={}
-    for p in PiezaRequerida.objects.filter(diagnostico_id__in=[r.diagnostico_actual for r in rows]).values('pk','diagnostico_id','numero_parte','unidad','cantidad'):
-        requirements.setdefault(p['diagnostico_id'],[]).append(p)
-    for r in RecepcionRepuesto.objects.filter(expediente_id__in=[r.pk for r in rows]).values('pieza_id','numero_parte','unidad','cantidad'):
-        key=(r['pieza_id'],r['numero_parte'],r['unidad'])
-        received[key]=received.get(key,0)+r['cantidad']
     for exp in rows:
         statuses=repairs.get((exp.pk,exp.propuesta_id),[])
         exp.reparacion_aprobada=bool(statuses) and all(v=='APROBADO' for v in statuses)
         exp.fuente_reparacion_cambiada=bool(exp.calibracion_estado and exp.calibracion_reparacion!=sources.get((exp.pk,exp.propuesta_id),[]))
-        exp.piezas_pendientes=any(not p['unidad'] or received.get((p['pk'],p['numero_parte'],p['unidad']),0)<p['cantidad'] for p in requirements.get(exp.diagnostico_actual,[]))
         exp.etapa_actual=etapa(exp)
         exp.alerta_documental=not exp.recibido or exp.informe_estado=='BORRADOR'
     state=(filters or {}).get('estado','')

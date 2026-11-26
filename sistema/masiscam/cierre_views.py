@@ -89,7 +89,7 @@ def detalle(request,pk):
         ('Inspección',projection.inspeccion_estado or 'NO_INICIADO'),('Diagnóstico',projection.diagnostico_estado or 'NO_INICIADO'),
         ('Comercial',projection.comercial_estado or 'PENDIENTE'),('Calibración',projection.calibracion_estado or 'NO_INICIADO'),
         ('Informe final',projection.informe_estado or 'NO_INICIADO'),('Cierre','FINALIZADO' if projection.cerrado else 'PENDIENTE')]
-    progress.insert(4,('Repuestos','PENDIENTES' if projection.piezas_pendientes else ('SIN_PENDIENTES' if projection.diagnostico_estado in {'APROBADO','FINALIZADO'} else 'POR_DEFINIR')))
+    progress.insert(4,('Repuestos','INFORMATIVO' if projection.diagnostico_estado in {'APROBADO','FINALIZADO'} else 'POR_DEFINIR'))   # lista del diagnóstico: no condiciona el mantenimiento
     progress.insert(5,('Reparación','FINALIZADO' if projection.reparacion_aprobada else ('EN_PROCESO' if projection.tiene_actividad else 'NO_INICIADO')))
     progress=[(name,state.replace('_',' ')) for name,state in progress]
     return render(request,'masiscam/cierre_detalle.html',dict(expediente=exp,rol=role,form=form,bloqueo=blocked,progreso=progress,

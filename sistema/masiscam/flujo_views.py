@@ -231,11 +231,8 @@ def plano_aplicable_url(request,exp,diagnostico):
 MENSAJES_TALLER = {
     'OFICINA puede preparar la cotización y enviarla a ADMINISTRADOR. Las operaciones posteriores permanecen deshabilitadas y conservan sus aprobaciones obligatorias.':
         'Tu diagnóstico y las piezas ya fueron enviados. El siguiente paso se habilita cuando corresponda.',
-    'Repuestos enviados. Confirma las cantidades físicas; la reparación seguirá exigiendo autorización comercial vigente.':
-        'Repuestos enviados. Confirma las cantidades recibidas físicamente.',
     'ADMINISTRADOR debe revisar conjuntamente el diagnóstico y la cotización.':
         'Tu diagnóstico está en revisión. Continúa cuando se habilite el siguiente paso.',
-    'ADMINISTRADOR debe revisar las actividades terminadas.': 'Hay actividades terminadas pendientes de revisión.',
     'El responsable del sistema debe habilitar la calibración. Se mantiene la exigencia de un protocolo aprobado y revisión independiente.':
         'La calibración se habilitará cuando corresponda.',
     'Completa las mediciones y envía la calibración a la revisión independiente de ADMINISTRADOR.':

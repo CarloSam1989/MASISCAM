@@ -82,10 +82,10 @@ def construir_informe(s,fotografias=()):
                 story.append(table([['Pieza enviada','Cantidad / unidad']]+[[r['descripcion'],r['cantidad']+' '+r['unidad']] for r in envio['lineas']],[.7,.3]))
                 for diferencia in envio['diferencias']:
                     story.append(p(f"Recibido: {diferencia['cantidad']} · Diferencias: {diferencia['discrepancia'] or 'Sin diferencias declaradas'}",small))
-    story.append(p('5. Repuestos recibidos',head))
+    story.append(p('5. Repuestos recibidos (registro histórico)',head))
     if s['repuestos']:
         story.append(table([['Descripción / parte','Cantidad / unidad','Procedencia / guía','Observaciones']]+[[r['descripcion']+' / '+r['numero_parte'],r['cantidad']+' '+r['unidad'],r['procedencia']+' / '+(r['guia'] or 'Sin guía registrada'),r['discrepancia']] for r in s['repuestos']],[.3,.18,.27,.25]))
-    else: story.append(p('Sin recepciones de repuestos registradas. No se presupone recepción física.'))
+    else: story.append(p('Sin recepciones de repuestos registradas: la lista de piezas del diagnóstico es informativa y no condicionó el mantenimiento. No se presupone recepción física.'))
     story.append(p('6. Reparación y montaje',head))
     for activity in s['reparaciones']:
         facts(activity);facts(activity['aprobacion'])

@@ -222,8 +222,9 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertEqual(RevisionAdministrativa.objects.get(expediente=self.exp).decision,'APROBADO')
         self.assertTrue(s.aprobacion_conjunta_vigente(prop)); self.assertEqual(Diagnostico.objects.get(pk=self.diag.pk).estado,'FINALIZADO')
         # La aprobación de ADMINISTRADOR es la única condición comercial: no se pide aceptación del cliente ni política JSON.
-        r=taller(); self.assertEqual(r['accion']['texto'],'Registrar repuestos del cliente'); self.assertNotIn('aceptación del cliente',r['mensaje'].lower())
-        self.assertEqual([(e['texto'],e['estado']) for e in r['secuencia']],[('Registrar repuestos del cliente','Ahora'),('Iniciar reparación','Pendiente'),
+        r=taller(); self.assertEqual(r['accion']['texto'],'Registrar mantenimiento'); self.assertNotIn('aceptación del cliente',r['mensaje'].lower())
+        self.assertNotIn('repuestos',r['mensaje'].lower())   # TALLER no registra repuestos: la lista del diagnóstico es informativa
+        self.assertEqual([(e['texto'],e['estado']) for e in r['secuencia']],[('Registrar mantenimiento','Ahora'),
             ('Registrar calibración','Pendiente'),('Generar informe final','Pendiente')])
         self.assertEqual(s.resumen(self.exp,self.admin)['secuencia'],[]); self.assertEqual(s.resumen(self.exp,self.oficina)['secuencia'],[])   # solo guía a TALLER
         self.assertIn('Aprobado por ADMINISTRADOR',lista()); self.assertNotContains(detalle_taller(),'Pendiente de aceptación del cliente')
@@ -240,28 +241,29 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         html_taller=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk])).content.decode()
         for marca in ('class="mf-steps"','mf-step is-ok','mf-step is-proceso','mf-chip','data-aprobado-admin','class="mf-next"','id="siguiente"'):
             self.assertIn(marca,html_admin,marca); self.assertIn(marca,html_taller,marca)
-        self.assertIn('mf-main-action',html_taller)   # TALLER: botón principal «Registrar repuestos del cliente»
+        self.assertIn('mf-main-action',html_taller)   # TALLER: botón principal «Registrar mantenimiento»
+        for sobrante in ('Registrar repuestos del cliente','Registrar repuesto utilizado','Adjuntar fotografía de reparación','Abrir actividades y evidencias'): self.assertNotIn(sobrante,html_taller)
         self.assertNotIn('no sustituye la aceptación',html_admin); self.assertNotIn('Pendiente de aceptación del cliente',html_admin)
         self.assertNotIn('Registrar respuesta del cliente',str(s.resumen(self.exp,self.oficina)['accion']))
         self.assertFalse(DecisionComercial.objects.filter(expediente=self.exp).exists())   # sin aprobaciones inventadas hasta usarla
-        with self.assertRaises(ValidationError):    # sin repuestos del cliente registrados no se repara
-            o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
-                datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
-        self.assertFalse(DecisionComercial.objects.filter(expediente=self.exp).exists())
-        # 4) Repuestos del cliente registrados: TALLER puede iniciar la reparación en el mismo expediente.
-        rec=o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
-            datos=dict(pieza_id=self.pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=self.pieza.numero_parte,
-                descripcion=self.pieza.descripcion,cantidad=str(self.pieza.cantidad),unidad=self.pieza.unidad,fecha=timezone.now(),guia='',discrepancia=''))
-        r=taller(); self.assertEqual((r['paso'],r['accion']['texto']),(4,'Iniciar reparación')); self.assertIn('Registra la reparación',r['mensaje'])
-        self.assertEqual([e['estado'] for e in r['secuencia']],['Listo','Ahora','Pendiente','Pendiente'])
-        self.assertEqual([e['clase'] for e in r['secuencia']],['ok','proceso','pendiente','pendiente'])
-        act=o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
-            datos=dict(trabajo='Mantenimiento del reductor',componentes='Pieza QA',inicio=timezone.now()))
-        o.usar_repuesto(usuario=self.taller,empresa=self.empresa,actividad_id=act.pk,recepcion_id=rec.pk,cantidad=str(self.pieza.cantidad),observaciones='QA',clave=uuid.uuid4())
-        o.evidencia_actividad(usuario=self.taller,empresa=self.empresa,actividad_id=act.pk,clave=uuid.uuid4(),clase='DURANTE',leyenda='Trabajo QA',archivo=foto_pieza())
-        resultado=o.terminar_actividad(usuario=self.taller,empresa=self.empresa,actividad_id=act.pk,clave=uuid.uuid4(),
-            datos=dict(fin=timezone.now(),trabajo_realizado='Mantenimiento del reductor',resultado='Resultado QA'))
-        self.assertIn('ADMINISTRADOR debe revisar',taller()['mensaje'])
+        # 3) Sin registrar repuestos: TALLER registra el mantenimiento en una sola pantalla (avance con fotografía y cierre).
+        self.assertEqual(RecepcionRepuesto.objects.filter(expediente=self.exp).count(),0)
+        clave=uuid.uuid4()
+        act=o.registrar_mantenimiento(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=clave,inicio=timezone.now(),
+            componentes=[str(self.pieza.pk)],observaciones='Desarmado y limpieza',fotos=[foto_pieza()])
+        self.assertIn(self.pieza.descripcion[:20],act.componentes); self.assertTrue(act.trabajo.strip())
+        self.assertEqual(act.evidencias.count(),1)
+        o.registrar_mantenimiento(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=clave,inicio=timezone.now(),   # reintento: sin duplicados
+            componentes=[str(self.pieza.pk)],observaciones='Desarmado y limpieza',fotos=[foto_pieza()])
+        self.assertEqual((type(act).objects.count(),act.evidencias.count()),(1,1))
+        r=taller(); self.assertEqual((r['paso'],r['accion']['texto']),(4,'Registrar mantenimiento')); self.assertIn('Registra el mantenimiento',r['mensaje'])
+        self.assertEqual([e['estado'] for e in r['secuencia']],['Ahora','Pendiente','Pendiente'])
+        self.assertEqual([e['clase'] for e in r['secuencia']],['proceso','pendiente','pendiente'])
+        o.registrar_mantenimiento(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),inicio=timezone.now(),
+            observaciones='Desarmado y limpieza',resultado='Resultado QA',finalizar=True)
+        resultado=act.resultados.get()
+        self.assertEqual(RecepcionRepuesto.objects.filter(expediente=self.exp).count(),0)
+        self.assertIn('ADMINISTRADOR debe revisarlo',taller()['mensaje'])
         o.revisar_actividad(usuario=self.admin,empresa=self.empresa,resultado_id=resultado.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='Revisión independiente QA')
         dec=DecisionComercial.objects.get(expediente=self.exp)   # autorización derivada de la revisión de ADMINISTRADOR
         self.assertEqual((dec.politica['tipo'],dec.politica['revision']),('ADMINISTRATIVA',RevisionAdministrativa.objects.get(expediente=self.exp).pk))
@@ -285,15 +287,16 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[cq.anchor_qa(protocolo)]):
             from .test_tecnica import usuario as _usuario
             cq.validar_qa(self.empresa,_usuario(self.empresa,'validador-og-qa','ADMIN'),protocolo)
-            r=taller(); self.assertEqual(r['accion']['texto'],'Generar informe de calibración'); self.assertFalse(r['bloqueo'])
+            r=taller(); self.assertEqual(r['accion']['texto'],'Registrar calibración'); self.assertFalse(r['bloqueo'])
             html=self.client.get(url_cal).content.decode()
             self.assertIn('Solicitar inicio validado',html); self.assertNotIn('data-sin-protocolo',html); self.assertNotIn('No hay acciones de inicio disponibles',html)
             self.client.force_login(self.taller)
             html=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk])).content.decode()
-            self.assertIn('Generar informe de calibración',html); self.assertIn('data-aprobado-admin',html); self.assertIn('is-ok',html)
+            self.assertIn('Registrar calibración',html); self.assertIn('data-aprobado-admin',html); self.assertIn('is-ok',html)
+            self.assertIn(url_cal.split('?')[0],html)   # la hoja de calibración es accesible desde la secuencia de TALLER
             self.assertNotIn('Registrar respuesta del cliente',html); self.assertNotIn('MASISCAM_POLITICA_COMERCIAL',html)
             self.client.force_login(self.oficina)
-            self.assertNotEqual(s.resumen(self.exp,self.oficina)['accion'] and s.resumen(self.exp,self.oficina)['accion']['texto'],'Generar informe de calibración')
+            self.assertNotEqual(s.resumen(self.exp,self.oficina)['accion'] and s.resumen(self.exp,self.oficina)['accion']['texto'],'Registrar calibración')
         self.assertEqual(ExpedienteMantenimiento.objects.filter(registro__equipo=self.exp.registro.equipo).count(),1)
         self.assertEqual((EnvioRepuestos.objects.count(),AdquisicionRepuesto.objects.count()),(0,0))
 
@@ -333,6 +336,166 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertNotIn('Primero registre actividades',html); self.assertIn(f'<option value="{act.pk}" selected>',html); self.assertIn('Registrar repuesto utilizado',html)
         # Otros roles no registran repuestos utilizados.
         self.client.force_login(self.oficina); self.assertEqual(self.client.get(url_uso).status_code,403)
+
+    def _png(self,color):
+        from io import BytesIO
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        datos=BytesIO(); Image.new('RGB',(40,30),color).save(datos,'PNG')
+        return datos.getvalue()
+
+    def test_pantalla_unica_de_mantenimiento_sin_repuestos_ni_formularios_sueltos(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import ActividadReparacion, EvidenciaOperativa, ResultadoReparacion, RevisionReparacion
+        self._con_conceptos(); ids=[c['id'] for c in self.sol.snapshot['conceptos']]
+        prop=self.cotizar(archivo=None,cotizacion=dict(moneda='USD',lineas=[dict(concepto=i,precio_unitario=p) for i,p in zip(ids,('100.00','250.00','4.00'))]))
+        pieza=self.diag.piezas.get()
+        url=reverse('masiscam:operacion_operar',args=[self.exp.pk,'mantenimiento'])
+        foto=lambda nombre,color:SimpleUploadedFile(nombre,self._png(color),content_type='image/png')
+        # Sin aprobación conjunta de ADMINISTRADOR no hay mantenimiento ni formulario.
+        self.client.force_login(self.taller); html=self.client.get(url).content.decode()
+        self.assertIn('data-sin-autorizacion',html); self.assertNotIn('data-form-mantenimiento',html)
+        with self.assertRaises(ValidationError):
+            o.registrar_mantenimiento(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),inicio=timezone.now())
+        s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
+            propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
+        # Pantalla única: trabajos autorizados (sin el consumible), componentes precargados y solo dos botones de acción.
+        html=self.client.get(url).content.decode()
+        for esperado in ('Trabajos autorizados','Mantenimiento preventivo del reductor','Reparación de eje y rodamientos','Guardar avance','Finalizar mantenimiento','Observaciones','Fotografías del mantenimiento'):
+            self.assertIn(esperado,html,esperado)
+        self.assertNotIn('Aceite ISO VG 220',html); self.assertNotIn('Registrar repuestos del cliente',html); self.assertNotIn('Repuesto utilizado',html)
+        self.assertRegex(html,r'type="checkbox" name="componentes"[^>]*checked'); self.assertIn('multiple',html)
+        # Otros roles no acceden.
+        for otro in (self.oficina,self.admin):
+            self.client.force_login(otro); self.assertEqual(self.client.get(url).status_code,403)
+        self.client.force_login(self.taller)
+        base=dict(inicio=timezone.now().isoformat(),componentes=[str(pieza.pk)],observaciones='Desarmado y limpieza',resultado='')
+        # Guardar avance con dos fotografías: crea la actividad con los trabajos aprobados y la evidencia, sin recepción de repuestos.
+        clave=uuid.uuid4()
+        datos=lambda **extra:dict(base,clave=clave,accion='avance',fotografias=[foto('a.png','red'),foto('b.png','blue')],**extra)
+        self.assertEqual(self.client.post(url,datos()).status_code,302)
+        act=ActividadReparacion.objects.get()
+        self.assertIn('Mantenimiento preventivo del reductor',act.trabajo); self.assertIn('Reparación de eje y rodamientos',act.trabajo)
+        self.assertNotIn('Aceite',act.trabajo); self.assertIn(pieza.descripcion[:20],act.componentes)
+        self.assertEqual(act.evidencias.filter(clase='DURANTE').count(),2); self.assertFalse(RecepcionRepuesto.objects.exists())
+        # Doble clic / reintento de red con la misma clave: sin duplicados ni conflicto.
+        self.assertEqual(self.client.post(url,datos()).status_code,302)
+        self.assertEqual((ActividadReparacion.objects.count(),EvidenciaOperativa.objects.filter(actividad=act).count()),(1,2))
+        # Operación: TALLER ve una sola entrada; no la lista de formularios sueltos.
+        html=self.client.get(reverse('masiscam:operacion_detalle',args=[self.exp.pk])).content.decode()
+        self.assertIn('Registrar mantenimiento',html)
+        for sobrante in ('Iniciar actividad','Repuesto utilizado','Fotografía de actividad','Resultado de actividad','Registrar repuestos del cliente'): self.assertNotIn(sobrante,html)
+        # Un avance posterior (clave nueva) añade fotografías a la misma actividad.
+        self.assertEqual(self.client.post(url,dict(base,clave=uuid.uuid4(),accion='avance',fotografias=[foto('c.png','green')])).status_code,302)
+        self.assertEqual((ActividadReparacion.objects.count(),act.evidencias.count()),(1,3))
+        # Un cambio de observaciones sin fotografía no se puede guardar (los registros son inmutables) y no pierde datos.
+        r=self.client.post(url,dict(base,clave=uuid.uuid4(),accion='avance',observaciones='Otra nota'))
+        self.assertEqual(r.status_code,400); self.assertIn('Adjunte una fotografía',r.content.decode()); self.assertEqual(act.evidencias.count(),3)
+        # Finalizar exige el resultado.
+        r=self.client.post(url,dict(base,clave=uuid.uuid4(),accion='finalizar')); self.assertEqual(r.status_code,400); self.assertFalse(ResultadoReparacion.objects.exists())
+        self.assertIn('Describa el resultado',r.content.decode()); self.assertIn('Finalizar mantenimiento',r.content.decode()); self.assertIn('data-form-mantenimiento',r.content.decode())
+        fin=uuid.uuid4()
+        final=dict(base,clave=fin,accion='finalizar',resultado='Reductor mantenido y probado')
+        self.assertEqual(self.client.post(url,final).status_code,302)
+        self.assertEqual(self.client.post(url,final).status_code,302)   # doble clic: idempotente
+        resultado=ResultadoReparacion.objects.get(); self.assertEqual(resultado.resultado,'Reductor mantenido y probado')
+        self.assertEqual({a:Auditoria.objects.filter(expediente=self.exp,accion=a).count() for a in ('REPARACION_INICIADA','REPARACION_EVIDENCIA','REPARACION_RESULTADO')},
+            dict(REPARACION_INICIADA=1,REPARACION_EVIDENCIA=3,REPARACION_RESULTADO=1))
+        html=self.client.get(url).content.decode(); self.assertIn('data-mantenimiento-enviado',html); self.assertNotIn('data-form-mantenimiento',html)
+        self.assertEqual(self.client.post(url,dict(base,clave=uuid.uuid4(),accion='avance',fotografias=[foto('d.png','black')])).status_code,400)   # enviado: sin cambios
+        self.assertEqual(act.evidencias.count(),3)
+        self.assertEqual(o.estado(self.exp),'EN_REPARACION')
+        # Independencia: TALLER no revisa su trabajo; ADMINISTRADOR lo observa y TALLER lo corrige con una nueva versión.
+        with self.assertRaises(PermissionDenied):
+            o.revisar_actividad(usuario=self.taller,empresa=self.empresa,resultado_id=resultado.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='propio')
+        o.revisar_actividad(usuario=self.admin,empresa=self.empresa,resultado_id=resultado.pk,clave=uuid.uuid4(),decision='OBSERVADO',motivo='Falta torque final')
+        html=self.client.get(url).content.decode(); self.assertIn('data-observado',html); self.assertIn('Falta torque final',html); self.assertIn('data-form-mantenimiento',html)
+        self.assertEqual(self.client.post(url,dict(base,clave=uuid.uuid4(),accion='finalizar',resultado='Torque final aplicado')).status_code,302)
+        self.assertEqual(ResultadoReparacion.objects.count(),2)
+        nuevo=ResultadoReparacion.objects.order_by('-version').first()
+        o.revisar_actividad(usuario=self.admin,empresa=self.empresa,resultado_id=nuevo.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='Conforme')
+        self.assertEqual(o.estado(self.exp),'REPARACION_FINALIZADA'); self.assertFalse(RecepcionRepuesto.objects.exists())
+
+    def test_calibracion_accesible_tras_aprobacion_pero_exige_mantenimiento_y_protocolo(self):
+        from . import calibracion_services as c
+        self._con_conceptos(); ids=[x['id'] for x in self.sol.snapshot['conceptos']]
+        prop=self.cotizar(archivo=None,cotizacion=dict(moneda='USD',lineas=[dict(concepto=i,precio_unitario=p) for i,p in zip(ids,('100.00','250.00','4.00'))]))
+        s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
+            propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
+        self.client.force_login(self.taller)
+        r=self.client.get(reverse('masiscam:calibracion_expediente',args=[self.exp.pk])+'?flujo=1')
+        self.assertEqual(r.status_code,200); html=r.content.decode()
+        self.assertIn('data-espera-mantenimiento',html); self.assertIn('data-sin-protocolo',html); self.assertNotIn('Solicitar inicio validado',html)
+        with self.assertRaises(ValidationError):   # el servidor mantiene los bloqueos aunque la hoja sea accesible
+            c.iniciar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,plantilla_id=1,clave=uuid.uuid4())
+        accion=s.resumen(self.exp,self.taller)['secuencia'][1]
+        self.assertEqual((accion['texto'],accion['estado']),('Registrar calibración','Pendiente')); self.assertIn('/calibracion/',accion['url'])
+
+    @override_settings(DEBUG=False,MASISCAM_CALIBRACION_LOCAL=True,MASISCAM_CIERRE_LOCAL=True)
+    def test_informe_final_consolida_sin_repuestos_recibidos_y_taller_sin_botones_antiguos(self):
+        import re
+        from io import BytesIO
+        from pypdf import PdfReader
+        from . import calibracion_services as c, cierre_services as cs, test_calibracion as cq
+        from .models import EmisionOperativa, InformeFinal, UsoRepuesto
+        from .test_plano import foto_pieza
+        from .test_tecnica import usuario as _usuario
+        self._con_conceptos(); ids=[x['id'] for x in self.sol.snapshot['conceptos']]
+        prop=self.cotizar(archivo=None,cotizacion=dict(moneda='USD',lineas=[dict(concepto=i,precio_unitario=p) for i,p in zip(ids,('100.00','250.00','4.00'))]))
+        s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
+            propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
+        self.pieza=self.diag.piezas.get(); self.assertEqual(RecepcionRepuesto.objects.count(),0)
+        act=o.registrar_mantenimiento(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),inicio=timezone.now(),
+            componentes=[str(self.pieza.pk)],observaciones='Desarmado y limpieza',fotos=[foto_pieza()])
+        # TALLER: sin enlaces ni formularios antiguos en ninguna de sus pantallas (las rutas y registros históricos se conservan).
+        antiguos=re.compile(r'operacion/accion/(repuesto|actividad|uso|foto|resultado|foto_repuesto)/')
+        self.client.force_login(self.taller)
+        for ruta in (reverse('masiscam:flujo_detalle',args=[self.exp.pk]),reverse('masiscam:operacion_detalle',args=[self.exp.pk]),
+                reverse('masiscam:operacion_operar',args=[self.exp.pk,'mantenimiento']),reverse('masiscam:calibracion_expediente',args=[self.exp.pk]),
+                reverse('masiscam:taller_equipo',args=[self.exp.registro.equipo_id])+f'?expediente={self.exp.pk}',reverse('masiscam:taller_estado')):
+            html=self.client.get(ruta).content.decode()
+            self.assertIsNone(antiguos.search(html),ruta)
+            for texto in ('Registrar repuestos del cliente','Repuesto utilizado','Iniciar actividad','Resultado de actividad','Fotografía de actividad'): self.assertNotIn(texto,html,ruta)
+        o.registrar_mantenimiento(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),inicio=timezone.now(),
+            observaciones='Desarmado y limpieza',resultado='Reductor mantenido y probado sin fugas',finalizar=True)
+        resultado=act.resultados.get()
+        o.revisar_actividad(usuario=self.admin,empresa=self.empresa,resultado_id=resultado.pk,clave=uuid.uuid4(),decision='APROBADO',motivo='Conforme')
+        definicion=cq.definicion_qa(); definicion['aplicacion'].update(marca=self.exp.registro.equipo.marca,modelo=self.exp.registro.equipo.modelo)
+        protocolo=c.crear_plantilla(usuario=self.admin,empresa=self.empresa,clave=uuid.uuid4(),archivo=cq.protocolo_pdf(),
+            datos=dict(codigo='IF-QA',titulo='PROTOCOLO FICTICIO QA',tipo_equipo=self.exp.registro.equipo.tipo_producto,definicion=definicion,proyecto_id=self.exp.registro.equipo.proyecto_id))
+        c.aplicar_plantilla(usuario=self.admin,empresa=self.empresa,plantilla_id=protocolo.pk,equipo_id=self.exp.registro.equipo_id,
+            clave=uuid.uuid4(),fundamento='Solo QA',version_equipo=definicion['aplicacion']['version_equipo'])
+        with override_settings(MASISCAM_PROTOCOLOS_CALIBRACION_LOCAL=[cq.anchor_qa(protocolo)]):
+            cq.validar_qa(self.empresa,_usuario(self.empresa,'validador-if-qa','ADMIN'),protocolo)
+            cal=c.iniciar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,plantilla_id=protocolo.pk,clave=uuid.uuid4())
+            cal=cq.completar(self.empresa,self.taller,cal)
+            c.enviar(usuario=self.taller,empresa=self.empresa,calibracion_id=cal.pk,version=cal.version_edicion,clave=uuid.uuid4())
+            c.decidir(usuario=self.admin,empresa=self.empresa,calibracion_id=cal.pk,clave=uuid.uuid4(),decision='APROBADA',motivo='SIMULACIÓN QA',
+                evaluaciones={r['codigo']:'CONFORME' for r in protocolo.definicion['mediciones']})
+            # TALLER ve la tercera acción y genera el informe final con la misma cuenta.
+            r=s.resumen(self.exp,self.taller)
+            self.assertEqual(r['accion']['texto'],'Generar informe final')
+            self.assertEqual([(e['texto'],e['estado']) for e in r['secuencia']],[('Registrar mantenimiento','Listo'),('Registrar calibración','Listo'),('Generar informe final','Ahora')])
+            em=cs.reservar(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4())
+            cs.generar(em.pk); em.refresh_from_db()
+        snap=em.snapshot
+        # Sin recepciones ni movimientos inventados; las piezas del diagnóstico figuran como información técnica.
+        self.assertEqual((RecepcionRepuesto.objects.count(),UsoRepuesto.objects.count(),EnvioRepuestos.objects.count(),AdquisicionRepuesto.objects.count()),(0,0,0,0))
+        self.assertEqual(snap['repuestos'],[]); self.assertEqual(len(snap['tecnico']['piezas']),1)
+        self.assertEqual(snap['tecnico']['piezas'][0]['descripcion'],self.pieza.descripcion)
+        # Trabajos realizados, fotografías, calibración y aprobaciones.
+        rep=snap['reparaciones'][0]
+        self.assertIn('Mantenimiento preventivo del reductor',rep['trabajo']); self.assertEqual(rep['resultado'],'Reductor mantenido y probado sin fugas')
+        self.assertEqual((rep['aprobacion']['responsable'],rep['usos']),(self.admin.username,[]))
+        self.assertTrue(any(e['seccion']=='Intervención / repuestos' and e['foto'] for e in snap['evidencias']))
+        self.assertEqual(snap['calibracion']['estado'],'APROBADA'); self.assertEqual(snap['calibracion']['decision']['responsable'],self.admin.username)
+        self.assertEqual(len(snap['calibracion']['mediciones']),16)
+        self.assertTrue(snap['autorizacion']['responsable']); self.assertEqual(snap['tecnico']['piezas'][0]['cantidad'],str(self.pieza.cantidad))
+        lector=PdfReader(BytesIO(em.documento.archivo.open('rb').read())); texto='\n'.join(p.extract_text() for p in lector.pages)
+        for palabra in ('INFORME FINAL','Diagnóstico',self.pieza.descripcion[:15],'Reparación y montaje','Mantenimiento preventivo del reductor','Reductor mantenido y probado sin fugas',
+                'Calibración y aprobación técnica','Sin recepciones de repuestos registradas','no condicionó el mantenimiento'): self.assertIn(palabra,texto,palabra)
+        self.assertGreaterEqual(sum(len(p.images) for p in lector.pages),1)   # la fotografía del mantenimiento va incrustada
+        self.assertEqual(InformeFinal.objects.filter(expediente=self.exp).count(),1)
 
     @override_settings(DEBUG=False,MASISCAM_OPERACION_LOCAL=False)
     def test_idempotencia_guardar_avance_y_validar_sin_conflictos(self):
@@ -556,7 +719,7 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertContains(response,'Pendiente de aprobación');self.assertNotContains(response,'Recepción y documentos')
         self.assertNotContains(response,'<footer class="mf-links">')
 
-    def test_repuestos_del_cliente_sin_compra_ni_envio_y_reparacion_exige_recepcion(self):
+    def test_repuestos_del_cliente_sin_compra_ni_envio_y_mantenimiento_no_exige_recepcion(self):
         self.preparar();propuesta=self.cotizar()
         self.aceptar(propuesta)
         self.assertFalse(self.client.get(self.url).context['oficina_envio'])
@@ -567,20 +730,19 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         for op in ('adquirir','enviar'):   # acciones retiradas del flujo activo
             self.assertEqual(self.client.post(self.url,dict(op=op,clave=uuid.uuid4())).status_code,400)
         self.assertEqual(EnvioRepuestos.objects.count(),0)
-        accion=s.resumen(self.exp,self.oficina)['accion']
-        self.assertIn('/operacion/accion/repuesto/',accion['url'])
+        self.assertIsNone(s.resumen(self.exp,self.oficina)['accion'])   # OFICINA no registra repuestos
+        accion=s.resumen(self.exp,self.taller)['accion']
+        self.assertEqual(accion['texto'],'Registrar mantenimiento'); self.assertIn('/operacion/accion/mantenimiento/',accion['url'])
+        # La lista de piezas del diagnóstico es informativa: con la aprobación de ADMINISTRADOR TALLER repara sin registrar repuestos.
         self.client.force_login(self.taller)
-        with self.assertRaises(ValidationError):   # sin recepción/disponibilidad registrada no se repara
-            o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
-                datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
+        o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
+            datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
+        self.assertEqual((RecepcionRepuesto.objects.count(),EnvioRepuestos.objects.count(),AdquisicionRepuesto.objects.count()),(0,0,0))
+        # El registro histórico de recepciones sigue disponible, pero ya no condiciona el trabajo.
         o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
             datos=dict(pieza_id=self.pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=self.pieza.numero_parte,
                 descripcion=self.pieza.descripcion,cantidad=str(self.pieza.cantidad),unidad=self.pieza.unidad,fecha=timezone.now(),guia='',discrepancia=''))
         self.assertEqual(RecepcionRepuesto.objects.count(),1)
-        self.assertEqual(EnvioRepuestos.objects.count(),0)
-        self.assertEqual(AdquisicionRepuesto.objects.count(),0)
-        o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
-            datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
 
     test_reintentos_http=qa_flujo.FlujoTests.test_reintentos_http_no_duplican_solicitud_y_no_hay_compra_ni_envio
     test_sin_autorizacion=qa_flujo.FlujoTests.test_compras_y_reparaciones_no_se_crean_sin_autorizacion
@@ -694,6 +856,47 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
     def _con_conceptos(self):
         return OficinaGestionTests._con_conceptos(self)
 
+    def _mantenimiento_edge(self,pagina):
+        from io import BytesIO
+        from PIL import Image
+        from playwright.sync_api import sync_playwright, expect
+        def png(color):
+            datos=BytesIO(); Image.new('RGB',(60,40),color).save(datos,'PNG'); return dict(name=f'{color}.png',mimeType='image/png',buffer=datos.getvalue())
+        url=self.live_server_url+reverse('masiscam:operacion_operar',args=[self.exp.pk,'mantenimiento'])+'?flujo=1'
+        galleta=self._galleta(self.taller)
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True)
+            try:
+                for ancho in (390,1440):   # primero el móvil (solo diseño); el escritorio guarda y finaliza
+                    context=browser.new_context(viewport=dict(width=ancho,height=1000))
+                    context.add_cookies([dict(name=settings.SESSION_COOKIE_NAME,value=galleta,url=self.live_server_url)])
+                    page=context.new_page(); page.goto(url)
+                    expect(page.locator('h1')).to_have_text('Registrar mantenimiento')
+                    expect(page.get_by_text('Trabajos autorizados')).to_be_visible()
+                    expect(page.locator('[data-componentes] input[type=checkbox]:checked')).to_have_count(1)
+                    for boton in ('Guardar avance','Finalizar mantenimiento'): expect(page.get_by_role('button',name=boton)).to_be_visible()
+                    for ausente in ('Registrar repuestos del cliente','Repuesto utilizado','Resultado de actividad'): expect(page.locator('body')).not_to_contain_text(ausente)
+                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),f'desborda a {ancho}px')
+                    if ancho==390:
+                        ys=[page.get_by_role('button',name=b).bounding_box()['y'] for b in ('Guardar avance','Finalizar mantenimiento')]
+                        self.assertTrue(ys[0]<=ys[1],'botones fuera de orden en móvil')
+                    else:
+                        page.locator('textarea[name=observaciones]').fill('Desarmado, limpieza y cambio de sellos')
+                        page.locator('#id_fotografias').set_input_files([png('red'),png('blue')])
+                        page.get_by_role('button',name='Guardar avance').click()
+                        expect(page.locator('body')).to_contain_text('Avance guardado')
+                        expect(page.locator('[data-fotos]')).to_contain_text('FOTOGRAFÍAS GUARDADAS (2)')
+                        page.get_by_role('button',name='Finalizar mantenimiento').click()
+                        expect(page.locator('.swal2-popup')).to_contain_text('Revisa los campos señalados')   # sin resultado no se finaliza: aviso modal del sistema
+                        page.get_by_role('button',name='Aceptar').click()
+                        expect(page.locator('[data-form-mantenimiento] .errorlist')).to_contain_text('Describa el resultado')
+                        page.locator('textarea[name=resultado]').fill('Mantenimiento concluido sin fugas')
+                        page.get_by_role('button',name='Finalizar mantenimiento').click()
+                        expect(page.locator('body')).to_contain_text('ADMINISTRADOR debe revisarlo')
+                    context.close()
+            finally:
+                browser.close()
+
     @override_settings(**FLAGS)
     def test_taller_ve_en_el_mismo_expediente_cada_cambio_de_estado(self):
         from playwright.sync_api import sync_playwright, expect
@@ -713,14 +916,14 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
                         page=context.new_page(); page.goto(destino or pagina)
                         expect(page.locator('body')).to_contain_text(texto)
                         for boton in botones: expect(page.get_by_role('link',name=boton).or_(page.get_by_role('button',name=boton)).first).to_be_visible()
-                        if secuencia:   # TALLER: Registrar repuestos → Iniciar reparación → Registrar calibración → Generar informe final
+                        if secuencia:   # TALLER: Registrar mantenimiento → Registrar calibración → Generar informe final
                             lista=page.locator('[data-secuencia] li')
-                            expect(lista).to_have_count(4)
+                            expect(lista).to_have_count(3)
                             expect(page.locator('[data-secuencia] li[data-estado="Ahora"]')).to_contain_text(secuencia)
-                            for i,texto_paso in enumerate(('Registrar repuestos del cliente','Iniciar reparación','Registrar calibración','Generar informe final')):
+                            for i,texto_paso in enumerate(('Registrar mantenimiento','Registrar calibración','Generar informe final')):
                                 expect(lista.nth(i)).to_contain_text(texto_paso)
-                            ys=[lista.nth(i).bounding_box()['y'] for i in range(4)]
-                            self.assertTrue(max(ys)-min(ys)<5 if ancho==1440 else ys==sorted(ys) and len(set(ys))==4,f'secuencia mal distribuida a {ancho}px')
+                            ys=[lista.nth(i).bounding_box()['y'] for i in range(3)]
+                            self.assertTrue(max(ys)-min(ys)<5 if ancho==1440 else ys==sorted(ys) and len(set(ys))==3,f'secuencia mal distribuida a {ancho}px')
                         self.assertTrue(page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),f'desborda a {ancho}px')
                         if paso3:   # stepper de 5 etapas con chips de estado y color consistente
                             page.goto(flujo_url)
@@ -748,15 +951,12 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
         ver('Tu diagnóstico está en revisión',paso3=('Bloqueado','is-bloqueado'))
         s.revisar_expediente(usuario=self.admin,empresa=self.empresa,expediente_id=self.exp.pk,diagnostico_id=prop.diagnostico_id,
             propuesta_id=prop.pk,decision='APROBADO',clave=uuid.uuid4())
-        ver('Aprobado por ADMINISTRADOR',botones=('Registrar repuestos del cliente',),paso3=('Aprobado','is-ok'),secuencia='Registrar repuestos del cliente')
+        ver('Aprobado por ADMINISTRADOR',botones=('Registrar mantenimiento',),paso3=('Aprobado','is-ok'),secuencia='Registrar mantenimiento')
         # ADMINISTRADOR y OFICINA ven el mismo stepper y los mismos chips que TALLER.
         ver('Aprobado por ADMINISTRADOR',paso3=('Aprobado','is-ok'),cookie=self._galleta(self.admin),destino=flujo_url,dx=True)
         ver('Aprobado por ADMINISTRADOR',paso3=('Aprobado','is-ok'),cookie=self._galleta(self.oficina),destino=flujo_url,dx=True)   # sin aceptación del cliente ni política JSON
-        pieza=self.diag.piezas.get()
-        o.recibir_repuesto(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
-            datos=dict(pieza_id=pieza.pk,procedencia='Cliente',entregado_por='Cliente QA',numero_parte=pieza.numero_parte,
-                descripcion=pieza.descripcion,cantidad=str(pieza.cantidad),unidad=pieza.unidad,fecha=timezone.now(),guia='',discrepancia=''))
-        ver('Registra la reparación',botones=('Iniciar reparación',),secuencia='Iniciar reparación')
+        # Sin registrar repuestos, TALLER abre la pantalla única de mantenimiento (escritorio y móvil).
+        self._mantenimiento_edge(pagina)
         from .models import ExpedienteMantenimiento
         self.assertEqual(ExpedienteMantenimiento.objects.filter(registro__equipo=self.exp.registro.equipo).count(),1)
 

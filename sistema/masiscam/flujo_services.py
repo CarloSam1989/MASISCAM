@@ -506,12 +506,6 @@ def generar_final_automatico(calibracion_id, propagar=False):
         logging.getLogger(__name__).exception('Informe automático pendiente de reintento, calibración %s',cal.pk)
 
 
-def _faltan_repuestos(exp,diag):
-    """True mientras falten repuestos del cliente por registrar (misma regla que habilita iniciar la reparación)."""
-    return bool(diag) and any((o.RecepcionRepuesto.objects.filter(expediente=exp,pieza=p,numero_parte=p.numero_parte,unidad=p.unidad)
-        .aggregate(n=Sum('cantidad'))['n'] or 0)<p.cantidad for p in diag.piezas.all())
-
-
 def decorar(pasos):
     """Color único por estado para todos los steppers (TALLER, OFICINA y ADMINISTRADOR)."""
     clases={'Listo':'ok','Aprobado':'ok','En proceso':'proceso','Pendiente':'pendiente','Bloqueado':'bloqueado'}
@@ -567,10 +561,7 @@ def resumen(exp, usuario):
         paso=3; pasos[1]['estado']='Listo'
         try: vigente(sol)
         except ValidationError as error: mensaje='; '.join(error.messages); bloqueo=True
-        if not mensaje and role=='TALLER' and sol.envios.filter(confirmacion__isnull=True).exists():
-            mensaje='Repuestos enviados. Confirma las cantidades físicas; la reparación seguirá exigiendo autorización comercial vigente.'
-            accion=action('Confirmar repuestos recibidos',op='recibir')
-        elif not mensaje and (not prop or prop.diagnostico_id!=diag.pk):
+        if not mensaje and (not prop or prop.diagnostico_id!=diag.pk):
             mensaje='OFICINA prepara la cotización a partir de las piezas solicitadas, sin reescribirlas.'
             if role=='OFICINA': accion=action('Preparar cotización',op='cotizar')
         elif not mensaje and not o._propuesta_vigente(prop):
@@ -583,51 +574,43 @@ def resumen(exp, usuario):
             if not auth:
                 bloqueo=True   # la autorización comercial es la aprobación conjunta de ADMINISTRADOR; no se pide otra al cliente
             else:
-                pendientes=sol.envios.filter(confirmacion__isnull=True).order_by('pk')
-                faltan=_faltan_repuestos(exp,diag)
-                if pendientes.exists():
-                    mensaje='Confirma las cantidades del envío histórico.'
-                    if role=='TALLER': accion=action('Confirmar repuestos recibidos',op='recibir')
-                elif faltan:
-                    mensaje='Aprobado por ADMINISTRADOR. Registra los repuestos del cliente.'
-                    if role in {'TALLER','OFICINA'}: accion=action('Registrar repuestos del cliente',url=reverse('masiscam:operacion_operar',args=[exp.pk,'repuesto'])+'?flujo=1')
-                else:
-                    paso=4; pasos[2]['estado']='Listo'
-                    estado=o.estado(exp)
-                    if estado!='REPARACION_FINALIZADA':
-                        pendientes_revision=ActividadReparacion.objects.filter(expediente=exp,autorizacion__propuesta=prop).order_by('pk')
-                        sin_resultado=any(not a.resultados.exists() for a in pendientes_revision)
-                        mensaje='Registra la reparación y los repuestos utilizados.'
-                        if role=='TALLER':
-                            op='resultado' if sin_resultado else 'actividad'
-                            if pendientes_revision.exists() and not sin_resultado: mensaje='ADMINISTRADOR debe revisar las actividades terminadas.'
-                            else: accion=action('Registrar resultado de reparación' if sin_resultado else 'Iniciar reparación',url=reverse('masiscam:operacion_operar',args=[exp.pk,op])+'?flujo=1')
-                        elif role=='ADMIN': accion=action('Revisar reparación',url=reverse('masiscam:operacion_operar',args=[exp.pk,'revision'])+'?flujo=1')
-                    elif not settings.MASISCAM_CALIBRACION_LOCAL:
-                        mensaje='El responsable del sistema debe habilitar la calibración. Se mantiene la exigencia de un protocolo aprobado y revisión independiente.'
+                paso=4; pasos[2]['estado']='Listo'
+                estado=o.estado(exp)
+                if estado!='REPARACION_FINALIZADA':
+                    actividades=ActividadReparacion.objects.filter(expediente=exp,autorizacion__propuesta=prop).order_by('pk')
+                    sin_resultado=any(not a.resultados.exists() for a in actividades)
+                    mensaje='Registra el mantenimiento.'
+                    if role=='TALLER':
+                        if actividades.exists() and not sin_resultado and estado!='OBSERVADO': mensaje='Mantenimiento enviado. ADMINISTRADOR debe revisarlo.'
+                        else:
+                            if estado=='OBSERVADO': mensaje='ADMINISTRADOR observó el mantenimiento. Corrígelo y finalízalo de nuevo.'
+                            accion=action('Registrar mantenimiento',url=reverse('masiscam:operacion_operar',args=[exp.pk,'mantenimiento'])+'?flujo=1')
+                    elif role=='ADMIN': accion=action('Revisar reparación',url=reverse('masiscam:operacion_operar',args=[exp.pk,'revision'])+'?flujo=1')
+                elif not settings.MASISCAM_CALIBRACION_LOCAL:
+                    mensaje='El responsable del sistema debe habilitar la calibración. Se mantiene la exigencia de un protocolo aprobado y revisión independiente.'
+                    bloqueo=True
+                elif not cal:
+                    mensaje='Mantenimiento aprobado. Registra la calibración.'
+                    protocolos=c.PlantillaCalibracion.objects.filter(empresa=exp.empresa,aplicabilidades__equipo=exp.registro.equipo).distinct()
+                    if not any(c.plantilla_validada(p,exp.registro.equipo) for p in protocolos):
+                        mensaje='Falta protocolo de calibración aprobado para continuar.'
                         bloqueo=True
-                    elif not cal:
-                        mensaje='Reparación aprobada. Genera el informe de calibración.'
-                        protocolos=c.PlantillaCalibracion.objects.filter(empresa=exp.empresa,aplicabilidades__equipo=exp.registro.equipo).distinct()
-                        if not any(c.plantilla_validada(p,exp.registro.equipo) for p in protocolos):
-                            mensaje='Falta protocolo de calibración aprobado para continuar.'
-                            bloqueo=True
-                        elif role=='TALLER': accion=action('Generar informe de calibración',url=reverse('masiscam:calibracion_expediente',args=[exp.pk])+'?flujo=1')
-                    elif cal.estado!='APROBADA':
-                        mensaje='Completa las mediciones y envía la calibración a la revisión independiente de ADMINISTRADOR.'
-                        if role in {'TALLER', 'ADMIN'}: accion=action('Revisar calibración' if role=='ADMIN' else 'Continuar calibración',url=reverse('masiscam:calibracion_revision',args=[cal.pk])+'?flujo=1')
-                    else:
-                        paso=5; pasos[3]['estado']='Listo'
-                        mensaje='El informe PDF se genera con las fuentes aprobadas y conserva su revisión final independiente.'
-                        if not settings.MASISCAM_CIERRE_LOCAL:
-                            mensaje='El responsable del sistema debe habilitar la generación del informe final. Las fuentes y aprobaciones se conservan.'
-                            bloqueo=True
-                        elif not informe and role in {'TALLER', 'OFICINA'}: accion=action('Generar informe',op='final')
-                        elif informe:
-                            if informe.documento_id: pasos[4]['estado']='Listo'
-                            if informe.estado=='PENDIENTE_REVISION' and role=='ADMIN': accion=action('Revisar informe final',url=reverse('masiscam:cierre_detalle',args=[exp.pk])+'?flujo=1')
-                            elif informe.estado=='APROBADO' and role=='ADMIN': accion=action('Revisar cierre administrativo',url=reverse('masiscam:cierre_detalle',args=[exp.pk])+'?flujo=1')
-                            elif role in {'TALLER', 'OFICINA'}: accion=action('Descargar informe final',url=reverse('masiscam:cierre_documento',args=[exp.pk,informe.pk])) if informe.documento_id else action('Reintentar generación del informe',op='final')
+                    elif role=='TALLER': accion=action('Registrar calibración',url=reverse('masiscam:calibracion_expediente',args=[exp.pk])+'?flujo=1')
+                elif cal.estado!='APROBADA':
+                    mensaje='Completa las mediciones y envía la calibración a la revisión independiente de ADMINISTRADOR.'
+                    if role in {'TALLER', 'ADMIN'}: accion=action('Revisar calibración' if role=='ADMIN' else 'Registrar calibración',url=reverse('masiscam:calibracion_revision',args=[cal.pk])+'?flujo=1')
+                else:
+                    paso=5; pasos[3]['estado']='Listo'
+                    mensaje='El informe PDF se genera con las fuentes aprobadas y conserva su revisión final independiente.'
+                    if not settings.MASISCAM_CIERRE_LOCAL:
+                        mensaje='El responsable del sistema debe habilitar la generación del informe final. Las fuentes y aprobaciones se conservan.'
+                        bloqueo=True
+                    elif not informe and role in {'TALLER', 'OFICINA'}: accion=action('Generar informe final',op='final')
+                    elif informe:
+                        if informe.documento_id: pasos[4]['estado']='Listo'
+                        if informe.estado=='PENDIENTE_REVISION' and role=='ADMIN': accion=action('Revisar informe final',url=reverse('masiscam:cierre_detalle',args=[exp.pk])+'?flujo=1')
+                        elif informe.estado=='APROBADO' and role=='ADMIN': accion=action('Revisar cierre administrativo',url=reverse('masiscam:cierre_detalle',args=[exp.pk])+'?flujo=1')
+                        elif role in {'TALLER', 'OFICINA'}: accion=action('Descargar informe final',url=reverse('masiscam:cierre_documento',args=[exp.pk,informe.pk])) if informe.documento_id else action('Reintentar generación del informe',op='final')
     if pasos[paso-1]['estado']!='Listo': pasos[paso-1]['estado']='Bloqueado' if bloqueo else ('En proceso' if accion else 'Pendiente')
     # Aprobación conjunta de ADMINISTRADOR vigente: único requisito comercial; habilita las etapas de TALLER.
     try: aprobado=bool(sol and o.autorizacion_vigente(exp))
@@ -640,10 +623,13 @@ def resumen(exp, usuario):
             paso=max(paso,4)
             if pasos[3]['estado'] not in {'Listo','Aprobado'}: pasos[3]['estado']='En proceso'
         if role=='TALLER':
-            hechos=[not _faltan_repuestos(exp,diag), o.estado(exp)=='REPARACION_FINALIZADA', bool(cal and cal.estado=='APROBADA'), bool(informe and informe.documento_id)]
+            hechos=[o.estado(exp)=='REPARACION_FINALIZADA', bool(cal and cal.estado=='APROBADA'), bool(informe and informe.documento_id)]
             primero=next((i for i,h in enumerate(hechos) if not h),None)
-            for i,(texto,hecho) in enumerate(zip(('Registrar repuestos del cliente','Iniciar reparación','Registrar calibración','Generar informe final'),hechos)):
-                secuencia.append(dict(texto=texto,numero=i+1,clase='ok' if hecho else ('proceso' if i==primero else 'pendiente'),
+            acceso_cal=None
+            if settings.MASISCAM_CALIBRACION_LOCAL:
+                acceso_cal=(reverse('masiscam:calibracion_revision',args=[cal.pk]) if cal else reverse('masiscam:calibracion_expediente',args=[exp.pk]))+'?flujo=1'
+            for i,(texto,hecho,url) in enumerate(zip(('Registrar mantenimiento','Registrar calibración','Generar informe final'),hechos,(None,acceso_cal,None))):
+                secuencia.append(dict(texto=texto,numero=i+1,url=url,clase='ok' if hecho else ('proceso' if i==primero else 'pendiente'),
                     estado='Listo' if hecho else ('Ahora' if i==primero else 'Pendiente')))
     cerrado=CierreExpediente.objects.filter(expediente_id=exp.pk).first()
     if cerrado:

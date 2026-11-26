@@ -267,7 +267,11 @@ class FlujoTests(TestCase):
         self.client.force_login(self.oficina)
         self.comercial()
         response=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk]))
-        self.assertIn('/operacion/accion/repuesto/',response.context['accion']['url'])
+        self.assertIsNone(response.context['accion'])   # OFICINA ya no registra repuestos: el mantenimiento es de TALLER
+        self.client.force_login(self.taller)
+        response=self.client.get(reverse('masiscam:flujo_detalle',args=[self.exp.pk]))
+        self.assertEqual(response.context['accion']['texto'],'Registrar mantenimiento')
+        self.assertIn('/operacion/accion/mantenimiento/',response.context['accion']['url'])
 
     def test_reintentos_http_no_duplican_solicitud_y_no_hay_compra_ni_envio(self):
         self.preparar_solicitud(enviar=False)
@@ -288,8 +292,8 @@ class FlujoTests(TestCase):
     def test_recepcion_fisica_con_politica_retirada_no_autoriza_reparar(self):
         self.preparar_solicitud();self.comercial();_,envio=self.envio()
         with override_settings(MASISCAM_POLITICA_COMERCIAL_LOCAL=None):
-            self.assertEqual(s.resumen(self.exp,self.taller)['accion']['op'],'recibir')
-            self.recibir(envio)
+            self.assertIsNone(s.resumen(self.exp,self.taller)['accion'])   # ya no se pide recibir repuestos; sin política la decisión histórica no autoriza
+            self.recibir(envio)   # el registro histórico sigue disponible
             with self.assertRaises(ValidationError):
                 o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,
                     clave=uuid.uuid4(),datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
@@ -305,7 +309,7 @@ class FlujoTests(TestCase):
         self.assertFalse(EnvioRepuestos.objects.exists())
         estado=s.resumen(self.exp,self.taller)
         self.assertEqual(estado['paso'],4)
-        self.assertEqual(estado['accion']['texto'],'Iniciar reparación')
+        self.assertEqual(estado['accion']['texto'],'Registrar mantenimiento')
 
     def test_aceptacion_parcial_no_autoriza_comprar_el_listado_completo(self):
         self.preparar_solicitud()

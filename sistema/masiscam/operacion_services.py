@@ -396,16 +396,103 @@ def iniciar_actividad(*, usuario, empresa, expediente_id, clave, datos):
     auth = exigir_autorizacion(exp, crear=True, usuario=usuario)
     _texto(datos, ('trabajo','componentes'))
     _fecha(datos.get('inicio'))
-    # Required parts must be documented as received with matching units and
-    # identity. No inventory entry or implicit exception is generated.
-    for pieza in auth.propuesta.diagnostico.piezas.all():
-        qty = RecepcionRepuesto.objects.filter(expediente=exp,pieza=pieza,unidad=pieza.unidad,
-            numero_parte=pieza.numero_parte).aggregate(n=Sum('cantidad'))['n'] or Decimal('0')
-        if not pieza.unidad or qty < pieza.cantidad:
-            raise ValidationError('Repuestos requeridos pendientes; no hay política aprobada de excepciones para iniciar.')
+    # Las piezas del diagnóstico son una lista informativa: la aprobación conjunta de ADMINISTRADOR autoriza el mantenimiento
+    # sin exigir recepción de repuestos. Las recepciones históricas se conservan y siguen pudiendo registrarse.
     obj = t._save(ActividadReparacion(expediente=exp,autor=usuario,clave=clave,autorizacion=auth,**datos))
     t._event(exp,usuario,clave,'REPARACION_INICIADA',datos,obj.pk)
     return obj
+
+
+def _numero(valor):
+    try: return format(Decimal(str(valor)).normalize(),'f')
+    except (InvalidOperation,ValueError): return str(valor or '')
+
+
+def trabajos_autorizados(exp):
+    """Trabajos que TALLER ejecuta: las líneas de la cotización aprobada por ADMINISTRADOR (que parte de los conceptos del
+    diagnóstico); sin cotización estructurada, los conceptos del diagnóstico; y como último recurso, el alcance aprobado."""
+    auth = autorizacion_vigente(exp)
+    if not auth:
+        return []
+    prop = auth.propuesta
+    items = []
+    for linea in ((prop.snapshot or {}).get('cotizacion') or {}).get('lineas') or []:
+        descripcion = (linea.get('descripcion') or '').strip()
+        if descripcion and not str(linea.get('tipo','')).upper().startswith(('CONSUMIBLE','REPUESTO')):
+            items.append(dict(tipo=linea.get('tipo',''),descripcion=descripcion,cantidad=_numero(linea.get('cantidad','')),unidad=linea.get('unidad','')))
+    if not items:
+        for c in prop.diagnostico.conceptos.exclude(tipo='CONSUMIBLE').order_by('pk'):
+            items.append(dict(tipo=c.tipo,descripcion=c.descripcion,cantidad=_numero(c.cantidad),unidad=c.unidad))
+    if not items and (prop.alcance or '').strip():
+        items.append(dict(tipo='',descripcion=prop.alcance.strip()[:1000],cantidad='',unidad=''))
+    return items
+
+
+def actividad_vigente(exp, auth=None):
+    """Actividad de mantenimiento de la autorización vigente (la autorización administrativa puede no estar persistida aún)."""
+    auth = auth or autorizacion_vigente(exp)
+    if not auth or not auth.pk:
+        return None
+    return ActividadReparacion.objects.filter(expediente=exp, autorizacion_id=auth.pk).order_by('pk').first()
+
+
+def componentes_autorizados(exp):
+    """Piezas seleccionadas en el diagnóstico aprobado: lista informativa y precarga de «componentes intervenidos»."""
+    auth = autorizacion_vigente(exp)
+    if not auth:
+        return []
+    return [dict(pk=p.pk,texto=f'{p.numero_parte or "Sin N.º de parte"} · {p.descripcion[:120]}') for p in auth.propuesta.diagnostico.piezas.order_by('pk')]
+
+
+def _texto_trabajos(items):
+    return chr(10).join('• '+i['descripcion']+((' ('+i['cantidad']+' '+i['unidad']+')') if i['cantidad'] else '') for i in items)
+
+
+def _hecho(exp, llave):
+    from .models import Auditoria
+    return Auditoria.objects.filter(expediente=exp, detalle__clave=str(llave)).exists()
+
+
+def registrar_mantenimiento(*, usuario, empresa, expediente_id, clave, inicio, componentes=None, observaciones='', resultado='', fotos=(), finalizar=False):
+    """Pantalla única de mantenimiento sobre los registros existentes (actividad, fotografías, resultado y su revisión).
+
+    Los trabajos y componentes vienen de lo aprobado por ADMINISTRADOR; no hay formularios independientes. Cada paso usa una
+    clave derivada de la clave de la pantalla, así que repetir el envío no duplica registros. Todo se confirma o se revierte junto."""
+    base = uuid.UUID(str(clave))
+    observaciones = (observaciones or '').strip()
+    resultado = (resultado or '').strip()
+    with transaction.atomic():
+        exp = expediente(usuario,empresa,expediente_id,{'TALLER'},True)
+        auth = exigir_autorizacion(exp,crear=True,usuario=usuario)
+        llave_resultado = uuid.uuid5(base,'resultado')
+        if finalizar and not resultado:
+            raise ValidationError('Describa el resultado del mantenimiento para finalizarlo.')
+        act = actividad_vigente(exp,auth)
+        if not act:
+            trabajos = trabajos_autorizados(exp)
+            if not trabajos:
+                raise ValidationError('No hay trabajos autorizados para registrar.')
+            disponibles = {str(p['pk']):p['texto'] for p in componentes_autorizados(exp)}
+            elegidos = [disponibles[str(x)] for x in (componentes if componentes is not None else disponibles) if str(x) in disponibles]
+            if disponibles and not elegidos:
+                raise ValidationError('Seleccione los componentes intervenidos.')
+            act = iniciar_actividad(usuario=usuario,empresa=empresa,expediente_id=expediente_id,clave=uuid.uuid5(base,'actividad'),
+                datos=dict(trabajo=_texto_trabajos(trabajos),componentes=chr(10).join(elegidos) or 'Según el diagnóstico aprobado',
+                    inicio=inicio,observaciones=observaciones))
+        else:
+            if act.autor_id != usuario.pk:
+                raise PermissionDenied('Solo el técnico que inició el mantenimiento puede continuarlo.')
+            if not (finalizar and _hecho(exp,llave_resultado)):
+                _abierta(act)
+            if observaciones and observaciones != (act.observaciones or '').strip() and not fotos and not finalizar:
+                raise ValidationError('Adjunte una fotografía para registrar este avance, o escriba las observaciones al finalizar el mantenimiento.')
+        for foto in fotos:
+            evidencia_actividad(usuario=usuario,empresa=empresa,actividad_id=act.pk,clave=uuid.uuid5(base,'foto:'+_hash(foto)),
+                clase='DURANTE',leyenda=(observaciones or 'Avance del mantenimiento')[:500],archivo=foto)
+        if finalizar and not _hecho(exp,llave_resultado):
+            terminar_actividad(usuario=usuario,empresa=empresa,actividad_id=act.pk,clave=llave_resultado,
+                datos=dict(fin=timezone.now(),trabajo_realizado=act.trabajo,resultado=resultado,observaciones=observaciones))
+        return act
 
 
 def _actividad(usuario, empresa, pk):

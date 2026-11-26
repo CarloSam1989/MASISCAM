@@ -3,6 +3,7 @@ from django.urls import reverse
 import uuid
 from functools import wraps
 from django.conf import settings
+from django.contrib import messages
 from django.core.exceptions import ValidationError, ObjectDoesNotExist
 from django.db import IntegrityError
 from django.http import Http404,FileResponse
@@ -12,7 +13,7 @@ from .access import masiscam_access_required
 from .models import (ExpedienteMantenimiento,PropuestaComercial,DecisionComercial,RecepcionRepuesto,
     ActividadReparacion,EmisionOperativa,PiezaRequerida,Auditoria,Documento)
 from . import operacion_services as svc
-from .operacion_forms import OperacionForm,AREAS,LABELS
+from .operacion_forms import OperacionForm,MantenimientoForm,AREAS,LABELS
 from .tecnica_views import _error, _archivo
 
 
@@ -46,7 +47,9 @@ def detalle(request,pk):
     auth=svc.autorizacion_vigente(exp)
     actions=[op for op,roles in AREAS.items() if rol in roles]
     if state not in {'AUTORIZADO','EN_REPARACION','OBSERVADO'} or not auth:
-        actions=[op for op in actions if op not in {'actividad','uso','foto','resultado','revision'}]
+        actions=[op for op in actions if op not in {'mantenimiento','actividad','uso','foto','resultado','revision'}]
+    # Formularios sueltos retirados de la interfaz (sus rutas y registros históricos se conservan): mantenimiento es la única entrada de TALLER.
+    actions=[op for op in actions if op not in {'repuesto','foto_repuesto','actividad','uso','foto','resultado'}]
     # Only the accepted work scope is operational; never disclose the budget,
     # representative identity or verification evidence to technicians/plant.
     commercial=rol in {'OFICINA'}
@@ -71,6 +74,8 @@ def operar(request,pk,op):
     if op not in AREAS:
         raise Http404
     exp=svc.expediente(request.user,request.empresa_activa,pk,AREAS[op])
+    if op=='mantenimiento':
+        return _mantenimiento(request,pk,exp)
     form=OperacionForm(request.POST or None,request.FILES or None,op=op,exp=exp,politica=svc.politica())
     sin_actividades=False
     if 'actividad_id' in form.fields:
@@ -133,6 +138,41 @@ def operar(request,pk,op):
     return render(request,'masiscam/operacion_form.html',dict(form=form,operacion=LABELS[op],expediente=exp,politica=svc.politica(),op=op,sin_actividades=sin_actividades,
         alcance_autorizado=auth.propuesta.alcance if auth else None),
         status=400 if request.method=='POST' else 200)
+
+
+def _mantenimiento(request,pk,exp):
+    """Única pantalla de TALLER para el mantenimiento: trabajos autorizados, componentes, observaciones, fotografías y cierre."""
+    auth=svc.autorizacion_vigente(exp)
+    actividad=svc.actividad_vigente(exp,auth)
+    abierta=bool(auth)
+    resultado=None
+    if actividad:
+        try: svc._abierta(actividad)
+        except ValidationError: abierta=False
+        resultado=actividad.resultados.order_by('-version').first()
+    form=MantenimientoForm(request.POST or None,exp=exp)
+    if request.method=='POST' and form.is_valid():
+        datos=form.cleaned_data
+        try:
+            svc.registrar_mantenimiento(usuario=request.user,empresa=request.empresa_activa,expediente_id=pk,clave=datos['clave'],
+                inicio=datos['inicio'],componentes=datos['componentes'],observaciones=datos['observaciones'],resultado=datos['resultado'],
+                fotos=request.FILES.getlist('fotografias'),finalizar=request.POST.get('accion')=='finalizar')
+        except (ValidationError,IntegrityError,OSError,ObjectDoesNotExist) as exc:
+            _error(form,exc)
+        else:
+            if request.POST.get('accion')=='finalizar':
+                messages.success(request,'Mantenimiento finalizado. ADMINISTRADOR debe revisarlo.')
+                return redirect('masiscam:flujo_detalle',pk=pk)
+            messages.success(request,'Avance guardado.')
+            return redirect(request.get_full_path())
+    revision=resultado.revision if resultado is not None and hasattr(resultado,'revision') else None
+    fotos=[]
+    if actividad:
+        fotos=list(actividad.evidencias.select_related('documento').order_by('pk'))
+    return render(request,'masiscam/mantenimiento_form.html',dict(form=form,expediente=exp,op='mantenimiento',operacion=LABELS['mantenimiento'],
+        trabajos=svc.trabajos_autorizados(exp),actividad=actividad,abierta=abierta,resultado=resultado,revision=revision,fotos=fotos,
+        sin_autorizacion=not auth,alcance_autorizado=auth.propuesta.alcance if auth else None),
+        status=400 if request.method=='POST' and form.errors else 200)
 
 
 @require_GET

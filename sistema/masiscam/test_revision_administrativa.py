@@ -100,13 +100,11 @@ class RevisionAdministrativaTests(qa.OficinaFixture,TestCase):
         self.revisar(prop)
         self.assertTrue(s.aprobacion_conjunta_vigente(prop))
         self.aceptar(prop);_,envio=self.envio()
-        with self.assertRaises(ValidationError):
-            o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,
-                clave=uuid.uuid4(),datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
-        self.recibir(envio)
+        # La aprobación conjunta autoriza el mantenimiento: ya no se exige recepción de repuestos (la lista del diagnóstico es informativa).
         actividad=o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,
             clave=uuid.uuid4(),datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
         self.assertEqual(actividad.autorizacion.propuesta_id,prop.pk)
+        self.recibir(envio)   # el registro histórico de recepciones sigue disponible
 
     @override_settings(DEBUG=False)
     def test_flujo_validar_antes_de_enviar_a_oficina(self):
@@ -187,13 +185,10 @@ class RevisionAdministrativaTests(qa.OficinaFixture,TestCase):
         self.assertTrue(DecisionTecnica.objects.filter(diagnostico=self.diag,decision='APROBADO').exists())
         with self.assertRaises(ValidationError):self.envio()
         self.aceptar(prop);compra,envio=self.envio()
-        with self.assertRaises(ValidationError):
-            o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
-                datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
-        self.recibir(envio)
         actividad=o.iniciar_actividad(usuario=self.taller,empresa=self.empresa,expediente_id=self.exp.pk,clave=uuid.uuid4(),
-            datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))
+            datos=dict(trabajo='QA',componentes='QA',inicio=timezone.now()))   # sin recepción de repuestos: la aprobación conjunta autoriza
         self.assertEqual(actividad.autorizacion.propuesta_id,prop.pk)
+        self.recibir(envio)
 
     @override_settings(DEBUG=False)
     def test_requisitos_visibles_y_aprobacion_sin_aceptacion_cliente(self):
