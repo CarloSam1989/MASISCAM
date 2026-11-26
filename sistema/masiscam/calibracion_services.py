@@ -130,6 +130,32 @@ def plantilla_validada(p,equipo=None):
         _equipo_compatible(p,equipo) and AplicabilidadCalibracion.objects.filter(plantilla=p,equipo=equipo).exists())))
 
 
+def protocolo_estado(exp):
+    """(protocolo validado aplicable | None, requisitos que faltan, redactados exactamente). No crea ni sustituye protocolos."""
+    equipo=exp.registro.equipo
+    aplicados=list(PlantillaCalibracion.objects.filter(empresa=exp.empresa,aplicabilidades__equipo=equipo).distinct().order_by('-version','-pk'))
+    for p in aplicados:
+        if plantilla_validada(p,equipo): return p,[]
+    faltan=[]
+    if not aplicados:
+        sueltos=PlantillaCalibracion.objects.filter(empresa=exp.empresa,tipo_equipo=equipo.tipo_producto).order_by('-pk')[:3]
+        if sueltos:
+            faltan.append('Ningún protocolo está aplicado a este equipo ('+', '.join(f'{p.codigo} v{p.version}' for p in sueltos)+'): ADMINISTRADOR debe aplicarlo explícitamente.')
+        else:
+            faltan.append('No existe un protocolo de calibración para este tipo de equipo: ADMINISTRADOR debe registrarlo con su fuente técnica.')
+        return None,faltan
+    p=aplicados[0];nombre=f'Protocolo {p.codigo} v{p.version}'
+    try: validar_definicion(p.definicion,True)
+    except ValidationError as error: faltan.append(f'{nombre}: definición incompleta ({"; ".join(error.messages)})')
+    valid=ValidacionPlantillaCalibracion.objects.filter(plantilla=p).first()
+    anchor=aprobacion_plantilla(p)
+    if not valid: faltan.append(f'{nombre}: falta la validación técnica independiente.')
+    if not anchor: faltan.append(f'{nombre}: falta la aprobación del propietario para su huella exacta.')
+    elif valid and valid.aprobacion!=anchor: faltan.append(f'{nombre}: la validación no corresponde a la aprobación vigente del propietario.')
+    if not _equipo_compatible(p,equipo): faltan.append(f'{nombre}: marca, modelo o tipo no coinciden con el equipo.')
+    return None,faltan or [f'{nombre}: no cumple las comprobaciones de protocolo aplicable.']
+
+
 def _equipo_compatible(p,equipo):
     app=p.definicion.get('aplicacion',{})
     return (p.tipo_equipo==equipo.tipo_producto and
@@ -208,7 +234,7 @@ def aplicar_plantilla(*,usuario,empresa,plantilla_id,equipo_id,clave,fundamento,
 def _reparacion(exp):
     auth=o.exigir_autorizacion(exp)
     if o.estado(exp)!='REPARACION_FINALIZADA':
-        raise ValidationError('Calibración bloqueada: reparación vigente no finalizada/revisada independientemente.')
+        raise ValidationError('Calibración bloqueada: TALLER debe finalizar el mantenimiento autorizado.')
     acts=ActividadReparacion.objects.filter(autorizacion=auth).annotate(
         resultado_actual=Subquery(ResultadoReparacion.objects.filter(actividad_id=OuterRef('pk')).order_by('-version').values('pk')[:1]))
     return auth,[dict(actividad=pk,resultado=result) for pk,result in acts.order_by('pk').values_list('pk','resultado_actual')]
@@ -225,6 +251,40 @@ def _dependencias(c):
     if not plantilla_validada(c.plantilla,c.expediente.registro.equipo):
         raise ValidationError('Plantilla o aplicabilidad no validadas; operación bloqueada.')
     t.documento_valido(c.plantilla.documento,c.expediente.empresa)
+
+
+def preliminares(exp):
+    """Datos preliminares guardados antes de contar con protocolo (más recientes primero). Registro de auditoría: solo se agregan."""
+    return list(Auditoria.objects.filter(expediente=exp,accion='CAL_PRELIMINAR').select_related('usuario').order_by('-pk'))
+
+
+@transaction.atomic
+def guardar_preliminar(*,usuario,empresa,expediente_id,clave,datos):
+    """TALLER conserva datos preliminares de la calibración mientras falta un protocolo aplicable y aprobado.
+
+    No crea una calibración, no declara conformidad, no genera informe y no inventa puntos ni parámetros: solo texto libre
+    con trazabilidad. La hoja formal se inicia después con el protocolo aprobado."""
+    exp=expediente(usuario,empresa,expediente_id,{'TALLER'},True)
+    clean={}
+    o._datos(datos,('fecha','instrumentos','observaciones','resultados'))
+    for k,v in datos.items():
+        if k=='fecha':
+            if v is not None: o._fecha(v);v=v.isoformat()
+        elif not isinstance(v,str) or len(v)>20000:
+            raise ValidationError('Texto de calibración inválido o demasiado extenso.')
+        clean[k]=v
+    payload=dict(datos=clean)
+    old=t._retry(exp,clave,'CAL_PRELIMINAR',payload)
+    if old: return old
+    auth,_=_reparacion(exp)
+    if protocolo_estado(exp)[0]:
+        raise ValidationError('Ya existe un protocolo aprobado aplicable: inicie la hoja de calibración.')
+    if not any(v for v in clean.values()):
+        raise ValidationError('Escriba al menos un dato preliminar.')
+    version=Auditoria.objects.filter(expediente=exp,accion='CAL_PRELIMINAR').count()+1
+    evento(exp,usuario,'CAL_PRELIMINAR',clave=str(clave),huella=t._digest(payload),resultado=version,version=version,datos=clean,
+        autorizacion=auth.pk,aviso='Preliminar: sin protocolo aprobado; no declara conformidad ni genera informe aprobado.')
+    return version
 
 
 @transaction.atomic

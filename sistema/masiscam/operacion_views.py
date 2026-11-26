@@ -49,7 +49,8 @@ def detalle(request,pk):
     if state not in {'AUTORIZADO','EN_REPARACION','OBSERVADO'} or not auth:
         actions=[op for op in actions if op not in {'mantenimiento','actividad','uso','foto','resultado','revision'}]
     # Formularios sueltos retirados de la interfaz (sus rutas y registros históricos se conservan): mantenimiento es la única entrada de TALLER.
-    actions=[op for op in actions if op not in {'repuesto','foto_repuesto','actividad','uso','foto','resultado'}]
+    # La revisión de ADMINISTRADOR del mantenimiento ya no es un paso del flujo (la aprobación conjunta autoriza el trabajo).
+    actions=[op for op in actions if op not in {'repuesto','foto_repuesto','actividad','uso','foto','resultado','revision'}]
     # Only the accepted work scope is operational; never disclose the budget,
     # representative identity or verification evidence to technicians/plant.
     commercial=rol in {'OFICINA'}
@@ -161,7 +162,7 @@ def _mantenimiento(request,pk,exp):
             _error(form,exc)
         else:
             if request.POST.get('accion')=='finalizar':
-                messages.success(request,'Mantenimiento finalizado. ADMINISTRADOR debe revisarlo.')
+                messages.success(request,'Mantenimiento finalizado. Ya puedes registrar la calibración.')
                 return redirect('masiscam:flujo_detalle',pk=pk)
             messages.success(request,'Avance guardado.')
             return redirect(request.get_full_path())
@@ -171,7 +172,8 @@ def _mantenimiento(request,pk,exp):
         fotos=list(actividad.evidencias.select_related('documento').order_by('pk'))
     return render(request,'masiscam/mantenimiento_form.html',dict(form=form,expediente=exp,op='mantenimiento',operacion=LABELS['mantenimiento'],
         trabajos=svc.trabajos_autorizados(exp),actividad=actividad,abierta=abierta,resultado=resultado,revision=revision,fotos=fotos,
-        sin_autorizacion=not auth,alcance_autorizado=auth.propuesta.alcance if auth else None),
+        sin_autorizacion=not auth,alcance_autorizado=auth.propuesta.alcance if auth else None,
+        url_calibracion=reverse('masiscam:calibracion_expediente',args=[pk])+'?flujo=1' if settings.MASISCAM_CALIBRACION_LOCAL else None),
         status=400 if request.method=='POST' and form.errors else 200)
 
 

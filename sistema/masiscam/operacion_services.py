@@ -215,11 +215,14 @@ def estado(exp):
         return 'OBSERVADO'
     acts=ActividadReparacion.objects.filter(autorizacion=d).annotate(
         ultimo=Subquery(ResultadoReparacion.objects.filter(actividad_id=OuterRef('pk')).order_by('-version').values('pk')[:1]))
-    statuses=list(acts.annotate(revision_actual=Subquery(RevisionReparacion.objects.filter(resultado_id=OuterRef('ultimo')).values('decision')[:1])).values_list('revision_actual',flat=True))
-    if not statuses:
+    rows=list(acts.annotate(revision_actual=Subquery(RevisionReparacion.objects.filter(resultado_id=OuterRef('ultimo')).values('decision')[:1])).values_list('ultimo','revision_actual'))
+    if not rows:
         return 'AUTORIZADO'
-    if 'OBSERVADO' in statuses: return 'OBSERVADO'
-    return 'REPARACION_FINALIZADA' if all(v=='APROBADO' for v in statuses) else 'EN_REPARACION'
+    # La aprobación conjunta de ADMINISTRADOR ya autorizó el trabajo: el mantenimiento queda finalizado cuando TALLER registra el
+    # resultado de cada actividad. La revisión de ADMINISTRADOR es opcional; solo una observación expresa devuelve el trabajo a TALLER.
+    if any(ultimo is None for ultimo,_ in rows): return 'EN_REPARACION'
+    if any(revision=='OBSERVADO' for _,revision in rows): return 'OBSERVADO'
+    return 'REPARACION_FINALIZADA'
 
 
 @transaction.atomic
@@ -657,7 +660,7 @@ def reservar_documento(*, usuario, empresa, expediente_id, tipo, clave, nueva_ve
     else:
         auth=exigir_autorizacion(exp)
         if estado(exp)!='REPARACION_FINALIZADA':
-            raise ValidationError('Se requiere revisión independiente de todas las actividades vigentes.')
+            raise ValidationError('Todas las actividades vigentes deben estar finalizadas por TALLER.')
         rows = list(ActividadReparacion.objects.filter(autorizacion=auth).order_by('pk'))
         snap['autorizacion']=auth.pk
         snap['diagnostico']=auth.propuesta.diagnostico_id
@@ -666,7 +669,8 @@ def reservar_documento(*, usuario, empresa, expediente_id, tipo, clave, nueva_ve
             r=a.resultados.order_by('-version').first()
             snap['registros'].append(dict(id=a.pk,tecnico=a.autor.username,inicio=a.inicio.isoformat(),fin=r.fin.isoformat(),
                 trabajo=a.trabajo,componentes=a.componentes,trabajo_realizado=r.trabajo_realizado,resultado=r.resultado,
-                observaciones=r.observaciones,version=r.version,revisor=r.revision.autor.username,revision=r.revision.motivo,
+                observaciones=r.observaciones,version=r.version,revisor=r.revision.autor.username if hasattr(r,'revision') else auth.autor.username,
+                revision=r.revision.motivo if hasattr(r,'revision') else 'Autorizado por la aprobación conjunta de ADMINISTRADOR',
                 usos=[dict(recepcion=u.recepcion_id,descripcion=u.recepcion.descripcion,cantidad=str(u.cantidad),unidad=u.recepcion.unidad) for u in a.usos.all()]))
         evs = EvidenciaOperativa.objects.filter(actividad__in=rows)
     for e in evs.select_related('documento').order_by('pk'):

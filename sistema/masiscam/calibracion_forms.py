@@ -50,6 +50,14 @@ class InicioForm(BaseForm):
         self.fields['plantilla_id'].label_from_instance=lambda p:f'{p.codigo} v{p.version} · {p.titulo}'
 
 
+class PreliminarForm(BaseForm):
+    """Datos preliminares sin protocolo aprobado: texto libre; no crea puntos, parámetros ni conformidad."""
+    fecha=forms.DateTimeField(required=False,label='Fecha',widget=forms.DateTimeInput(format='%Y-%m-%dT%H:%M',attrs={'type':'datetime-local'}))
+    instrumentos=forms.CharField(required=False,widget=forms.Textarea,label='Instrumentos utilizados',max_length=20000)
+    resultados=forms.CharField(required=False,widget=forms.Textarea,label='Datos y mediciones preliminares',max_length=20000)
+    observaciones=forms.CharField(required=False,widget=forms.Textarea,label='Observaciones',max_length=20000)
+
+
 class DatosForm(BaseForm):
     version=forms.IntegerField(min_value=1,widget=forms.HiddenInput)
     fecha=forms.DateTimeField(required=False,widget=forms.DateTimeInput(format='%Y-%m-%dT%H:%M',attrs={'type':'datetime-local'}))

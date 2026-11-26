@@ -13,7 +13,7 @@ from .access import masiscam_access_required
 from .models import PlantillaCalibracion,Calibracion,Documento,ExpedienteMantenimiento,DecisionCalibracion
 from . import calibracion_services as s
 from .calibracion_forms import (PlantillaForm,PuntosFormSet,InicioForm,DatosForm,MedicionForm,EvidenciaForm,
-    DecisionForm,InformeForm,ValidarForm,AplicarForm,FormatoCalibracionForm)
+    DecisionForm,InformeForm,ValidarForm,AplicarForm,FormatoCalibracionForm,PreliminarForm)
 from .tecnica_views import _error
 
 
@@ -102,8 +102,20 @@ def plantilla(request,pk):
 @masiscam_access_required
 def expediente(request,pk):
     exp=s.expediente(request.user,request.empresa_activa,pk)
-    form=InicioForm(request.POST or None,exp=exp)
-    if request.method=='POST' and form.is_valid():
+    preliminar_op=request.method=='POST' and request.POST.get('op')=='preliminar'
+    form=InicioForm(None if preliminar_op else (request.POST or None),exp=exp)
+    prelim=PreliminarForm(request.POST if preliminar_op else None)
+    if request.method=='POST' and preliminar_op:
+        if prelim.is_valid():
+            data=dict(prelim.cleaned_data);clave=data.pop('clave')
+            try:
+                s.guardar_preliminar(usuario=request.user,empresa=request.empresa_activa,expediente_id=pk,clave=clave,datos=data)
+            except (ValidationError,IntegrityError,OSError) as exc: _error(prelim,exc)
+            else:
+                from django.contrib import messages
+                messages.success(request,'Datos preliminares guardados. No declaran conformidad ni generan un informe aprobado.')
+                return redirect(request.get_full_path())
+    elif request.method=='POST' and form.is_valid():
         data=dict(form.cleaned_data);data['plantilla_id']=data['plantilla_id'].pk
         try:
             c=s.iniciar(usuario=request.user,empresa=request.empresa_activa,expediente_id=pk,**data)
@@ -111,8 +123,12 @@ def expediente(request,pk):
         else:
             url=reverse('masiscam:calibracion_revision',args=[c.pk])
             return redirect(url+'?flujo=1' if request.GET.get('flujo') == '1' else url)
-    return render(request,'masiscam/calibracion_expediente.html',dict(expediente=exp,form=form,rol=s.autorizar(request.user,request.empresa_activa).rol,
-        estado_reparacion=s.o.estado(exp),plantillas_disponibles=form.fields['plantilla_id'].queryset.exists()),status=400 if request.method=='POST' else 200)
+    protocolo,faltan=s.protocolo_estado(exp);tiene=exp.calibraciones.exists()
+    rol=s.autorizar(request.user,request.empresa_activa).rol
+    return render(request,'masiscam/calibracion_expediente.html',dict(expediente=exp,form=form,preliminar=prelim,rol=rol,
+        estado_reparacion=s.o.estado(exp),plantillas_disponibles=form.fields['plantilla_id'].queryset.exists(),
+        protocolo_valido=protocolo,requisitos_faltantes=faltan,preliminares=s.preliminares(exp),
+        tiene_calibracion=tiene,puede_iniciar=(rol=='TALLER' and not tiene) or (rol=='ADMIN' and tiene)),status=400 if request.method=='POST' else 200)
 
 
 @require_http_methods(['GET','POST'])

@@ -87,11 +87,11 @@ def resumen(user,empresa,filters=None,limite=100):
     repairs={};sources={}
     for a in acts.order_by('pk').values('pk','expediente_id','autorizacion__propuesta_id','revision_actual','resultado_actual'):
         key=(a['expediente_id'],a['autorizacion__propuesta_id'])
-        repairs.setdefault(key,[]).append(a['revision_actual'])
+        repairs.setdefault(key,[]).append('OBSERVADO' if a['revision_actual']=='OBSERVADO' else ('ENVIADO' if a['resultado_actual'] else None))
         sources.setdefault(key,[]).append(dict(actividad=a['pk'],resultado=a['resultado_actual']))
     for exp in rows:
         statuses=repairs.get((exp.pk,exp.propuesta_id),[])
-        exp.reparacion_aprobada=bool(statuses) and all(v=='APROBADO' for v in statuses)
+        exp.reparacion_aprobada=bool(statuses) and all(v=='ENVIADO' for v in statuses)   # resultado registrado y sin observación expresa
         exp.fuente_reparacion_cambiada=bool(exp.calibracion_estado and exp.calibracion_reparacion!=sources.get((exp.pk,exp.propuesta_id),[]))
         exp.etapa_actual=etapa(exp)
         exp.alerta_documental=not exp.recibido or exp.informe_estado=='BORRADOR'

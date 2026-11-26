@@ -4,10 +4,10 @@
 {% else %}
 <section class="mf-decision" aria-label="Trabajos autorizados"><span class="mf-chip is-ok">Aprobado por ADMINISTRADOR</span><h2>Trabajos autorizados</h2>
 {% if trabajos %}<ul class="mf-trabajos" data-trabajos>{% for t in trabajos %}<li>{{ t.descripcion }}{% if t.cantidad %} <small>· {{ t.cantidad }} {{ t.unidad }}</small>{% endif %}</li>{% endfor %}</ul>{% else %}<p>{{ alcance_autorizado|linebreaksbr }}</p>{% endif %}</section>
-{% if actividad and not abierta %}<section class="mf-card p-3 mb-3" data-mantenimiento-enviado><h2>Mantenimiento {% if revision.decision == 'APROBADO' %}aprobado{% else %}enviado a revisión{% endif %}</h2>
+{% if actividad and not abierta %}<section class="mf-card p-3 mb-3" data-mantenimiento-enviado><h2>Mantenimiento finalizado</h2><span class="mf-chip is-ok">Finalizado</span>
 <p><strong>Resultado:</strong> {{ resultado.resultado|linebreaksbr }}</p>{% if resultado.observaciones %}<p><strong>Observaciones:</strong> {{ resultado.observaciones|linebreaksbr }}</p>{% endif %}
 <p><strong>Componentes intervenidos:</strong><br>{{ actividad.componentes|linebreaksbr }}</p>
-<p class="mf-frozen">{% if revision.decision == 'APROBADO' %}Revisado por ADMINISTRADOR.{% else %}ADMINISTRADOR debe revisarlo antes de pasar a la calibración.{% endif %}</p></section>
+<p class="mf-frozen">Autorizado por la aprobación conjunta de ADMINISTRADOR. No requiere otra aprobación para pasar a la calibración.</p>{% if url_calibracion %}<a class="btn btn-primary mf-main-action" href="{{ url_calibracion }}" data-ir-calibracion>Registrar calibración</a>{% endif %}</section>
 {% else %}
 {% if revision.decision == 'OBSERVADO' %}<section class="mf-decision" role="status" data-observado><span class="mf-chip is-bloqueado">Observado</span><p>{{ revision.motivo|linebreaksbr }}</p></section>{% endif %}
 <form method="post" enctype="multipart/form-data" class="mf-card row g-3" data-form-mantenimiento>{% csrf_token %}

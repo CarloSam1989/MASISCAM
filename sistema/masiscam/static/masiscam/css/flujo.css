@@ -61,9 +61,11 @@
 .mf-secuencia li.is-ok{border-color:#9bd0ae;background:#f3faf5}.mf-secuencia li.is-proceso{border-color:#8db4dd;background:#f2f7fd;box-shadow:0 0 0 1px #8db4dd}
 .mf-secuencia li.is-ok .mf-number{background:#2f8f55;color:#fff}.mf-secuencia li.is-proceso .mf-number{background:#2c6fb5;color:#fff}
 .mf-secuencia .mf-number{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#e8eef5;color:#31577b;font-size:.78rem}
+.mf-secuencia li.is-disponible{border-color:#e0c26a;background:#fffaf0}.mf-secuencia li.is-disponible .mf-number{background:#b7791f;color:#fff}.mf-secuencia li.is-disponible .mf-chip{background:#fdf0cf;color:#7a4e0a}
+.mf-secuencia .mf-detalle,.mf-secuencia .mf-responsables{font-weight:400;color:#41576b;line-height:1.35}.mf-secuencia .mf-responsables a{font-weight:600}
 .mf-secuencia .mf-chip{margin:0}.mf-secuencia li.is-ok .mf-chip{background:#dff3e6;color:#1d6b3c}.mf-secuencia li.is-proceso .mf-chip{background:#dcebfb;color:#1d4f86}
 .mf-next:has(.mf-secuencia){display:block}.mf-next:has(.mf-secuencia) .mf-main-action{margin-top:14px}
-@media(max-width:767px){.mf-secuencia{grid-template-columns:1fr}.mf-secuencia li{flex-direction:row;align-items:center;justify-content:space-between}}
+@media(max-width:767px){.mf-secuencia{grid-template-columns:1fr}.mf-secuencia li{flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between}.mf-secuencia .mf-detalle,.mf-secuencia .mf-responsables{flex:0 0 100%}}
 /* Resumen de diagnóstico: dos columnas y fila inferior */
 .mf-dx-meta{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 12px;color:#3d556b}.mf-dx-meta .mf-chip{margin:0}
 .mf-dx-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}

@@ -393,7 +393,7 @@ def detalle(request,pk):
                 s.expediente(request.user,request.empresa_activa,pk,{'TALLER', 'OFICINA'})
                 cal=ctx['calibracion']
                 if not cal: raise ValidationError('Calibración aprobada pendiente.')
-                informe=s.generar_final_automatico(cal.pk,propagar=True)
+                informe=s.generar_final_automatico(cal.pk,propagar=True,corregir=bool(ctx['informe'] and ctx['informe'].estado=='OBSERVADO'))
                 if informe: s.evento(exp,request.user,'FINAL_REINTENTADO',informe=informe.pk,calibracion=cal.pk)
             else: raise ValidationError('Acción no disponible en este paso.')
         except (ValidationError,IntegrityError,OSError,ValueError) as error: _error(form,error)

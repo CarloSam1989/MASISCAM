@@ -69,7 +69,8 @@ def snapshot(exp):
         activities.append(dict(id=a.pk,autor=a.autor.username,inicio=a.inicio.isoformat(),resultado_id=r.pk,
             fin=r.fin.isoformat(),trabajo=a.trabajo,componentes=a.componentes,resultado=r.resultado,
             trabajo_realizado=r.trabajo_realizado,observaciones=r.observaciones,revision=r.version,
-            aprobacion=dict(id=r.revision.pk,responsable=r.revision.autor.username,fecha=r.revision.creado_en.isoformat(),motivo=r.revision.motivo),
+            aprobacion=(dict(id=r.revision.pk,responsable=r.revision.autor.username,fecha=r.revision.creado_en.isoformat(),motivo=r.revision.motivo) if hasattr(r,'revision')
+                else dict(id=auth.pk,responsable=auth.autor.username,fecha=auth.creado_en.isoformat(),motivo='Trabajo autorizado por la aprobación conjunta de ADMINISTRADOR; sin revisión adicional del mantenimiento.')),
             usos=[dict(recepcion=u.recepcion_id,cantidad=str(u.cantidad),unidad=u.recepcion.unidad) for u in a.usos.order_by('pk')]))
     evidence=[]
     def add(doc,section,caption,photo=False):
