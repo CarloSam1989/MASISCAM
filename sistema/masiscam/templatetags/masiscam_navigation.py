@@ -23,11 +23,12 @@ def menu_compartido(context):
         from masiscam.oficina_views import SECCIONES
         items=[item('Inicio','oficina_inicio'),item('Clientes','clientes')]+[item(label,'oficina_seccion',[key]) for key,label in SECCIONES.items() if key in {'solicitudes','cotizaciones'}]
         if settings.MASISCAM_TECNICA_LOCAL:items.append(item('Planos y piezas','biblioteca'))
+        if settings.MASISCAM_CALIBRACION_LOCAL:items.append(item('Tolerancias de calibración','calibracion_tolerancias'))
     elif rol=='ADMIN':
         items=[item('Inicio','dashboard'),
             item('Clientes','clientes'),item('Proyectos','proyectos'),item('Expedientes','expedientes')]
         if settings.MASISCAM_TECNICA_LOCAL:items += [item('Aprobaciones','tecnica_inicio'),item('Planos y piezas','biblioteca')]
-        if settings.MASISCAM_CALIBRACION_LOCAL:items += [item('Protocolos','calibracion_plantillas')]
+        if settings.MASISCAM_CALIBRACION_LOCAL:items += [item('Protocolos','calibracion_plantillas'),item('Tolerancias de calibración','calibracion_tolerancias')]
         if settings.MASISCAM_CIERRE_LOCAL:items += [item('Seguimiento','cierre_dashboard')]
         if tiene_permiso(request,'usuarios'):items += [item('Usuarios','usuarios')]
     else:items=[item('Inicio','dashboard')]

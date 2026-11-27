@@ -84,6 +84,7 @@ VISTAS_OFICINA = {
     'masiscam.tecnica_views': {'tecnica_informe','tecnica_documento','biblioteca_documento','biblioteca','biblioteca_referencia','biblioteca_referencia_form'},
     'masiscam.operacion_views': {'inicio','detalle','operar','documento'},
     'masiscam.cierre_views': {'detalle','documento'},
+    'masiscam.calibracion_views': {'tolerancias'},   # OFICINA configura los límites de calibración; no accede al resto de la calibración
 }
 
 

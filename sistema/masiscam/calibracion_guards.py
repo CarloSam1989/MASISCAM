@@ -2,10 +2,10 @@ from django.core.exceptions import PermissionDenied
 from django.db.models.signals import pre_save,pre_delete
 from django.dispatch import receiver
 from .models import (PlantillaCalibracion,ValidacionPlantillaCalibracion,AplicabilidadCalibracion,
-    Calibracion,MedicionCalibracion,EvidenciaCalibracion,DecisionCalibracion,EmisionCalibracion)
+    Calibracion,MedicionCalibracion,EvidenciaCalibracion,DecisionCalibracion,EmisionCalibracion,ToleranciaCalibracion)
 
 MODELS={PlantillaCalibracion,ValidacionPlantillaCalibracion,AplicabilidadCalibracion,Calibracion,
-    MedicionCalibracion,EvidenciaCalibracion,DecisionCalibracion,EmisionCalibracion}
+    MedicionCalibracion,EvidenciaCalibracion,DecisionCalibracion,EmisionCalibracion,ToleranciaCalibracion}
 
 
 @receiver(pre_save,dispatch_uid='calibracion_proteger')

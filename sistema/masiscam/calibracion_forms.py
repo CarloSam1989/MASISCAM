@@ -201,3 +201,34 @@ class AplicarForm(ValidarForm):
     def __init__(self,*args,empresa,plantilla,**kwargs):
         super().__init__(*args,**kwargs)
         self.fields['equipo_id'].queryset=Equipo.objects.filter(proyecto__empresa=empresa,tipo_producto=plantilla.tipo_equipo)
+
+
+class ToleranciaForm(BaseForm):
+    """Límites técnicos de una configuración (marca, modelo, ratio y rotación). Nada se precarga con valores de ejemplo."""
+    UL=[('','Elige la unidad')]+[(u,u) for u in ('mm','µm','in','mil')]
+    UP=[('','Sin presiones')]+[(u,u) for u in ('psi','bar','kPa','MPa')]
+    tipo_equipo=forms.ChoiceField(choices=[('REDUCTOR','Reductor'),('BOMBA','Bomba')],initial='REDUCTOR',label='Tipo de equipo')
+    marca=forms.CharField(max_length=120,label='Marca')
+    modelo=forms.CharField(max_length=120,label='Modelo')
+    ratio=forms.CharField(max_length=80,label='Ratio')
+    rotacion=forms.CharField(max_length=80,label='Rotación')
+    unidad_longitud=forms.ChoiceField(choices=UL,label='Unidad de longitud')
+    backlash_min=DecimalFlexible(max_digits=18,decimal_places=6,label='Backlash mínimo')
+    backlash_max=DecimalFlexible(max_digits=18,decimal_places=6,label='Backlash máximo')
+    tolerancia=DecimalFlexible(required=False,max_digits=18,decimal_places=6,label='Tolerancia de calibración')
+    calibracion_min=DecimalFlexible(required=False,max_digits=18,decimal_places=6,label='Calibración mínima')
+    calibracion_max=DecimalFlexible(required=False,max_digits=18,decimal_places=6,label='Calibración máxima')
+    unidad_presion=forms.ChoiceField(required=False,choices=UP,label='Unidad de presión')
+    presion_vertical_min=DecimalFlexible(required=False,max_digits=18,decimal_places=6,label='Presión vertical mínima')
+    presion_vertical_max=DecimalFlexible(required=False,max_digits=18,decimal_places=6,label='Presión vertical máxima')
+    presion_horizontal_min=DecimalFlexible(required=False,max_digits=18,decimal_places=6,label='Presión horizontal mínima')
+    presion_horizontal_max=DecimalFlexible(required=False,max_digits=18,decimal_places=6,label='Presión horizontal máxima')
+    fuente=forms.CharField(widget=forms.Textarea,max_length=2000,label='Fuente técnica',help_text='Documento, manual o procedimiento del que salen estos límites.')
+    mediciones_parametro=forms.ChoiceField(required=False,label='Parámetro al que corresponden las 16 mediciones',choices=[('','Sin criterio de evaluación definido'),('BACKLASH','Backlash'),('CALIBRACION','Calibración')])
+    mediciones_criterio=forms.CharField(required=False,widget=forms.Textarea,max_length=2000,label='Criterio técnico de la correspondencia',help_text='Documento o procedimiento que establece qué miden las 16 mediciones. Sin esto no se evalúan.')
+    motivo=forms.CharField(required=False,widget=forms.Textarea,max_length=2000,label='Motivo del cambio',help_text='Obligatorio al cambiar una configuración que ya tiene límites.')
+
+
+class RetirarToleranciaForm(BaseForm):
+    tolerancia_id=forms.IntegerField(min_value=1,widget=forms.HiddenInput)
+    motivo=forms.CharField(widget=forms.Textarea,max_length=2000,label='Motivo del retiro')

@@ -10,10 +10,10 @@ from django.http import Http404,FileResponse
 from django.shortcuts import render,redirect,get_object_or_404
 from django.views.decorators.http import require_GET,require_http_methods
 from .access import masiscam_access_required
-from .models import PlantillaCalibracion,Calibracion,Documento,ExpedienteMantenimiento,DecisionCalibracion
+from .models import ToleranciaCalibracion,PlantillaCalibracion,Calibracion,Documento,ExpedienteMantenimiento,DecisionCalibracion
 from . import calibracion_services as s
 from .calibracion_forms import (PlantillaForm,PuntosFormSet,InicioForm,DatosForm,MedicionForm,EvidenciaForm,
-    DecisionForm,InformeForm,ValidarForm,AplicarForm,FormatoCalibracionForm,HojaCalibracionForm,HojaInicioForm)
+    DecisionForm,InformeForm,ValidarForm,AplicarForm,FormatoCalibracionForm,HojaCalibracionForm,HojaInicioForm,ToleranciaForm,RetirarToleranciaForm)
 from .tecnica_views import _error
 
 
@@ -152,7 +152,7 @@ def expediente(request,pk):
         and (not ultimo_informe or ultimo_informe.estado=='OBSERVADO')))
     return render(request,'masiscam/calibracion_expediente.html',dict(expediente=exp,form=form,hoja_form=hoja,rol=rol,
         estado_reparacion=s.o.estado(exp),configuracion=s.configuracion_equipo(exp.registro.equipo),
-        protocolo_valido=protocolo,preliminares=s.preliminares(exp),ultima=ultima,ultima_hoja=ultima_hoja,
+        tolerancia_configurada=s.tolerancia_vigente(exp.empresa,exp.registro.equipo),protocolo_valido=protocolo,preliminares=s.preliminares(exp),ultima=ultima,ultima_hoja=ultima_hoja,
         en_curso=bool(ultima and not ultima.enviado_en),puede_abrir=puede_abrir,
         es_correccion=bool(ultima and ultima.enviado_en),
         puede_corregir_protocolo=bool(rol=='ADMIN' and protocolo and ultima and not ultima_hoja and ultima.estado in {'OBSERVADA','RECHAZADA'}
@@ -269,3 +269,36 @@ def _archivo(doc,empresa):
     except (ValidationError,OSError): raise Http404('Copia ausente o no íntegra.') from None
     response['Cache-Control']='private, no-store';response['X-Content-Type-Options']='nosniff'
     return response
+
+
+@require_http_methods(['GET','POST'])
+@local
+@masiscam_access_required
+def tolerancias(request):
+    """Configuración de límites de calibración por marca, modelo, ratio y rotación para OFICINA y ADMINISTRADOR; TALLER solo ve su resultado en la hoja."""
+    role=s.autorizar(request.user,request.empresa_activa,s.ROLES_TOLERANCIA).rol
+    op=request.POST.get('op','guardar') if request.method=='POST' else 'guardar'
+    form=ToleranciaForm(request.POST if request.method=='POST' and op=='guardar' else None)
+    retiro=RetirarToleranciaForm(request.POST if request.method=='POST' and op=='retirar' else None)
+    if request.method=='GET' and request.GET.get('base','').isdigit():   # nueva versión a partir de una existente
+        base=ToleranciaCalibracion.objects.filter(pk=request.GET['base'],empresa=request.empresa_activa).first()
+        if base:
+            form=ToleranciaForm(initial={**{c:getattr(base,c) for c in ('tipo_equipo','marca','modelo','ratio','rotacion','unidad_longitud','unidad_presion','fuente','mediciones_parametro','mediciones_criterio',*base.LIMITES)},
+                'motivo':''})
+    if request.method=='POST':
+        formulario=form if op=='guardar' else retiro
+        if formulario.is_valid():
+            datos=dict(formulario.cleaned_data);clave=datos.pop('clave')
+            try:
+                if op=='guardar': resultado=s.registrar_tolerancia(usuario=request.user,empresa=request.empresa_activa,clave=clave,datos=datos)
+                else: resultado=s.retirar_tolerancia(usuario=request.user,empresa=request.empresa_activa,clave=clave,tolerancia_id=datos['tolerancia_id'],motivo=datos['motivo'])
+            except (ValidationError,IntegrityError,OSError) as exc: _error(formulario,exc)
+            else: return redirect(f"{reverse('masiscam:calibracion_tolerancias')}?guardado={resultado.pk}")
+    filas=list(s.tolerancias_vigentes(request.empresa_activa))
+    for fila in filas: fila.nueva_clave=uuid.uuid4()
+    historial=None
+    if request.GET.get('historial','').isdigit():
+        ref=ToleranciaCalibracion.objects.filter(pk=request.GET['historial'],empresa=request.empresa_activa).first()
+        if ref: historial=ToleranciaCalibracion.objects.filter(empresa=request.empresa_activa,tipo_equipo=ref.tipo_equipo,configuracion=ref.configuracion).select_related('autor').order_by('-version')
+    return render(request,'masiscam/calibracion_tolerancias.html',dict(form=form,retiro=retiro,filas=filas,historial=historial,rol=role,
+        guardado=request.GET.get('guardado','')),status=400 if request.method=='POST' else 200)

@@ -473,7 +473,7 @@ from .operacion_models import (PropuestaComercial, DecisionComercial, RecepcionR
     EvidenciaOperativa, EmisionOperativa, RevisionAdministrativa)
 from .calibracion_models import (PlantillaCalibracion, ValidacionPlantillaCalibracion,
     AplicabilidadCalibracion, Calibracion, MedicionCalibracion, EvidenciaCalibracion,
-    DecisionCalibracion, EmisionCalibracion)
+    DecisionCalibracion, EmisionCalibracion, ToleranciaCalibracion)
 from .cierre_models import InformeFinal, RevisionInformeFinal, CierreExpediente
 from .tecnica_models import MapaPlano, PosicionPlano
 from .flujo_models import (SolicitudRepuestos, AdquisicionRepuesto, EnvioRepuestos,

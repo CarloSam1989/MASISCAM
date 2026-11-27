@@ -505,10 +505,10 @@ class HojaCalibracionTests(HojaBase,TestCase):
         snap=em.snapshot
         self.assertEqual((snap['plantilla'],snap['estado'],snap['decision']),('hoja-calibracion-v1','FINALIZADA',None))
         self.assertEqual(snap['verificacion']['estado'],'SIN_TOLERANCIA_APROBADA');self.assertIn('No se afirma conformidad técnica',snap['verificacion']['texto'])
-        self.assertTrue(all(r['evaluacion']=='Sin tolerancia aprobada: no se evalúa' for r in snap['mediciones']))
+        self.assertTrue(all(r['evaluacion']=='Sin tolerancia definida: no se evalúa' for r in snap['mediciones']))
         self.assertEqual(snap['unidades'],UNIDADES_QA);self.assertEqual([r['valor'] for r in snap['parametros']][:3],['0.5','0.55','0.6'])
         texto=self.texto_pdf(em)
-        for palabra in ('DATOS GENERALES DE TRANSMISIÓN','DATOS DE SHIMS','DATOS DE CALIBRACIÓN','Presión eje horizontal','Sin tolerancia aprobada','No es certificado metrológico',
+        for palabra in ('DATOS GENERALES DE TRANSMISIÓN','DATOS DE SHIMS','DATOS DE CALIBRACIÓN','Presión eje horizontal','Sin tolerancia definida','No es certificado metrológico',
                 'Anexos: ninguno registrado'): self.assertIn(palabra,texto,palabra)
         self.assertNotIn('ANEXO 1',texto)   # sin evidencias no hay páginas de anexos
         for prohibido in ('Dentro del rango','Fuera del rango','CONFORME'): self.assertNotIn(prohibido,texto,prohibido)
@@ -644,4 +644,4 @@ class HojaToleranciasAprobadasTests(HojaBase,TestCase):
         # La verificación solo es aritmética: otra unidad, o límites no numéricos, no se evalúan ni se inventan equivalencias.
         self.assertEqual(s._evaluar('0.1',dict(minimo='0',maximo='1',unidad='in'),'mm'),'Unidad distinta a la aprobada: no se evalúa')
         self.assertEqual(s._evaluar('0.1',dict(minimo='',maximo='1',unidad='mm'),'mm'),'Sin límites numéricos aprobados: no se evalúa')
-        self.assertEqual(s._evaluar('0.1',None,'mm'),'Sin tolerancia aprobada: no se evalúa')
+        self.assertEqual(s._evaluar('0.1',None,'mm'),'Sin tolerancia definida: no se evalúa')

@@ -14,7 +14,7 @@ from django.utils import timezone
 from . import tecnica_services as t
 from . import operacion_services as o
 from .models import (PlantillaCalibracion,ValidacionPlantillaCalibracion,AplicabilidadCalibracion,
-    Calibracion,MedicionCalibracion,EvidenciaCalibracion,DecisionCalibracion,EmisionCalibracion,
+    Calibracion,MedicionCalibracion,EvidenciaCalibracion,DecisionCalibracion,EmisionCalibracion,ToleranciaCalibracion,
     ActividadReparacion,ResultadoReparacion,ExpedienteMantenimiento,Documento,Proyecto,Equipo,Auditoria)
 from .recepcion_services import _hash,validar_fotografias,verificar_copia_persistente,evento
 
@@ -346,7 +346,202 @@ def tolerancias_aprobadas(exp):
     return protocolo_estado(exp)[0]
 
 
+# ---- Tolerancias configuradas por OFICINA o ADMINISTRADOR (por marca, modelo, ratio y rotación) --------------------------------------------
+A_MM={'mm':Decimal('1'),'µm':Decimal('0.001'),'in':Decimal('25.4'),'mil':Decimal('0.0254')}
+A_KPA={'kPa':Decimal('1'),'bar':Decimal('100'),'MPa':Decimal('1000'),'psi':Decimal('6.894757293168')}
+ETIQUETAS_LIMITE=dict(backlash_min='Backlash mínimo',backlash_max='Backlash máximo',tolerancia='Tolerancia de calibración',calibracion_min='Calibración mínima',
+    calibracion_max='Calibración máxima',presion_vertical_min='Presión vertical mínima',presion_vertical_max='Presión vertical máxima',
+    presion_horizontal_min='Presión horizontal mínima',presion_horizontal_max='Presión horizontal máxima')
+CAMPOS_TOLERANCIA=('tipo_equipo','marca','modelo','ratio','rotacion','unidad_longitud','unidad_presion','fuente','mediciones_parametro','mediciones_criterio','motivo',*ToleranciaCalibracion.LIMITES)
+ROLES_TOLERANCIA={'OFICINA','ADMIN'}
+
+
+def _norm(valor):
+    return ' '.join(str(valor or '').split())
+
+
+def llave_configuracion(tipo,marca,modelo,ratio,rotacion):
+    """Llave de comparación: tipo + marca, modelo, ratio y rotación sin diferencias de mayúsculas ni espacios."""
+    return '|'.join([tipo]+[_norm(x).casefold() for x in (marca,modelo,ratio,rotacion)])
+
+
+def tolerancia_vigente(empresa,equipo):
+    """Última versión activa de los límites configurados para la configuración del equipo; None si no hay o fue retirada (nunca se infiere)."""
+    ultima=ToleranciaCalibracion.objects.filter(empresa=empresa,tipo_equipo=equipo.tipo_producto,
+        configuracion=llave_configuracion(equipo.tipo_producto,equipo.marca,equipo.modelo,equipo.ratio,equipo.rotacion)).order_by('-version').first()
+    return ultima if ultima and ultima.activa else None
+
+
+def tolerancias_vigentes(empresa):
+    """Última versión de cada configuración (activas e inactivas) para el listado de configuración."""
+    ultimas=ToleranciaCalibracion.objects.filter(empresa=empresa).values('tipo_equipo','configuracion').annotate(v=Max('version'))
+    filtro=Q(pk__in=[])
+    for u in ultimas: filtro|=Q(tipo_equipo=u['tipo_equipo'],configuracion=u['configuracion'],version=u['v'])
+    return ToleranciaCalibracion.objects.filter(empresa=empresa).filter(filtro).select_related('autor').order_by('marca','modelo','ratio','rotacion')
+
+
+def _limite(valor,etiqueta,negativo=False):
+    n=decimal_seguro(valor,True)
+    if n is None: return None
+    if n.as_tuple().exponent<-6: raise ValidationError(f'{etiqueta}: máximo 6 decimales; no se redondea.')
+    if n<0 and not negativo: raise ValidationError(f'{etiqueta}: no puede ser negativo.')
+    return n
+
+
+def _validar_tolerancia(datos):
+    tipo=datos.get('tipo_equipo')
+    if tipo not in {'REDUCTOR','BOMBA'}: raise ValidationError('Tipo de equipo no válido.')
+    conf={}
+    for campo,etiqueta in (('marca','Marca'),('modelo','Modelo'),('ratio','Ratio'),('rotacion','Rotación')):
+        conf[campo]=_norm(datos.get(campo))
+        if not conf[campo]: raise ValidationError(f'{etiqueta}: obligatorio; los límites se definen para una configuración exacta.')
+    fuente=str(datos.get('fuente') or '').strip()
+    if not fuente: raise ValidationError('Fuente técnica: obligatoria; no se registran límites sin documentar su origen.')
+    unidad_longitud=datos.get('unidad_longitud')
+    if unidad_longitud not in UNIDADES_HOJA['longitud']: raise ValidationError('Unidad de longitud: elige una de la lista.')
+    lim={campo:_limite(datos.get(campo),ETIQUETAS_LIMITE[campo],negativo=campo.startswith('calibracion')) for campo in ToleranciaCalibracion.LIMITES}
+    if lim['backlash_min'] is None or lim['backlash_max'] is None: raise ValidationError('Backlash mínimo y máximo son obligatorios.')
+    for base,etiqueta in (('backlash','Backlash'),('calibracion','Calibración'),('presion_vertical','Presión vertical'),('presion_horizontal','Presión horizontal')):
+        lo,hi=lim[f'{base}_min'],lim[f'{base}_max']
+        if (lo is None)!=(hi is None): raise ValidationError(f'{etiqueta}: registra mínimo y máximo juntos.')
+        if lo is not None and lo>hi: raise ValidationError(f'{etiqueta}: el mínimo no puede ser mayor que el máximo.')
+    hay_presion=any(lim[c] is not None for c in ('presion_vertical_min','presion_horizontal_min'))
+    unidad_presion=datos.get('unidad_presion') or ''
+    if hay_presion and unidad_presion not in UNIDADES_HOJA['presion']: raise ValidationError('Unidad de presión: obligatoria cuando se configuran presiones.')
+    if not hay_presion: unidad_presion=''
+    # Las 16 mediciones solo se comparan si se documenta a qué parámetro corresponden; no se asume que sean de backlash.
+    corresponde=str(datos.get('mediciones_parametro') or '').strip();criterio=str(datos.get('mediciones_criterio') or '').strip()
+    if corresponde not in {'','BACKLASH','CALIBRACION'}: raise ValidationError('Correspondencia de las 16 mediciones: elige un parámetro de la lista.')
+    if corresponde and not criterio: raise ValidationError('Correspondencia de las 16 mediciones: documenta el criterio técnico que la respalda.')
+    if criterio and not corresponde: raise ValidationError('Criterio de correspondencia sin parámetro: elige a qué parámetro corresponden las 16 mediciones o déjalo vacío.')
+    if corresponde=='CALIBRACION' and lim['calibracion_min'] is None: raise ValidationError('Las mediciones solo corresponden a la calibración si configuras calibración mínima y máxima.')
+    return tipo,conf,fuente,unidad_longitud,unidad_presion,lim,corresponde,criterio
+
+
+def _huella_tolerancia(empresa,tipo,conf,version,activa,lim,unidad_longitud,unidad_presion,fuente,corresponde='',criterio=''):
+    return t._digest(dict(empresa=empresa.pk,tipo=tipo,configuracion=conf,version=version,activa=activa,unidad_longitud=unidad_longitud,
+        unidad_presion=unidad_presion,fuente=fuente,mediciones=[corresponde,criterio],limites={k:(str(v) if v is not None else None) for k,v in lim.items()}))
+
+
+def _tol_retry(empresa,clave,accion,payload):
+    try: key=str(uuid.UUID(str(clave)))
+    except (ValueError,TypeError): raise ValidationError('Clave inválida.') from None
+    old=Auditoria.objects.filter(empresa=empresa,objeto_tipo='ToleranciaCalibracion',detalle__clave=key).first()
+    if old:
+        if old.accion!=accion or old.detalle.get('huella')!=t._digest(payload): raise ValidationError('Conflicto: clave utilizada con otra operación o contenido.')
+        return old.detalle['resultado']
+
+
+def _tol_evento(empresa,usuario,clave,accion,payload,obj):
+    Auditoria.objects.create(empresa=empresa,usuario=usuario,accion=accion,objeto_tipo='ToleranciaCalibracion',objeto_id=str(obj.pk),
+        detalle=dict(clave=str(clave),huella=t._digest(payload),resultado=obj.pk,version=obj.version,configuracion=obj.configuracion,huella_registro=obj.huella,
+            motivo=obj.motivo,activa=obj.activa))
+
+
+@transaction.atomic
+def registrar_tolerancia(*,usuario,empresa,clave,datos):
+    """OFICINA o ADMINISTRADOR configuran los límites de una configuración. Cada cambio es una versión nueva con motivo; la anterior se conserva."""
+    autorizar(usuario,empresa,ROLES_TOLERANCIA);t._liblock(usuario,empresa,ROLES_TOLERANCIA)
+    o._datos(datos,CAMPOS_TOLERANCIA)
+    payload=dict(datos={k:('' if v in (None,'') else str(v)) for k,v in datos.items()})
+    previo=_tol_retry(empresa,clave,'CAL_TOLERANCIA',payload)
+    if previo: return ToleranciaCalibracion.objects.get(pk=previo)
+    tipo,conf,fuente,ul,up,lim,corresponde,criterio=_validar_tolerancia(datos)
+    llave=llave_configuracion(tipo,**conf)
+    anterior=ToleranciaCalibracion.objects.filter(empresa=empresa,tipo_equipo=tipo,configuracion=llave).order_by('-version').first()
+    motivo=str(datos.get('motivo') or '').strip()
+    if anterior and not motivo: raise ValidationError('Una nueva versión necesita el motivo del cambio; la anterior se conserva.')
+    version=anterior.version+1 if anterior else 1
+    obj=t._save(ToleranciaCalibracion(empresa=empresa,tipo_equipo=tipo,configuracion=llave,version=version,sustituye=anterior,activa=True,unidad_longitud=ul,unidad_presion=up,
+        fuente=fuente,mediciones_parametro=corresponde,mediciones_criterio=criterio,motivo=motivo,
+        huella=_huella_tolerancia(empresa,tipo,llave,version,True,lim,ul,up,fuente,corresponde,criterio),autor=usuario,clave=clave,**conf,**lim))
+    _tol_evento(empresa,usuario,clave,'CAL_TOLERANCIA',payload,obj)
+    return obj
+
+
+@transaction.atomic
+def retirar_tolerancia(*,usuario,empresa,clave,tolerancia_id,motivo):
+    """Retira los límites vigentes: crea una versión inactiva (las hojas ya generadas conservan los límites con que se compararon)."""
+    autorizar(usuario,empresa,ROLES_TOLERANCIA);t._liblock(usuario,empresa,ROLES_TOLERANCIA)
+    payload=dict(tolerancia=int(tolerancia_id),motivo=str(motivo or '').strip())
+    previo=_tol_retry(empresa,clave,'CAL_TOLERANCIA_RETIRADA',payload)
+    if previo: return ToleranciaCalibracion.objects.get(pk=previo)
+    actual=get_object_or_404_empresa(ToleranciaCalibracion,empresa,tolerancia_id)
+    ultima=ToleranciaCalibracion.objects.filter(empresa=empresa,tipo_equipo=actual.tipo_equipo,configuracion=actual.configuracion).order_by('-version').first()
+    if ultima.pk!=actual.pk or not actual.activa: raise ValidationError('Solo se retiran los límites vigentes de la configuración.')
+    if not payload['motivo']: raise ValidationError('Retirar los límites necesita su motivo.')
+    lim={k:getattr(actual,k) for k in ToleranciaCalibracion.LIMITES}
+    version=actual.version+1
+    obj=t._save(ToleranciaCalibracion(empresa=empresa,tipo_equipo=actual.tipo_equipo,marca=actual.marca,modelo=actual.modelo,ratio=actual.ratio,rotacion=actual.rotacion,
+        configuracion=actual.configuracion,version=version,sustituye=actual,activa=False,unidad_longitud=actual.unidad_longitud,unidad_presion=actual.unidad_presion,
+        fuente=actual.fuente,mediciones_parametro=actual.mediciones_parametro,mediciones_criterio=actual.mediciones_criterio,motivo=payload['motivo'],
+        huella=_huella_tolerancia(empresa,actual.tipo_equipo,actual.configuracion,version,False,lim,actual.unidad_longitud,actual.unidad_presion,actual.fuente,actual.mediciones_parametro,actual.mediciones_criterio),
+        autor=usuario,clave=clave,**lim))
+    _tol_evento(empresa,usuario,clave,'CAL_TOLERANCIA_RETIRADA',payload,obj)
+    return obj
+
+
+def get_object_or_404_empresa(modelo,empresa,pk):
+    obj=modelo.objects.filter(pk=pk,empresa=empresa).first()
+    if not obj: raise PermissionDenied('Registro no autorizado.')
+    return obj
+
+
+def _convertir(valor,de,a,tabla):
+    """Conversión exacta entre unidades de la misma magnitud; sin unidad o unidad desconocida no se compara."""
+    if valor in (None,'') or de not in tabla or a not in tabla: return None
+    return _decimal_texto(Decimal(str(valor))*tabla[de]/tabla[a])
+
+
+def _en_rango(valor,minimo,maximo):
+    if minimo is None or maximo is None: return 'Sin tolerancia definida: no se evalúa'
+    n=Decimal(str(valor));return 'Dentro del rango configurado' if Decimal(minimo)<=n<=Decimal(maximo) else 'Fuera del rango configurado'
+
+
+CORRESPONDENCIA_MEDICIONES={'BACKLASH':('backlash','backlash'),'CALIBRACION':('calibración','calibracion')}
+
+
+def _filas_configuradas(tol,unidades):
+    """Filas de las 16 mediciones: solo si la configuración documenta con qué parámetro se corresponden, con su rango en la unidad de la hoja.
+    Sin correspondencia documentada no hay criterio: la fila es None y la hoja muestra «Sin criterio de evaluación definido»."""
+    destino=CORRESPONDENCIA_MEDICIONES.get(tol.get('mediciones_parametro',''))
+    if not destino or not str(tol.get('mediciones_criterio','')).strip(): return [None]*16
+    lim,ul=tol['limites'],unidades.get('longitud','')
+    fila=dict(minimo=_convertir(lim.get(f'{destino[1]}_min'),tol['unidad_longitud'],ul,A_MM),maximo=_convertir(lim.get(f'{destino[1]}_max'),tol['unidad_longitud'],ul,A_MM),
+        tolerancia='',unidad=ul)
+    return [fila]*16
+
+
+def _comparaciones_configuradas(tol,unidades,parametros):
+    """Comparación aritmética de los datos de la hoja con los límites configurados (calibración total, presiones y tolerancia registrada)."""
+    lim,ul,up=tol['limites'],unidades.get('longitud',''),unidades.get('presion','')
+    salida=[]
+    def rango(codigo,nombre,base,unidad_hoja,unidad_tol,tabla):
+        valor=parametros.get(codigo)
+        if valor in (None,''): return
+        lo,hi=(_convertir(lim.get(f'{base}_{x}'),unidad_tol,unidad_hoja,tabla) for x in ('min','max'))
+        if lim.get(f'{base}_min') is None: return
+        evaluacion=_en_rango(valor,lo,hi) if lo is not None and hi is not None else 'Unidad distinta a la configurada: no se evalúa'
+        salida.append(dict(parametro=nombre,valor=_decimal_texto(Decimal(str(valor))),unidad=unidad_hoja,minimo=lo,maximo=hi,evaluacion=evaluacion))
+    rango('BACKLASH','Backlash','backlash',ul,tol['unidad_longitud'],A_MM)
+    rango('CAL-TOTAL','Calibración total','calibracion',ul,tol['unidad_longitud'],A_MM)
+    rango('PRES-V','Presión eje vertical','presion_vertical',up,tol.get('unidad_presion',''),A_KPA)
+    rango('PRES-H','Presión eje horizontal','presion_horizontal',up,tol.get('unidad_presion',''),A_KPA)
+    registrada=parametros.get('TOLERANCIA');configurada=_convertir(lim.get('tolerancia'),tol['unidad_longitud'],ul,A_MM)
+    if registrada not in (None,'') and lim.get('tolerancia') is not None:
+        if configurada is None: evaluacion='Unidad distinta a la configurada: no se evalúa'
+        else: evaluacion='Coincide con la tolerancia configurada' if Decimal(str(registrada))==Decimal(configurada) else 'Difiere de la tolerancia configurada'
+        salida.append(dict(parametro='Tolerancia de calibración',valor=_decimal_texto(Decimal(str(registrada))),unidad=ul,minimo=configurada,maximo=configurada,evaluacion=evaluacion))
+    return salida
+
+
 def _tolerancias_hoja(c):
+    exp=c.expediente
+    conf=tolerancia_vigente(exp.empresa,exp.registro.equipo)
+    if conf:   # límites configurados por OFICINA/ADMINISTRADOR para esta configuración: se congelan con la hoja
+        return dict(origen='CONFIGURADA',tolerancia=conf.pk,version=conf.version,huella=conf.huella,fuente=conf.fuente,unidad_longitud=conf.unidad_longitud,
+            unidad_presion=conf.unidad_presion,mediciones_parametro=conf.mediciones_parametro,mediciones_criterio=conf.mediciones_criterio,limites={k:_decimal_texto(getattr(conf,k)) for k in conf.LIMITES},
+            configuracion=dict(marca=conf.marca,modelo=conf.modelo,ratio=conf.ratio,rotacion=conf.rotacion))
     p=tolerancias_aprobadas(c.expediente)
     if not p: return None
     return dict(protocolo=p.codigo,version=p.version,huella=huella_plantilla(p),
@@ -354,13 +549,13 @@ def _tolerancias_hoja(c):
         filas=[dict(minimo=r.get('minimo'),maximo=r.get('maximo'),tolerancia=r.get('tolerancia',''),unidad=r.get('unidad','')) for r in p.definicion.get('mediciones',[])])
 
 
-def _evaluar(valor,fila,unidad):
-    """Verificación aritmética contra un rango aprobado. Sin criterio válido no se evalúa ni se afirma conformidad."""
-    if fila is None: return 'Sin tolerancia aprobada: no se evalúa'
-    if not unidad or str(fila.get('unidad','')).strip().casefold()!=unidad.strip().casefold(): return 'Unidad distinta a la aprobada: no se evalúa'
+def _evaluar(valor,fila,unidad,calificativo='aprobado'):
+    """Verificación aritmética contra un rango aprobado o configurado. Sin criterio válido no se evalúa ni se afirma conformidad."""
+    if fila is None: return 'Sin tolerancia definida: no se evalúa'
+    if not unidad or str(fila.get('unidad','')).strip().casefold()!=unidad.strip().casefold(): return f"Unidad distinta a la {'configurada' if calificativo=='configurado' else 'aprobada'}: no se evalúa"
     lo,hi=fila.get('minimo'),fila.get('maximo')
     if lo in (None,'') or hi in (None,''): return 'Sin límites numéricos aprobados: no se evalúa'
-    try: n=Decimal(str(valor));return 'Dentro del rango aprobado' if Decimal(str(lo))<=n<=Decimal(str(hi)) else 'Fuera del rango aprobado'
+    try: n=Decimal(str(valor));return f'Dentro del rango {calificativo}' if Decimal(str(lo))<=n<=Decimal(str(hi)) else f'Fuera del rango {calificativo}'
     except (InvalidOperation,ValueError): return 'Sin límites numéricos aprobados: no se evalúa'
 
 
@@ -471,7 +666,9 @@ def _snapshot_hoja(c):
     fija=bool(c.enviado_en)
     equipo=p.get('_equipo') if fija and p.get('_equipo') else datos_equipo(c.expediente.registro.equipo)
     tol=p.get('_tolerancias') if fija else _tolerancias_hoja(c)
-    filas=(tol or {}).get('filas',[])
+    configurada=bool(tol and tol.get('origen')=='CONFIGURADA')
+    filas=_filas_configuradas(tol,unidades) if configurada else (tol or {}).get('filas',[])
+    calificativo='configurado' if configurada else 'aprobado'
     longitud=unidades.get('longitud','')
     mediciones=[]
     for n,r in enumerate(d['mediciones']):
@@ -480,7 +677,7 @@ def _snapshot_hoja(c):
         mediciones.append(dict(codigo=r['codigo'],nombre=r['nombre'],unidad=longitud,valor=valor,
             minimo=fila.get('minimo') if fila else None,maximo=fila.get('maximo') if fila else None,tolerancia=fila.get('tolerancia','') if fila else '',
             fuente=FUENTE_HOJA,criterio='',observaciones=m.observaciones if m else '',
-            evaluacion=_evaluar(valor,fila,longitud) if valor is not None else 'Pendiente'))
+            evaluacion=('Pendiente' if valor is None else 'Sin criterio de evaluación definido' if configurada and fila is None else _evaluar(valor,fila,longitud,calificativo))))
     parametros=[dict(codigo=r['codigo'],nombre=r['nombre'],grupo=r['grupo'],unidad=unidades.get(r['grupo'],''),fuente=FUENTE_HOJA,
         valor=_decimal_texto(Decimal(p[r['codigo']])) if p.get(r['codigo']) not in (None,'') else None) for r in d['parametros']]
     valores={r['codigo']:r['valor'] for r in parametros}
@@ -489,12 +686,31 @@ def _snapshot_hoja(c):
         total,minimo,maximo=(Decimal(valores[k]) for k in ('CAL-TOTAL','MINIMO','MAXIMO'))
         if not minimo<=total<=maximo:
             advertencias.append('La calibración total registrada está fuera del rango mínimo–máximo que registró TALLER.')
-    if tol:
+    if configurada:
+        comparaciones=_comparaciones_configuradas(tol,unidades,{k:v for k,v in p.items() if k!='_unidades' and v not in (None,'')})
+        c_=tol['configuracion'];fuente=tol['fuente'] if len(tol['fuente'])<=80 else tol['fuente'][:77]+'…'
+        corto=lambda e:('dentro del rango' if e.startswith('Dentro') else 'fuera del rango' if e.startswith('Fuera') else 'coincide' if e.startswith('Coincide')
+            else 'difiere' if e.startswith('Difiere') else 'no se evalúa')
+        frases=' · '.join(f"{x['parametro']}: {corto(x['evaluacion'])}" for x in comparaciones)
+        fuera=[x for x in comparaciones if x['evaluacion'].startswith(('Fuera','Difiere'))]
+        if fuera:   # una sola advertencia con lo que no coincide con lo configurado
+            advertencias.append('Fuera de lo configurado: '+'; '.join(f"{x['parametro']} {x['valor']} {x['unidad']} (configurado {x['minimo']}"+(f" a {x['maximo']}" if x['maximo']!=x['minimo'] else '')+f" {x['unidad']})" for x in fuera)+'.')
+        destino=CORRESPONDENCIA_MEDICIONES.get(tol.get('mediciones_parametro',''))
+        if filas and filas[0] is not None:
+            base=destino[1];encabezado=(f"Las 16 mediciones se compararon con el {destino[0]} configurado para {c_['marca']} {c_['modelo']} · ratio {c_['ratio']} · {c_['rotacion']}: "
+                f"{tol['limites'][base+'_min']} a {tol['limites'][base+'_max']} {tol['unidad_longitud']} (fuente: {fuente}).")
+        else:
+            encabezado=('Sin criterio de evaluación definido para las 16 mediciones: no se documentó a qué parámetro corresponden, por lo que no se declaran ni conformes ni no conformes. '
+                f"Límites configurados para {c_['marca']} {c_['modelo']} · ratio {c_['ratio']} · {c_['rotacion']} (fuente: {fuente}).")
+        verificacion=dict(estado='TOLERANCIA_CONFIGURADA',tolerancia=tol['tolerancia'],version=tol['version'],huella=tol['huella'],fuente=tol['fuente'],
+            unidad_longitud=tol['unidad_longitud'],limites=tol['limites'],comparaciones=comparaciones,mediciones_parametro=tol.get('mediciones_parametro',''),
+            mediciones_criterio=tol.get('mediciones_criterio',''),texto=encabezado+' '+(frases+'. ' if frases else '')+'Comparación aritmética; no sustituye la valoración técnica.')
+    elif tol:
         verificacion=dict(estado='TOLERANCIA_APROBADA',protocolo=tol['protocolo'],version=tol['version'],huella=tol['huella'],aprobacion=tol['aprobacion'],
             texto=f"Las mediciones se compararon con el rango aprobado del protocolo {tol['protocolo']} v{tol['version']}. La comparación es aritmética y no sustituye la valoración técnica.")
     else:
         verificacion=dict(estado='SIN_TOLERANCIA_APROBADA',
-            texto='Sin tolerancia aprobada: esta hoja registra mediciones. No se afirma conformidad técnica.')
+            texto='Sin tolerancia definida: esta hoja registra mediciones. No se afirma conformidad técnica.')
     return dict(plantilla='hoja-calibracion-v1',numero=c.expediente.numero,recepcion=c.expediente.recepcion.snapshot,
         calibracion=c.pk,revision=c.revision,diagnostico=c.diagnostico_id,autorizacion=c.autorizacion_id,reparacion=c.reparacion_snapshot,
         tipo_equipo=c.plantilla.tipo_equipo,protocolo=c.plantilla.codigo,protocolo_version=c.plantilla.version,protocolo_huella=huella_plantilla(c.plantilla),

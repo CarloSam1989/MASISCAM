@@ -244,7 +244,8 @@ def construir_hoja(s,fotografias=()):
             for i,linea in enumerate(self.lineas): c.drawString(7,alto-(i+1)*14+4,linea)
 
     rec=s['recepcion'];eq=s.get('equipo',{});pv={r['codigo']:r for r in s['parametros']}
-    verif=s.get('verificacion',{});aprobadas=verif.get('estado')=='TOLERANCIA_APROBADA'
+    verif=s.get('verificacion',{});aprobadas=verif.get('estado') in {'TOLERANCIA_APROBADA','TOLERANCIA_CONFIGURADA'};configuradas=verif.get('estado')=='TOLERANCIA_CONFIGURADA'
+    calificativo='configurado' if configuradas else 'aprobado'
     def valor(codigo,estilo=grande):
         r=pv.get(codigo)
         if not r or r.get('valor') is None: return dato(None,estilo,'Pendiente')
@@ -278,9 +279,10 @@ def construir_hoja(s,fotografias=()):
         v,falta=dato(f"{r['valor']} {r.get('unidad') or ''}".strip() if r.get('valor') is not None else None,grande,'Pendiente')
         celda=[Paragraph(f'Medición {n}',centro),v]
         evaluacion=r.get('evaluacion','')
-        if aprobadas and evaluacion.startswith('Dentro'): celda.append(Paragraph('<font color="#1f6f43">Dentro del rango aprobado</font>',mini))
-        elif aprobadas and evaluacion.startswith('Fuera'): celda.append(Paragraph('<font color="#a12622">Fuera del rango aprobado</font>',mini))
-        elif aprobadas and evaluacion not in ('','Pendiente'): celda.append(Paragraph('No se evalúa con el criterio aprobado',mini))
+        if aprobadas and evaluacion.startswith('Dentro'): celda.append(Paragraph(f'<font color="#1f6f43">Dentro del rango {calificativo}</font>',mini))
+        elif aprobadas and evaluacion.startswith('Fuera'): celda.append(Paragraph(f'<font color="#a12622">Fuera del rango {calificativo}</font>',mini))
+        elif evaluacion.startswith('Sin criterio'): celda.append(Paragraph('Sin criterio de evaluación definido',mini))
+        elif aprobadas and evaluacion not in ('','Pendiente'): celda.append(Paragraph(f'No se evalúa con el criterio {calificativo}',mini))
         medidas.append((celda,falta))
     while len(medidas)%4: medidas.append(('',False))
     cuadricula=[medidas[i:i+4] for i in range(0,len(medidas),4)]
@@ -292,10 +294,12 @@ def construir_hoja(s,fotografias=()):
             [W/5]*5,[('BACKGROUND',(0,0),(-1,0),SUAVE),('BACKGROUND',(0,2),(-1,2),SUAVE),('SPAN',(0,2),(1,2)),('SPAN',(2,2),(3,2)),('SPAN',(0,3),(1,3)),('SPAN',(2,3),(3,3))],padding=3),
         tabla([[Paragraph('Mediciones (1 a 16)',etq),'','','']]+cuadricula,[W/4]*4,
             [('SPAN',(0,0),(-1,0)),('BACKGROUND',(0,0),(-1,0),SUAVE),('ALIGN',(0,1),(-1,-1),'CENTER')],padding=2)]
-    if aprobadas:
+    if configuradas:
+        historia += [Spacer(1,3),aviso(f"{verif.get('texto','')} Límites configurados v{verif.get('version','')} · huella {verif.get('huella','')[:16]}")]
+    elif aprobadas:
         historia += [Spacer(1,3),aviso(f"{verif.get('texto','')} Tolerancias del protocolo {verif.get('protocolo','')} v{verif.get('version','')} · huella {verif.get('huella','')}")]
     else:
-        historia += [Spacer(1,3),aviso(verif.get('texto') or 'Sin tolerancia aprobada: esta hoja registra mediciones. No se afirma conformidad técnica.')]
+        historia += [Spacer(1,3),aviso(verif.get('texto') or 'Sin tolerancia definida: esta hoja registra mediciones. No se afirma conformidad técnica.')]
     for advertencia in s.get('advertencias',[]): historia += [Spacer(1,2),aviso(advertencia,PEND_BG,AMBAR)]
     if estado['pendientes']: historia += [Spacer(1,2),aviso('Los recuadros en ámbar son datos pendientes o no registrados; no se han completado ni supuesto.',PEND_BG,AMBAR)]
     historia.append(Spacer(1,5))

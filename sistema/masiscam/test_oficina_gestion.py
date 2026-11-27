@@ -604,7 +604,7 @@ class OficinaGestionTests(OficinaFixture,TestCase):
         self.assertEqual((descarga.status_code,descarga['Content-Type']),(200,'application/pdf'))
         lector=PdfReader(BytesIO(b''.join(descarga.streaming_content))); texto='\n'.join(p.extract_text() for p in lector.pages)
         for palabra in ('HOJA DE CALIBRACIÓN','DATOS GENERALES DE TRANSMISIÓN','DATOS DE SHIMS','Backlash','Presión eje vertical','Mediciones (1 a 16)','OBSERVACIONES','Firma del técnico responsable',
-                'No requiere aprobación de ADMINISTRADOR','Sin tolerancia aprobada','No se afirma conformidad técnica'): self.assertIn(palabra,texto,palabra)
+                'No requiere aprobación de ADMINISTRADOR','Sin tolerancia definida','No se afirma conformidad técnica'): self.assertIn(palabra,texto,palabra)
         self.assertNotIn('Dentro del rango aprobado',texto)
         # 5. Informe final: PDF descargable por TALLER con diagnóstico, trabajos, fotografías y la hoja de calibración.
         descarga=como(self.taller).get(reverse('masiscam:cierre_documento',args=[self.exp.pk,informe.pk]))
@@ -1170,7 +1170,7 @@ class OficinaGestionBrowserTests(OficinaFixture,StaticLiveServerTestCase):
         # Mantenimiento finalizado: la calibración queda disponible de inmediato, sin otra aprobación de ADMINISTRADOR.
         ver('Mantenimiento finalizado',botones=('Registrar calibración',),secuencia=('Finalizado','Disponible','No disponible'))
         calibracion_url=self.live_server_url+reverse('masiscam:calibracion_expediente',args=[self.exp.pk])+'?flujo=1'
-        ver('Sin tolerancia aprobada',botones=('Abrir hoja de calibración',),destino=calibracion_url)   # ficha por configuración; sin protocolo ni aprobación
+        ver('Sin tolerancia definida',botones=('Abrir hoja de calibración',),destino=calibracion_url)   # ficha por configuración; sin protocolo ni aprobación
         # TALLER abre y completa la hoja con el navegador: avance en móvil (390 px), generación del tercer PDF en escritorio (1440 px).
         from .models import Calibracion, InformeFinal, DecisionCalibracion
         valores=self.VALORES_HOJA

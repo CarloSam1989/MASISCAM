@@ -24,6 +24,7 @@ urlpatterns = [
     path('expedientes/<int:pk>/final/<int:informe_pk>/',cierre_views.documento,name='cierre_documento'),
     path('equipos/<int:pk>/historial-mantenimiento/',cierre_views.historial,name='cierre_historial'),
     path('calibracion/',calibracion_views.inicio,name='calibracion_inicio'),
+    path('calibracion/tolerancias/',calibracion_views.tolerancias,name='calibracion_tolerancias'),
     path('calibracion/plantillas/',calibracion_views.plantillas,name='calibracion_plantillas'),
     path('calibracion/plantillas/<int:pk>/',calibracion_views.plantilla,name='calibracion_plantilla'),
     path('calibracion/plantillas/<int:pk>/fuente/',calibracion_views.fuente,name='calibracion_fuente'),
